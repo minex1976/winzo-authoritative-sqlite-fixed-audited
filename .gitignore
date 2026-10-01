@@ -1,0 +1,6 @@
+node_modules/
+winzo.sqlite
+winzo.sqlite-shm
+winzo.sqlite-wal
+.env
+*.log
