@@ -1,0 +1,8 @@
+{
+  "name": "Winzo SQLite Server",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "forwardPorts": [8080],
+  "portsAttributes": {"8080":{"label":"Winzo HTTP/WebSocket","visibility":"public","onAutoForward":"notify"}},
+  "postCreateCommand":"npm install",
+  "postStartCommand":"nohup npm start > /tmp/winzo.log 2>&1 &"
+}
