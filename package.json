@@ -1,12 +1,14 @@
 {
   "name": "winzo-authoritative-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "scripts": {"start":"node server.js"},
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
     "express": "^4.19.2",
+    "firebase-admin": "^12.7.0",
     "ws": "^8.18.0"
   }
 }
