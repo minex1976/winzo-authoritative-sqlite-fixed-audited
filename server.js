@@ -4,11 +4,12 @@ import crypto from 'crypto';
 import http from 'http';
 import Database from 'better-sqlite3';
 
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
-const DEV_ALLOW_ANY = (process.env.NODE_ENV || 'development') !== 'production';
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || (DEV_ALLOW_ANY ? '*' : '');
+const NODE_ENV = process.env.NODE_ENV || 'production';
+const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 const DB_PATH = process.env.SQLITE_DB_PATH || './winzo.sqlite';
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
@@ -628,7 +629,7 @@ app.get('/',(_,res)=>res.type('text').send('Winzo authoritative server is runnin
 const server=http.createServer(app);
 server.on('upgrade',(req,socket,head)=>{
   const origin=req.headers.origin||'';
-  const ok=ALLOWED_ORIGIN==='*'||origin===ALLOWED_ORIGIN||(DEV_ALLOW_ANY&&origin.endsWith('.github.dev'));
+  const ok=(ALLOWED_ORIGIN && origin===ALLOWED_ORIGIN)||(DEV_ALLOW_ANY && origin.endsWith('.github.dev'));
   if(!ok){socket.destroy();return;}
   wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
 });
