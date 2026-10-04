@@ -11,15 +11,15 @@ services:
         value: production
       - key: PORT
         value: "10000"
-      - key: ALLOWED_ORIGIN
-        value: https://minex1976.github.io
-      - key: SQLITE_DB_PATH
-        value: /var/data/winzo.sqlite
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FIREBASE_DATABASE_URL
+        sync: false
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_KEY
         sync: false
-    disk:
-      name: winzo-data
-      mountPath: /var/data
-      sizeGB: 1
