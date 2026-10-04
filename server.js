@@ -2,39 +2,81 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
-import admin from 'firebase-admin';
+import Database from 'better-sqlite3';
 
-// --- Firebase Initialization ---
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
-const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
-
-if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY || !FIREBASE_DATABASE_URL) {
-  console.error('CRITICAL: Missing Firebase environment variables. Exiting.');
-  process.exit(1);
-}
-
-admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: FIREBASE_PROJECT_ID,
-    clientEmail: FIREBASE_CLIENT_EMAIL,
-    privateKey: FIREBASE_PRIVATE_KEY,
-  }),
-  databaseURL: FIREBASE_DATABASE_URL
-});
-
-const db = admin.database();
-
-// --- Configuration ---
 const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
+const DB_PATH = process.env.SQLITE_DB_PATH || './winzo.sqlite';
+
+// ─── ALLOWED ORIGINS (comma-separated list from env) ───
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
+
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  username TEXT PRIMARY KEY,
+  main_wallet REAL NOT NULL DEFAULT 0,
+  play_wallet REAL NOT NULL DEFAULT 0,
+  pending_withdrawal REAL NOT NULL DEFAULT 0,
+  referral_earnings REAL NOT NULL DEFAULT 0,
+  referred_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transactions (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('deposit','withdraw')),
+  amount REAL NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),
+  timestamp INTEGER NOT NULL,
+  reference TEXT DEFAULT '',
+  full_name TEXT DEFAULT '',
+  phone_number TEXT DEFAULT '',
+  image_data TEXT DEFAULT '',
+  reason TEXT DEFAULT '',
+  wallet_applied INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status, timestamp);
+CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(username, timestamp);
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'notification',
+  message TEXT NOT NULL,
+  status TEXT,
+  tx_type TEXT,
+  tx_id TEXT,
+  timestamp INTEGER NOT NULL,
+  read INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(username, timestamp);
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  bet REAL NOT NULL,
+  phase TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL,
+  winning_number INTEGER,
+  winners_json TEXT NOT NULL DEFAULT '[]',
+  prize_pool REAL NOT NULL DEFAULT 0,
+  last_result_json TEXT,
+  taken_json TEXT NOT NULL DEFAULT '{}',
+  players_json TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL
+);
+`);
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 2;
@@ -86,32 +128,22 @@ class Mutex {
 function safeUser(username) { return String(username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32); }
 function now() { return Date.now(); }
 
-// --- Realtime Database Helpers ---
-
-async function ensureUser(username, referredBy = null, bot = false) {
+function ensureUser(username, referredBy = null, bot = false) {
   const clean = safeUser(username);
   if (!clean) return null;
-  const userRef = db.ref('users/' + clean);
-  const snapshot = await userRef.once('value');
-  if (snapshot.exists()) return snapshot.val();
-
+  const existing = db.prepare('SELECT * FROM users WHERE username=?').get(clean);
+  if (existing) return existing;
   const t = now();
-  const newUser = {
-    username: clean,
-    main_wallet: 0,
-    play_wallet: bot ? BOT_START_WALLET : 30,
-    pending_withdrawal: 0,
-    referral_earnings: 0,
-    referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
-    created_at: t,
-    updated_at: t
-  };
-  await userRef.set(newUser);
-  return newUser;
+  db.prepare(`INSERT INTO users(username,main_wallet,play_wallet,pending_withdrawal,referral_earnings,referred_by,created_at,updated_at)
+              VALUES(?,?,?,?,?,?,?,?)`).run(
+    clean, bot ? 0 : 0, bot ? BOT_START_WALLET : 30, 0, 0,
+    referredBy && referredBy !== clean ? safeUser(referredBy) : null, t, t
+  );
+  return db.prepare('SELECT * FROM users WHERE username=?').get(clean);
 }
 
-async function walletFor(username) {
-  const u = await ensureUser(username);
+function walletFor(username) {
+  const u = ensureUser(username);
   return {
     main: Number(u?.main_wallet || 0),
     play: Number(u?.play_wallet || 0),
@@ -120,33 +152,26 @@ async function walletFor(username) {
   };
 }
 
-async function sendWallet(uid) {
-  const payload = { type: 'wallet', ...(await walletFor(uid)) };
+function sendWallet(uid) {
+  const payload = { type: 'wallet', ...walletFor(uid) };
   const set = conns.get(uid);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-async function addNotification(username, data) {
+function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
+  db.prepare(`INSERT OR REPLACE INTO notifications(id,username,type,message,status,tx_type,tx_id,timestamp,read)
+              VALUES(?,?,?,?,?,?,?,?,0)`).run(
+    id, username, data.type || 'notification', String(data.message || ''),
+    data.status || null, data.txType || null, data.txId || null, Number(data.timestamp || now())
+  );
   const payload = { type: 'notification', id, ...data, timestamp: Number(data.timestamp || now()) };
-  
-  await db.ref('notifications/' + id).set({
-    username,
-    type: data.type || 'notification',
-    message: String(data.message || ''),
-    status: data.status || null,
-    tx_type: data.txType || null,
-    tx_id: data.txId || null,
-    timestamp: payload.timestamp,
-    read: false
-  });
-
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-async function notifyTransaction(username, tx) {
-  await addNotification(username, {
+function notifyTransaction(username, tx) {
+  addNotification(username, {
     type: 'transaction_result',
     status: tx.status,
     txType: tx.type,
@@ -162,199 +187,107 @@ async function notifyTransaction(username, tx) {
   }));
 }
 
-async function transactionRequest(uid, data) {
+function transactionRequest(uid, data) {
   const id = safeUser(data.id) || crypto.randomUUID();
   const type = data.txType;
   const amount = Number(data.amount);
-  
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
-  
   const reference = String(data.reference || '').slice(0, 128);
   const fullName = String(data.fullName || '').slice(0, 128);
   const phone = String(data.phoneNumber || '').slice(0, 64);
   const imageData = String(data.imageData || '');
   if (imageData.length > 2_500_000) return { ok: false, reason: 'image-too-large' };
 
-  try {
-    // 1. Update user balance atomically
-    let balanceUpdated = false;
-    await db.ref('users/' + uid).transaction(u => {
-      if (!u) return u;
-      if (type === 'withdraw' && (u.main_wallet - u.pending_withdrawal < amount)) {
-        return; // Abort transaction (insufficient funds)
-      }
-      if (type === 'withdraw') {
-        u.pending_withdrawal = (u.pending_withdrawal || 0) + amount;
-      }
-      u.updated_at = now();
-      balanceUpdated = true;
-      return u;
-    });
-
-    if (!balanceUpdated) return { ok: false, reason: 'insufficient-main' };
-
-    // 2. Create the transaction record
-    await db.ref('transactions/' + id).set({
-      username: uid,
-      type,
-      amount,
-      status: 'pending',
-      timestamp: now(),
-      reference,
-      full_name: fullName,
-      phone_number: phone,
-      image_data: imageData,
-      reason: '',
-      wallet_applied: 0,
-      updated_at: now()
-    });
-
-    await sendWallet(uid);
+  const result = db.transaction(() => {
+    const u = ensureUser(uid);
+    if (!u) return { ok: false, reason: 'user' };
+    if (type === 'withdraw' && Number(u.main_wallet) - Number(u.pending_withdrawal) < amount) {
+      return { ok: false, reason: 'insufficient-main' };
+    }
+    if (type === 'withdraw') {
+      db.prepare('UPDATE users SET pending_withdrawal=pending_withdrawal+?,updated_at=? WHERE username=?').run(amount, now(), uid);
+    }
+    db.prepare(`INSERT INTO transactions(id,username,type,amount,status,timestamp,reference,full_name,phone_number,image_data,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id, uid, type, amount, 'pending', now(), reference, fullName, phone, imageData, now());
     return { ok: true, id };
-  } catch (e) {
-    return { ok: false, reason: e.message || 'transaction-failed' };
-  }
+  })();
+  if (result.ok) sendWallet(uid);
+  return result;
 }
 
-async function transactionImage(uid, id, imageData) {
+function transactionImage(uid, id, imageData) {
   if (!id || !imageData || String(imageData).length > 2_500_000) return false;
-  const txRef = db.ref('transactions/' + id);
-  const snap = await txRef.once('value');
-  if (!snap.exists() || snap.val().username !== uid || snap.val().status !== 'pending') return false;
-  
-  await txRef.update({ image_data: String(imageData), updated_at: now() });
+  const r = db.prepare('UPDATE transactions SET image_data=?,updated_at=? WHERE id=? AND username=? AND status=?')
+    .run(String(imageData), now(), id, uid, 'pending');
+  return r.changes > 0;
+}
+
+function adminListTransactions() {
+  return db.prepare(`SELECT id,username,type,amount,status,timestamp,reference,full_name AS fullName,
+                     phone_number AS phoneNumber,image_data AS imageData,reason
+                     FROM transactions WHERE status='pending' ORDER BY timestamp DESC`).all();
+}
+
+function adminDecision(id, decision, reason = '') {
+  if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
+  const result = db.transaction(() => {
+    const tx = db.prepare('SELECT * FROM transactions WHERE id=?').get(id);
+    if (!tx) return { ok: false, reason: 'not-found' };
+    if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(tx.username);
+    if (!u) return { ok: false, reason: 'user-not-found' };
+    if (tx.type === 'deposit' && decision === 'approved') {
+      db.prepare('UPDATE users SET play_wallet=play_wallet+?,updated_at=? WHERE username=?').run(tx.amount, now(), tx.username);
+    }
+    if (tx.type === 'withdraw') {
+      if (decision === 'approved') {
+        if (Number(u.pending_withdrawal) < Number(tx.amount) || Number(u.main_wallet) < Number(tx.amount)) return { ok: false, reason: 'reserved-balance-changed' };
+        db.prepare('UPDATE users SET main_wallet=main_wallet-?,pending_withdrawal=pending_withdrawal-?,updated_at=? WHERE username=?')
+          .run(tx.amount, tx.amount, now(), tx.username);
+      } else {
+        db.prepare('UPDATE users SET pending_withdrawal=MAX(0,pending_withdrawal-?),updated_at=? WHERE username=?')
+          .run(tx.amount, now(), tx.username);
+      }
+    }
+    db.prepare('UPDATE transactions SET status=?,reason=?,wallet_applied=?,updated_at=? WHERE id=?')
+      .run(decision, String(reason || '').slice(0, 256), decision === 'rejected' ? 0 : 1, now(), id);
+    return { ok: true, tx: db.prepare('SELECT * FROM transactions WHERE id=?').get(id) };
+  })();
+  if (result.ok) {
+    sendWallet(result.tx.username);
+    notifyTransaction(result.tx.username, result.tx);
+  }
+  return result;
+}
+
+function markNotificationRead(uid, id) {
+  db.prepare('UPDATE notifications SET read=1 WHERE id=? AND username=?').run(id, uid);
+}
+
+function claimPayout(uid, amount, roomId, round, kind) {
+  const key = `${roomId}_${round}_${uid}_${kind}`;
+  const marker = db.prepare('SELECT id FROM notifications WHERE id=?').get('payout:' + key);
+  if (marker) return false;
+  db.prepare('UPDATE users SET main_wallet=main_wallet+?,updated_at=? WHERE username=?').run(amount, now(), uid);
+  db.prepare(`INSERT INTO notifications(id,username,type,message,status,tx_type,tx_id,timestamp,read)
+              VALUES(?,?,?,?,?,?,?,?,1)`).run('payout:' + key, uid, 'payout_marker', '', null, null, null, now());
   return true;
 }
 
-async function adminListTransactions() {
-  const snapshot = await db.ref('transactions').orderByChild('status').equalTo('pending').once('value');
-  const txs = [];
-  snapshot.forEach(child => {
-    const d = child.val();
-    txs.push({
-      id: child.key,
-      username: d.username,
-      type: d.type,
-      amount: d.amount,
-      status: d.status,
-      timestamp: d.timestamp,
-      reference: d.reference,
-      fullName: d.full_name,
-      phoneNumber: d.phone_number,
-      imageData: d.image_data,
-      reason: d.reason
-    });
-  });
-  // Sort manually since RTDB does not easily support compound sorting without indexes
-  return txs.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-async function adminDecision(id, decision, reason = '') {
-  if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
-  
-  try {
-    const txRef = db.ref('transactions/' + id);
-    const txSnap = await txRef.once('value');
-    if (!txSnap.exists()) return { ok: false, reason: 'not-found' };
-    const tx = txSnap.val();
-    if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
-
-    let success = false;
-    // Update user wallet atomically
-    await db.ref('users/' + tx.username).transaction(u => {
-      if (!u) return u;
-      
-      if (tx.type === 'deposit' && decision === 'approved') {
-        u.play_wallet = (u.play_wallet || 0) + tx.amount;
-      }
-      
-      if (tx.type === 'withdraw') {
-        if (decision === 'approved') {
-          if (Number(u.pending_withdrawal) < Number(tx.amount) || Number(u.main_wallet) < Number(tx.amount)) {
-            return; // Abort: reserved balance changed
-          }
-          u.main_wallet -= tx.amount;
-          u.pending_withdrawal -= tx.amount;
-        } else {
-          u.pending_withdrawal = Math.max(0, (u.pending_withdrawal || 0) - tx.amount);
-        }
-      }
-      u.updated_at = now();
-      success = true;
-      return u;
-    });
-
-    if (!success) return { ok: false, reason: 'reserved-balance-changed' };
-
-    // Update transaction status
-    await txRef.update({
-      status: decision,
-      reason: String(reason || '').slice(0, 256),
-      wallet_applied: decision === 'rejected' ? 0 : 1,
-      updated_at: now()
-    });
-
-    const updatedTx = { ...tx, status: decision, reason, id };
-    await sendWallet(tx.username);
-    await notifyTransaction(tx.username, updatedTx);
-    return { ok: true, tx: updatedTx };
-  } catch (e) {
-    return { ok: false, reason: e.message };
-  }
-}
-
-async function markNotificationRead(uid, id) {
-  await db.ref('notifications/' + id).update({ read: true });
-}
-
-async function claimPayout(uid, amount, roomId, round, kind) {
-  const key = `payout:${roomId}_${round}_${uid}_${kind}`;
-  const markerRef = db.ref('notifications/' + key);
-  const marker = await markerRef.once('value');
-  if (marker.exists()) return false;
-
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u) return u;
-    u.main_wallet = (u.main_wallet || 0) + amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-
-  if (success) {
-    await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now() });
-  }
-  return success;
-}
-
-async function creditReferral(ref, amount, roomId, round, winnerUid) {
+function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (!ref || ref === winnerUid || amount <= 0) return false;
   const key = `ref:${roomId}_${round}_${winnerUid}_${ref}`;
-  const markerRef = db.ref('notifications/' + key);
-  const marker = await markerRef.once('value');
-  if (marker.exists()) return false;
-
-  await ensureUser(ref);
-  let success = false;
-  await db.ref('users/' + ref).transaction(u => {
-    if (!u) return u;
-    u.main_wallet = (u.main_wallet || 0) + amount;
-    u.referral_earnings = (u.referral_earnings || 0) + amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-
-  if (success) {
-    await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
-    await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
-  }
-  return success;
+  const marker = db.prepare('SELECT id FROM notifications WHERE id=?').get(key);
+  if (marker) return false;
+  ensureUser(ref);
+  db.prepare('UPDATE users SET main_wallet=main_wallet+?,referral_earnings=referral_earnings+?,updated_at=? WHERE username=?')
+    .run(amount, amount, now(), ref);
+  db.prepare(`INSERT INTO notifications(id,username,type,message,status,tx_type,tx_id,timestamp,read)
+              VALUES(?,?,?,?,?,?,?,?,1)`).run(key, ref, 'referral_marker', '', null, null, null, now());
+  addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
+  return true;
 }
-
-// --- Room / Game Logic ---
 
 class Room {
   constructor(id, bet, row = null) {
@@ -365,7 +298,7 @@ class Room {
     this.players = new Map();
     this.taken = new Map();
     this.winningNumber = row?.winning_number == null ? null : Number(row.winning_number);
-    this.winners = row?.winners_json ? JSON.parse(row.winners_json) : [];
+    this.winners = JSON.parse(row?.winners_json || '[]');
     this.prizePool = Number(row?.prize_pool || 0);
     this.lastResult = row?.last_result_json ? JSON.parse(row.last_result_json) : null;
     this.mutex = new Mutex(); this.botTimers = []; this.dirty = true;
@@ -399,7 +332,7 @@ class Room {
       serverNow: now(), lastResult: this.lastResult,
     };
   }
-  async persist() {
+  persist() {
     const players = {};
     for (const [uid, p] of this.players) players[uid] = {
       picks: [...p.picks],
@@ -408,75 +341,53 @@ class Room {
       displayName: p.displayName || uid
     };
     const taken = Object.fromEntries(this.taken.entries());
-    
-    await db.ref('rooms/' + this.id).set({
-      bet: this.bet,
-      phase: this.phase,
-      round: this.round,
-      ends_at: this.endsAt,
-      winning_number: this.winningNumber,
-      winners_json: JSON.stringify(this.winners),
-      prize_pool: this.prizePool,
-      last_result_json: this.lastResult ? JSON.stringify(this.lastResult) : null,
-      taken_json: JSON.stringify(taken),
-      players_json: JSON.stringify(players),
-      updated_at: now()
-    });
-    
+    db.prepare(`INSERT INTO rooms(id,bet,phase,round,ends_at,winning_number,winners_json,prize_pool,last_result_json,taken_json,players_json,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET bet=excluded.bet,phase=excluded.phase,round=excluded.round,ends_at=excluded.ends_at,
+                winning_number=excluded.winning_number,winners_json=excluded.winners_json,prize_pool=excluded.prize_pool,
+                last_result_json=excluded.last_result_json,taken_json=excluded.taken_json,players_json=excluded.players_json,updated_at=excluded.updated_at`)
+      .run(this.id, this.bet, this.phase, this.round, this.endsAt, this.winningNumber, JSON.stringify(this.winners), this.prizePool,
+        this.lastResult ? JSON.stringify(this.lastResult) : null, JSON.stringify(taken), JSON.stringify(players), now());
     this.dirty = false;
   }
   broadcast() {
     const payload = JSON.stringify({ type: 'state', room: this.id, state: this.snapshot() });
     for (const ws of wss.clients) if (ws.readyState === 1 && ws.authed && ws.roomId === this.id) ws.send(payload);
   }
-  async push() { await this.persist(); this.broadcast(); }
+  push() { this.persist(); this.broadcast(); }
 }
 
-let rooms = {};
+const rows = db.prepare('SELECT * FROM rooms WHERE id IN (?,?)').all('room_15','room_30');
+const rowMap = new Map(rows.map(r => [r.id, r]));
+const rooms = {
+  room_15: new Room('room_15', 15, rowMap.get('room_15')),
+  room_30: new Room('room_30', 30, rowMap.get('room_30')),
+};
 
-async function loadRooms() {
-  const snap = await db.ref('rooms').once('value');
-  const rowMap = new Map();
-  if (snap.exists()) {
-    snap.forEach(child => { rowMap.set(child.key, child.val()); });
-  }
-  
-  rooms = {
-    room_15: new Room('room_15', 15, rowMap.get('room_15')),
-    room_30: new Room('room_30', 30, rowMap.get('room_30')),
-  };
-  
-  for (const room of Object.values(rooms)) { 
-    for (const p of room.players.values()) if (!p.isBot) p.active = false; 
-  }
+for (const room of Object.values(rooms)) { for (const p of room.players.values()) if (!p.isBot) p.active = false; }
+
+function saveRoom(room) { room.persist(); room.broadcast(); }
+
+function debit(uid, amount, roomId, round) {
+  const result = db.transaction(() => {
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(uid);
+    if (!u || Number(u.play_wallet) < amount) return false;
+    db.prepare('UPDATE users SET play_wallet=play_wallet-?,updated_at=? WHERE username=?').run(amount, now(), uid);
+    return true;
+  })();
+  if (result) sendWallet(uid);
+  return result;
 }
 
-async function saveRoom(room) { await room.persist(); room.broadcast(); }
-
-async function debit(uid, amount, roomId, round) {
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u || Number(u.play_wallet) < amount) return;
-    u.play_wallet -= amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-  if (success) await sendWallet(uid);
-  return success;
-}
-
-async function refundWager(uid, amount, roomId, round) {
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u) return;
-    u.play_wallet = (u.play_wallet || 0) + amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-  if (success) await sendWallet(uid);
-  return success;
+function refundWager(uid, amount, roomId, round) {
+  const result = db.transaction(() => {
+    const u = db.prepare('SELECT * FROM users WHERE username=?').get(uid);
+    if (!u) return false;
+    db.prepare('UPDATE users SET play_wallet=play_wallet+?,updated_at=? WHERE username=?').run(amount, now(), uid);
+    return true;
+  })();
+  if (result) sendWallet(uid);
+  return result;
 }
 
 async function pickIntent(room, uid, num) {
@@ -489,7 +400,7 @@ async function pickIntent(room, uid, num) {
     if (p.picks.length >= MAX_PICKS) return { ok:false, reason:'max-picks' };
     if (p.picks.includes(num)) return { ok:false, reason:'duplicate' };
     if (room.taken.has(num)) return { ok:false, reason:'taken' };
-    if (!(await debit(uid, room.bet, room.id, room.round))) return { ok:false, reason:'insufficient' };
+    if (!debit(uid, room.bet, room.id, room.round)) return { ok:false, reason:'insufficient' };
     room.taken.set(num, uid); p.picks.push(num); room.dirty = true;
     return { ok:true };
   });
@@ -501,7 +412,7 @@ async function unpickIntent(room, uid, num) {
     const p = room.players.get(uid);
     if (!p || !p.picks.includes(num)) return { ok:false, reason:'not-picked' };
     if (room.taken.get(num) !== uid) return { ok:false, reason:'not-owner' };
-    if (!(await refundWager(uid, room.bet, room.id, room.round))) return { ok:false, reason:'refund-failed' };
+    if (!refundWager(uid, room.bet, room.id, room.round)) return { ok:false, reason:'refund-failed' };
     p.picks = p.picks.filter(n => n !== num); room.taken.delete(num); room.dirty = true;
     return { ok:true };
   });
@@ -528,15 +439,17 @@ async function toSpinning(room) {
   const prizePool = Math.floor(totalPicks * room.bet * PAYOUT_RATE);
   room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
   room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
-  
+  for (const p of withPicks.filter(p => !p.isBot)) {
+    if (p.active) db.prepare('UPDATE users SET updated_at=? WHERE username=?').run(now(), p.uid);
+  }
   if (winners.length) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
-      if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      await addNotification(uid, { message:`🏆 You won ${share} Birr in round ${room.round}!`, type:'notification' });
-      const uSnap = await db.ref('users/' + uid).once('value');
-      const ref = uSnap.val()?.referred_by;
-      if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+      if (!claimPayout(uid, share, room.id, room.round, 'win')) continue;
+      addNotification(uid, { message:`🏆 You won ${share} Birr in round ${room.round}!`, type:'notification' });
+      const u = db.prepare('SELECT referred_by FROM users WHERE username=?').get(uid);
+      const ref = u?.referred_by;
+      if (ref) creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
     }
   }
   room.lastResult = {
@@ -583,7 +496,7 @@ function scheduleBots(room) {
     const delay=2000+(windowMs/roster.length)*i+Math.random()*1500;
     const t=setTimeout(async()=>{ await room.mutex.run(async()=>{
       if(room.phase!=='selection') return;
-      await ensureUser(uid,null,true);
+      ensureUser(uid,null,true);
       let p=room.players.get(uid);
       if(!p){
         p={uid,picks:[],isBot:true,active:true,displayName};
@@ -611,7 +524,7 @@ setInterval(async()=>{
       else if(room.phase==='spinning' && t>=room.endsAt) await toResults(room);
       else if(room.phase==='results' && t>=room.endsAt) await resetRound(room,'results-done');
     });
-    if(room.dirty) await saveRoom(room);
+    if(room.dirty) saveRoom(room);
   }
 },500);
 
@@ -641,19 +554,12 @@ async function handle(ws,m){
     if(user?.username) uid=safeUser(user.username);
     else if(DEV_ALLOW_ANY && m.devUsername && /^[A-Za-z0-9_]{1,32}$/.test(m.devUsername)) uid=m.devUsername;
     if(!uid) return send(ws,{type:'error',message:'auth-failed'});
-    await ensureUser(uid,m.ref||null,false);
+    ensureUser(uid,m.ref||null,false);
     ws.uid=uid;ws.authed=true;
     let set=conns.get(uid);if(!set){set=new Set();conns.set(uid,set);}set.add(ws);
-    send(ws,{type:'authed',uid}); send(ws,{type:'wallet',...(await walletFor(uid))});
-    
-    const txSnap = await db.ref('transactions').orderByChild('username').equalTo(uid).once('value');
-    const pending = [];
-    txSnap.forEach(child => {
-      const d = child.val();
-      if (d.status === 'pending') pending.push({ id: child.key, type: d.type, amount: d.amount, status: d.status });
-    });
-    pending.sort((a,b) => b.timestamp - a.timestamp); // Fallback sort
-    send(ws,{type:'pending-transactions',transactions:pending.slice(0, 10)});
+    send(ws,{type:'authed',uid}); send(ws,{type:'wallet',...walletFor(uid)});
+    const pending=db.prepare("SELECT id,type,amount,status FROM transactions WHERE username=? AND status='pending' ORDER BY timestamp DESC LIMIT 10").all(uid);
+    send(ws,{type:'pending-transactions',transactions:pending});
     return;
   }
 
@@ -662,9 +568,9 @@ async function handle(ws,m){
     ws.authed=true;ws.isAdmin=true;send(ws,{type:'admin-authed'});return;
   }
   if(ws.isAdmin){
-    if(m.type==='admin-list-transactions') return send(ws,{type:'admin-transactions',transactions:await adminListTransactions()});
+    if(m.type==='admin-list-transactions') return send(ws,{type:'admin-transactions',transactions:adminListTransactions()});
     if(m.type==='admin-decision'){
-      const r=await adminDecision(String(m.id||''),String(m.decision||''),String(m.reason||''));
+      const r=adminDecision(String(m.id||''),String(m.decision||''),String(m.reason||''));
       if(!r.ok) return send(ws,{type:'admin-error',message:r.reason});
       send(ws,{type:'admin-decision-ok',id:m.id,status:r.tx.status});
       return;
@@ -684,87 +590,79 @@ async function handle(ws,m){
     }
     if(!room.players.has(ws.uid)) room.players.set(ws.uid,{uid:ws.uid,picks:[],isBot:false,active:true,displayName:ws.uid});
     else room.players.get(ws.uid).active=true;
-    room.dirty=true; await saveRoom(room); return;
+    room.dirty=true; saveRoom(room); return;
   }
   if(m.type==='leave'){
     const room=rooms[ws.roomId]; const p=room?.players.get(ws.uid);
-    if(room&&p&&!p.isBot){ await refundDisconnectedPlayer(room,p); room.players.delete(ws.uid); room.dirty=true;await saveRoom(room); }
+    if(room&&p&&!p.isBot){ await refundDisconnectedPlayer(room,p); room.players.delete(ws.uid); room.dirty=true;saveRoom(room); }
     ws.roomId=null;return;
   }
   if(m.type==='pick'){
     const room=rooms[ws.roomId];if(!room)return;
     const r=await pickIntent(room,ws.uid,Number(m.number));
     send(ws,r.ok?{type:'pick-ok',number:Number(m.number)}:{type:'pick-fail',number:Number(m.number),reason:r.reason});
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});if(room.dirty)await saveRoom(room);return;
+    send(ws,{type:'wallet',...walletFor(ws.uid)});if(room.dirty)saveRoom(room);return;
   }
   if(m.type==='unpick'){
     const room=rooms[ws.roomId];if(!room)return;
     const r=await unpickIntent(room,ws.uid,Number(m.number));
     send(ws,r.ok?{type:'unpick-ok',number:Number(m.number)}:{type:'unpick-fail',number:Number(m.number),reason:r.reason});
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});if(room.dirty)await saveRoom(room);return;
+    send(ws,{type:'wallet',...walletFor(ws.uid)});if(room.dirty)saveRoom(room);return;
   }
   if(m.type==='transfer'){
     const amount=Number(m.amount);if(!Number.isFinite(amount)||amount<=0)return;
-    let success = false;
-    await db.ref('users/' + ws.uid).transaction(u => {
-      if (!u) return u;
-      const available = Number(u.main_wallet) - Number(u.pending_withdrawal);
-      if (available < amount) return; // Abort
-      u.main_wallet -= amount;
-      u.play_wallet = (u.play_wallet || 0) + amount;
-      u.updated_at = now();
-      success = true;
-      return u;
-    });
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});
-    if(!success) send(ws,{type:'error',message:'transfer-failed'});
-    return;
+    const ok=db.transaction(()=>{const u=db.prepare('SELECT * FROM users WHERE username=?').get(ws.uid);if(!u)return false;const available=Number(u.main_wallet)-Number(u.pending_withdrawal);if(available<amount)return false;db.prepare('UPDATE users SET main_wallet=main_wallet-?,play_wallet=play_wallet+?,updated_at=? WHERE username=?').run(amount,amount,now(),ws.uid);return true;})();
+    send(ws,{type:'wallet',...walletFor(ws.uid)});if(!ok)send(ws,{type:'error',message:'transfer-failed'});return;
   }
-  if(m.type==='wallet-refresh'){send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;}
+  if(m.type==='wallet-refresh'){send(ws,{type:'wallet',...walletFor(ws.uid)});return;}
   if(m.type==='transaction-request'){
-    const r=await transactionRequest(ws.uid,m);if(!r.ok)return send(ws,{type:'error',message:r.reason});
-    send(ws,{type:'transaction-created',id:r.id});send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;
+    const r=transactionRequest(ws.uid,m);if(!r.ok)return send(ws,{type:'error',message:r.reason});
+    send(ws,{type:'transaction-created',id:r.id});send(ws,{type:'wallet',...walletFor(ws.uid)});return;
   }
   if(m.type==='transaction-image'){
-    await transactionImage(ws.uid,String(m.id||''),String(m.imageData||''));return;
+    transactionImage(ws.uid,String(m.id||''),String(m.imageData||''));return;
   }
-  if(m.type==='notification-read'){await markNotificationRead(ws.uid,String(m.id||''));return;}
+  if(m.type==='notification-read'){markNotificationRead(ws.uid,String(m.id||''));return;}
 }
 
 setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue;}ws.isAlive=false;try{ws.ping();}catch{}}},25000);
 
 const app=express();
-app.get('/health',async (_,res)=>{
-  const roomInfo = {};
-  for (const room of Object.values(rooms)) {
-    roomInfo[room.id] = { phase: room.phase, round: room.round, players: Object.keys(room.snapshot().players).length, taken: room.taken.size };
-  }
-  res.json({ok:true,database:'realtime-database',rooms:roomInfo});
-});
+
+app.get('/health',(_,res)=>res.json({ok:true,database:'sqlite',dbPath:DB_PATH,rooms:Object.fromEntries(Object.values(rooms).map(r=>[r.id,{phase:r.phase,round:r.round,players:r.snapshot().players?Object.keys(r.snapshot().players).length:0,taken:r.taken.size}]))}));
 app.get('/',(_,res)=>res.type('text').send('Winzo authoritative server is running.'));
 
 const server=http.createServer(app);
+
+// ─── ALLOWED ORIGINS CHECK ───
 server.on('upgrade',(req,socket,head)=>{
   const origin=req.headers.origin||'';
-  const ok=(ALLOWED_ORIGIN && origin===ALLOWED_ORIGIN)||(DEV_ALLOW_ANY && origin.endsWith('.github.dev'));
-  if(!ok){socket.destroy();return;}
+  const ok =
+    ALLOWED_ORIGINS.length === 0 ||                              // no whitelist → allow all
+    ALLOWED_ORIGINS.includes(origin) ||                          // exact match
+    origin.startsWith('http://localhost') ||
+    origin.startsWith('http://127.0.0.1') ||
+    origin === 'https://minex1976.github.io' ||
+    origin === 'https://web.telegram.org' ||
+    origin.startsWith('https://web.telegram.org') ||
+    (DEV_ALLOW_ANY && origin.endsWith('.github.dev'));
+
+  if(!ok){
+    console.warn(`[WS-REJECT] origin="${origin}"`);
+    socket.destroy();
+    return;
+  }
   wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
 });
 
-// Initialize rooms from RTDB before starting server
-loadRooms().then(() => {
-  server.listen(PORT,'0.0.0.0',()=>console.log(`Winzo Realtime Database server listening on :${PORT}`));
-  
-  for(const room of Object.values(rooms)){
-    if(room.phase==='selection' && room.endsAt<=now()) { room.endsAt=now()+SELECTION_SECONDS*1000; room.dirty=true; }
-    room.persist();
-    scheduleBots(room);
-  }
-  console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
-  console.log(`Bot pool size: ${BOT_NAMES.length}`);
-  console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
-  console.log(`Allowed origin: ${ALLOWED_ORIGIN} (dev: ${DEV_ALLOW_ANY?'any *.github.dev':'no'})`);
-}).catch(err => {
-  console.error("Failed to load rooms from Realtime Database. Check your credentials and database URL.", err);
-  process.exit(1);
-});
+server.listen(PORT,'0.0.0.0',()=>console.log(`Winzo SQLite server listening on :${PORT}`));
+
+for(const room of Object.values(rooms)){
+  if(room.phase==='selection' && room.endsAt<=now()) { room.endsAt=now()+SELECTION_SECONDS*1000; room.dirty=true; }
+  room.persist();
+  scheduleBots(room);
+}
+console.log(`SQLite database: ${DB_PATH}`);
+console.log(`Bot pool size: ${BOT_NAMES.length}`);
+console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
+console.log(`Allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'ALL (no whitelist)'}`);
