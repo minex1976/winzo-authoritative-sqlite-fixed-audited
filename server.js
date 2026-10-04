@@ -33,12 +33,6 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
 
-// --- ALLOWED ORIGINS (comma-separated list from env) ---
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 
 const SELECTION_SECONDS = 30;
@@ -182,12 +176,11 @@ async function transactionRequest(uid, data) {
   if (imageData.length > 2_500_000) return { ok: false, reason: 'image-too-large' };
 
   try {
-    // 1. Update user balance atomically
     let balanceUpdated = false;
     await db.ref('users/' + uid).transaction(u => {
       if (!u) return u;
       if (type === 'withdraw' && (u.main_wallet - u.pending_withdrawal < amount)) {
-        return; // Abort transaction (insufficient funds)
+        return;
       }
       if (type === 'withdraw') {
         u.pending_withdrawal = (u.pending_withdrawal || 0) + amount;
@@ -199,20 +192,10 @@ async function transactionRequest(uid, data) {
 
     if (!balanceUpdated) return { ok: false, reason: 'insufficient-main' };
 
-    // 2. Create the transaction record
     await db.ref('transactions/' + id).set({
-      username: uid,
-      type,
-      amount,
-      status: 'pending',
-      timestamp: now(),
-      reference,
-      full_name: fullName,
-      phone_number: phone,
-      image_data: imageData,
-      reason: '',
-      wallet_applied: 0,
-      updated_at: now()
+      username: uid, type, amount, status: 'pending', timestamp: now(),
+      reference, full_name: fullName, phone_number: phone, image_data: imageData,
+      reason: '', wallet_applied: 0, updated_at: now()
     });
 
     await sendWallet(uid);
@@ -227,7 +210,6 @@ async function transactionImage(uid, id, imageData) {
   const txRef = db.ref('transactions/' + id);
   const snap = await txRef.once('value');
   if (!snap.exists() || snap.val().username !== uid || snap.val().status !== 'pending') return false;
-  
   await txRef.update({ image_data: String(imageData), updated_at: now() });
   return true;
 }
@@ -238,26 +220,16 @@ async function adminListTransactions() {
   snapshot.forEach(child => {
     const d = child.val();
     txs.push({
-      id: child.key,
-      username: d.username,
-      type: d.type,
-      amount: d.amount,
-      status: d.status,
-      timestamp: d.timestamp,
-      reference: d.reference,
-      fullName: d.full_name,
-      phoneNumber: d.phone_number,
-      imageData: d.image_data,
-      reason: d.reason
+      id: child.key, username: d.username, type: d.type, amount: d.amount,
+      status: d.status, timestamp: d.timestamp, reference: d.reference,
+      fullName: d.full_name, phoneNumber: d.phone_number, imageData: d.image_data, reason: d.reason
     });
   });
-  // Sort manually since RTDB does not easily support compound sorting without indexes
   return txs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
 async function adminDecision(id, decision, reason = '') {
   if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
-  
   try {
     const txRef = db.ref('transactions/' + id);
     const txSnap = await txRef.once('value');
@@ -266,19 +238,14 @@ async function adminDecision(id, decision, reason = '') {
     if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
 
     let success = false;
-    // Update user wallet atomically
     await db.ref('users/' + tx.username).transaction(u => {
       if (!u) return u;
-      
       if (tx.type === 'deposit' && decision === 'approved') {
         u.play_wallet = (u.play_wallet || 0) + tx.amount;
       }
-      
       if (tx.type === 'withdraw') {
         if (decision === 'approved') {
-          if (Number(u.pending_withdrawal) < Number(tx.amount) || Number(u.main_wallet) < Number(tx.amount)) {
-            return; // Abort: reserved balance changed
-          }
+          if (Number(u.pending_withdrawal) < Number(tx.amount) || Number(u.main_wallet) < Number(tx.amount)) return;
           u.main_wallet -= tx.amount;
           u.pending_withdrawal -= tx.amount;
         } else {
@@ -292,7 +259,6 @@ async function adminDecision(id, decision, reason = '') {
 
     if (!success) return { ok: false, reason: 'reserved-balance-changed' };
 
-    // Update transaction status
     await txRef.update({
       status: decision,
       reason: String(reason || '').slice(0, 256),
@@ -407,27 +373,18 @@ class Room {
   async persist() {
     const players = {};
     for (const [uid, p] of this.players) players[uid] = {
-      picks: [...p.picks],
-      isBot: !!p.isBot,
-      active: !!p.active,
-      displayName: p.displayName || uid
+      picks: [...p.picks], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid
     };
     const taken = Object.fromEntries(this.taken.entries());
     
     await db.ref('rooms/' + this.id).set({
-      bet: this.bet,
-      phase: this.phase,
-      round: this.round,
-      ends_at: this.endsAt,
-      winning_number: this.winningNumber,
-      winners_json: JSON.stringify(this.winners),
+      bet: this.bet, phase: this.phase, round: this.round, ends_at: this.endsAt,
+      winning_number: this.winningNumber, winners_json: JSON.stringify(this.winners),
       prize_pool: this.prizePool,
       last_result_json: this.lastResult ? JSON.stringify(this.lastResult) : null,
-      taken_json: JSON.stringify(taken),
-      players_json: JSON.stringify(players),
+      taken_json: JSON.stringify(taken), players_json: JSON.stringify(players),
       updated_at: now()
     });
-    
     this.dirty = false;
   }
   broadcast() {
@@ -445,12 +402,10 @@ async function loadRooms() {
   if (snap.exists()) {
     snap.forEach(child => { rowMap.set(child.key, child.val()); });
   }
-  
   rooms = {
     room_15: new Room('room_15', 15, rowMap.get('room_15')),
     room_30: new Room('room_30', 30, rowMap.get('room_30')),
   };
-  
   for (const room of Object.values(rooms)) { 
     for (const p of room.players.values()) if (!p.isBot) p.active = false; 
   }
@@ -545,8 +500,7 @@ async function toSpinning(room) {
     }
   }
   room.lastResult = {
-    round: room.round,
-    winningNumber,
+    round: room.round, winningNumber,
     winners: winners.map(uid => room.players.get(uid)?.displayName || uid),
     winAmount: winners.length ? Math.floor(prizePool / winners.length) : 0,
     setAt: now()
@@ -594,9 +548,7 @@ function scheduleBots(room) {
         p={uid,picks:[],isBot:true,active:true,displayName};
         room.players.set(uid,p);
       } else {
-        p.active=true;
-        p.isBot=true;
-        p.displayName=displayName;
+        p.active=true; p.isBot=true; p.displayName=displayName;
       }
       for(let k=0;k<MAX_PICKS;k++){
         if(room.phase!=='selection') return;
@@ -657,7 +609,7 @@ async function handle(ws,m){
       const d = child.val();
       if (d.status === 'pending') pending.push({ id: child.key, type: d.type, amount: d.amount, status: d.status });
     });
-    pending.sort((a,b) => b.timestamp - a.timestamp); // Fallback sort
+    pending.sort((a,b) => b.timestamp - a.timestamp);
     send(ws,{type:'pending-transactions',transactions:pending.slice(0, 10)});
     return;
   }
@@ -714,7 +666,7 @@ async function handle(ws,m){
     await db.ref('users/' + ws.uid).transaction(u => {
       if (!u) return u;
       const available = Number(u.main_wallet) - Number(u.pending_withdrawal);
-      if (available < amount) return; // Abort
+      if (available < amount) return;
       u.main_wallet -= amount;
       u.play_wallet = (u.play_wallet || 0) + amount;
       u.updated_at = now();
@@ -750,28 +702,13 @@ app.get('/',(_,res)=>res.type('text').send('Winzo authoritative server is runnin
 
 const server=http.createServer(app);
 
-// ─── ALLOWED ORIGINS CHECK ───
+// ─── ALLOW EVERY ORIGIN (no whitelist) ───
 server.on('upgrade',(req,socket,head)=>{
-  const origin=req.headers.origin||'';
-  const ok =
-    ALLOWED_ORIGINS.length === 0 ||                              // no whitelist → allow all
-    ALLOWED_ORIGINS.includes(origin) ||                          // exact match
-    origin.startsWith('http://localhost') ||
-    origin.startsWith('http://127.0.0.1') ||
-    origin === 'https://minex1976.github.io' ||
-    origin === 'https://web.telegram.org' ||
-    origin.startsWith('https://web.telegram.org') ||
-    (DEV_ALLOW_ANY && origin.endsWith('.github.dev'));
-
-  if(!ok){
-    console.warn(`[WS-REJECT] origin="${origin}"`);
-    socket.destroy();
-    return;
-  }
+  const origin=req.headers.origin||'(none)';
+  console.log(`[WS-ACCEPT] origin="${origin}"`);
   wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
 });
 
-// Initialize rooms from RTDB before starting server
 loadRooms().then(() => {
   server.listen(PORT,'0.0.0.0',()=>console.log(`Winzo Realtime Database server listening on :${PORT}`));
   
@@ -783,7 +720,7 @@ loadRooms().then(() => {
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
   console.log(`Bot pool size: ${BOT_NAMES.length}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
-  console.log(`Allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'ALL (no whitelist)'}`);
+  console.log(`Origin check: DISABLED (all origins accepted)`);
 }).catch(err => {
   console.error("Failed to load rooms from Realtime Database. Check your credentials and database URL.", err);
   process.exit(1);
