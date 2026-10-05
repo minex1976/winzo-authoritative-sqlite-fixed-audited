@@ -507,12 +507,12 @@
         //  PRODUCTION FLAG
         // ============================================================
         const DEV_MODE = false;
-        window.WINZO_CONFIG = window.WINZO_CONFIG || { WS_URL: 'wss://winzo-authoritative-server.onrender.com' };
+        window.WINZO_CONFIG = window.WINZO_CONFIG || { WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com/' };
 
         // ============================================================
         //  SERVER WEBSOCKET (single source of truth)
         // ============================================================
-        const SERVER_WS_URL = (window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || 'wss://winzo-authoritative-server.onrender.com';
+        const SERVER_WS_URL = (window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com';
         let client = null;
 
         // ============================================================
