@@ -507,11 +507,12 @@
         //  PRODUCTION FLAG
         // ============================================================
         const DEV_MODE = false;
+        window.WINZO_CONFIG = window.WINZO_CONFIG || { WS_URL: 'wss://winzo-authoritative-server.onrender.com' };
 
         // ============================================================
         //  SERVER WEBSOCKET (single source of truth)
         // ============================================================
-        const SERVER_WS_URL = 'wss://winzo-authoritative-sqlite-fixed-audited-9jvl.onrender.com';
+        const SERVER_WS_URL = (window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || 'wss://winzo-authoritative-server.onrender.com';
         let client = null;
 
         // ============================================================
@@ -1831,13 +1832,17 @@
         // ============================================================
         function resolveLoginUsername() {
             const username = authUsername ? authUsername.value.trim() : '';
-            if (!username) { if (authError) authError.textContent = 'Please enter your username.'; return null; }
-            if (telegramDetectedUsername && username !== telegramDetectedUsername) {
-                if (authError) authError.textContent = 'You must use your Telegram username: @' + telegramDetectedUsername;
+            if (!DEV_MODE && !(tg && tg.initData)) {
+                if (authError) authError.textContent = 'Please open Winzo from the Telegram Mini App.';
+                return null;
+            }
+            if (DEV_MODE && !username) { if (authError) authError.textContent = 'Enter a development username.'; return null; }
+            if (telegramDetectedUsername && username && username !== telegramDetectedUsername) {
+                if (authError) authError.textContent = 'The username does not match your Telegram account.';
                 if (authUsername) authUsername.value = telegramDetectedUsername;
                 return null;
             }
-            return username;
+            return username || telegramDetectedUsername || '';
         }
         async function beginSession(username) {
             currentUser = username;
@@ -2164,6 +2169,7 @@
                 this.ws = null; this.backoff = 800;
                 this.initData = ''; this.refCode = null; this.roomId = null; this._ka = null;
                 this.devUsername = '';
+                this.pendingTransactionImages = new Map();
                 this.connecting = false;
             }
             async connect(initData, refCode, roomId, devUsername) {
@@ -2184,6 +2190,7 @@
                     this.onConnection && this.onConnection(false);
                     return;
                 }
+                this.authenticated = false;
                 this.ws.onopen = () => {
                     this.connecting = false;
                     this.backoff = 800;
@@ -2194,25 +2201,31 @@
                 };
                 this.ws.onmessage = ev => {
                     let m; try { m = JSON.parse(ev.data); } catch { return; }
-                    if (m.type === 'authed')            { this.onAuth && this.onAuth(m.uid); this.onConnection && this.onConnection(true); if (this.roomId) this.rawSend({ type: 'join', room: this.roomId }); }
+                    if (m.type === 'authed')            { this.authenticated = true; this.onAuth && this.onAuth(m.uid, m.displayName); this.onConnection && this.onConnection(true); if (this.roomId) this.rawSend({ type: 'join', room: this.roomId }); }
                     else if (m.type === 'state')        this.onState && this.onState(m.state, m.room);
                     else if (m.type === 'pick-ok')      this.onPickOk && this.onPickOk(m.number);
                     else if (m.type === 'pick-fail')    this.onPickFail && this.onPickFail(m.number, m.reason);
                     else if (m.type === 'unpick-ok')    this.onPickOk && this.onPickOk(m.number);
                     else if (m.type === 'unpick-fail')  this.onPickFail && this.onPickFail(m.number, m.reason);
                     else if (m.type === 'wallet')       this.onWallet && this.onWallet(m);
-                    else if (m.type === 'transaction-created') this.onTransactionCreated && this.onTransactionCreated(m);
+                    else if (m.type === 'transaction-created') {
+                        const pendingImage = m.clientRequestId ? this.pendingTransactionImages.get(m.clientRequestId) : null;
+                        if (m.clientRequestId) this.pendingTransactionImages.delete(m.clientRequestId);
+                        if (pendingImage) this.transactionImage(m.id, pendingImage);
+                        this.onTransactionCreated && this.onTransactionCreated(m);
+                    }
                     else if (m.type === 'transaction-status') this.onTransactionStatus && this.onTransactionStatus(m);
                     else if (m.type === 'notification') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'sticky-broadcast') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
-                    else if (m.type === 'error')        this.onError && this.onError(m);
+                    else if (m.type === 'error')        { this.onError && this.onError(m); if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} } }
                 };
                 this.ws.onclose = (ev) => {
                     clearInterval(this._ka);
+                    this.authenticated = false;
                     this.connecting = false;
                     this.onConnection && this.onConnection(false);
-                    if (ev.code === 1000) return;
+                    if (ev.code === 1000 || ev.code === 4001 || ev.code === 4003) return;
                     setTimeout(() => this.connect(this.initData, this.refCode, this.roomId, this.devUsername), this.backoff);
                     this.backoff = Math.min(this.backoff * 2, 15000);
                 };
@@ -2321,7 +2334,7 @@
             c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
             return c.toDataURL('image/jpeg', 0.72);
         }
-        function requestTransaction(type, amount, reference = '', imageFile = null, extra = {}) {
+        async function requestTransaction(type, amount, reference = '', imageFile = null, extra = {}) {
             if (!currentUser || !client || !isNetworkConnected) return Promise.resolve(false);
             amount = Number(amount);
             if (!['deposit', 'withdraw'].includes(type) || !Number.isFinite(amount) || amount <= 0) return Promise.resolve(false);
@@ -2329,19 +2342,19 @@
             transactionStatus.textContent = '⏳ Sending request to admin...';
             transactionStatus.className = 'status-text pending';
             if (transactionModal) transactionModal.classList.add('active');
+            let compressedImage = '';
+            if (type === 'deposit' && imageFile) {
+                try { compressedImage = await fileToCompressedDataUrl(imageFile); } catch (_) {}
+                if (compressedImage && client.pendingTransactionImages) client.pendingTransactionImages.set(id, compressedImage);
+            }
             const sent = client.transactionRequest({
-                id, txType: type, amount,
+                clientRequestId: id, txType: type, amount,
                 reference: reference ? safeProductionName(reference) : '',
                 fullName: extra.name ? safeProductionName(extra.name) : '',
                 phoneNumber: extra.phone ? safeProductionName(extra.phone) : ''
             });
             if (!sent) { transactionStatus.textContent = '⚠️ Network unavailable.'; return Promise.resolve(false); }
             transactionStatus.textContent = '⏳ Pending admin approval...';
-            if (type === 'deposit' && imageFile) {
-                fileToCompressedDataUrl(imageFile).then(dataUrl => {
-                    if (dataUrl) client.transactionImage(id, dataUrl);
-                }).catch(() => {});
-            }
             return Promise.resolve(true);
         }
 
