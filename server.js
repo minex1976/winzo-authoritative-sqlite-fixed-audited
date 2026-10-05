@@ -32,6 +32,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || 'https://minex1976.github.io,https://web.telegram.org')
+  .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 
@@ -82,21 +84,40 @@ class Mutex {
   run(fn) { const n = this._t.then(fn, fn); this._t = n.then(() => {}, () => {}); return n; }
 }
 
-function safeUser(username) { return String(username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32); }
+function safeUser(username) {
+  return String(username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+}
+function safeUid(value) {
+  return String(value || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 64);
+}
 function now() { return Date.now(); }
+function constantTimeEqual(a, b) {
+  const aa = Buffer.from(String(a || ''));
+  const bb = Buffer.from(String(b || ''));
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
 
 // --- Realtime Database Helpers ---
 
-async function ensureUser(username, referredBy = null, bot = false) {
-  const clean = safeUser(username);
+async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
+  const clean = safeUid(username);
   if (!clean) return null;
   const userRef = db.ref('users/' + clean);
   const snapshot = await userRef.once('value');
-  if (snapshot.exists()) return snapshot.val();
+  if (snapshot.exists()) {
+    const current = snapshot.val() || {};
+    const patch = {};
+    if (extra.telegram_id != null && current.telegram_id == null) patch.telegram_id = Number(extra.telegram_id);
+    if (extra.display_name && !current.display_name) patch.display_name = String(extra.display_name).slice(0, 128);
+    if (Object.keys(patch).length) await userRef.update({ ...patch, updated_at: now() });
+    return { ...current, ...patch };
+  }
 
   const t = now();
   const newUser = {
     username: clean,
+    display_name: String(extra.display_name || clean).slice(0, 128),
+    telegram_id: extra.telegram_id != null ? Number(extra.telegram_id) : null,
     main_wallet: 0,
     play_wallet: bot ? BOT_START_WALLET : 30,
     pending_withdrawal: 0,
@@ -107,6 +128,36 @@ async function ensureUser(username, referredBy = null, bot = false) {
   };
   await userRef.set(newUser);
   return newUser;
+}
+
+async function resolveTelegramUser(user, referredBy = null) {
+  if (!user?.id) return null;
+  const telegramId = Number(user.id);
+  if (!Number.isSafeInteger(telegramId) || telegramId <= 0) return null;
+
+  const mapRef = db.ref('telegram_users/' + telegramId);
+  const mapped = await mapRef.once('value');
+  if (mapped.exists() && mapped.val()?.uid) {
+    const uid = safeUid(mapped.val().uid);
+    const existing = await ensureUser(uid, referredBy, false, {
+      telegram_id: telegramId,
+      display_name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid
+    });
+    return existing ? { uid, user: existing } : null;
+  }
+
+  const username = safeUser(user.username || '');
+  let uid = username;
+  if (!uid) uid = `tg_${telegramId}`;
+
+  // Preserve existing username-keyed accounts where possible, while binding the
+  // Telegram numeric ID so a username change does not create a second account.
+  const existing = await db.ref('users/' + uid).once('value');
+  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || username || uid;
+  const record = await ensureUser(uid, referredBy, false, { telegram_id: telegramId, display_name: displayName });
+  if (!record) return null;
+  await mapRef.set({ uid, username: uid, updated_at: now() });
+  return { uid, user: record };
 }
 
 async function walletFor(username) {
@@ -162,46 +213,57 @@ async function notifyTransaction(username, tx) {
 }
 
 async function transactionRequest(uid, data) {
-  const id = safeUser(data.id) || crypto.randomUUID();
+  // Transaction IDs are generated server-side. Client-supplied IDs are ignored.
   const type = data.txType;
   const amount = Number(data.amount);
-  
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
-  
+
   const reference = String(data.reference || '').slice(0, 128);
   const fullName = String(data.fullName || '').slice(0, 128);
   const phone = String(data.phoneNumber || '').slice(0, 64);
   const imageData = String(data.imageData || '');
   if (imageData.length > 2_500_000) return { ok: false, reason: 'image-too-large' };
 
+  const txRef = db.ref('transactions').push();
+  const id = txRef.key;
+  let reservationApplied = false;
+
   try {
-    let balanceUpdated = false;
-    await db.ref('users/' + uid).transaction(u => {
-      if (!u) return u;
-      if (type === 'withdraw' && (u.main_wallet - u.pending_withdrawal < amount)) {
-        return;
-      }
-      if (type === 'withdraw') {
-        u.pending_withdrawal = (u.pending_withdrawal || 0) + amount;
-      }
-      u.updated_at = now();
-      balanceUpdated = true;
-      return u;
-    });
+    if (type === 'withdraw') {
+      await db.ref('users/' + uid).transaction(u => {
+        if (!u) return;
+        const available = Number(u.main_wallet || 0) - Number(u.pending_withdrawal || 0);
+        if (available < amount) return;
+        u.pending_withdrawal = Number(u.pending_withdrawal || 0) + amount;
+        u.updated_at = now();
+        reservationApplied = true;
+        return u;
+      });
+      if (!reservationApplied) return { ok: false, reason: 'insufficient-main' };
+    } else {
+      const exists = await db.ref('users/' + uid).once('value');
+      if (!exists.exists()) return { ok: false, reason: 'user-not-found' };
+    }
 
-    if (!balanceUpdated) return { ok: false, reason: 'insufficient-main' };
-
-    await db.ref('transactions/' + id).set({
+    await txRef.set({
       username: uid, type, amount, status: 'pending', timestamp: now(),
       reference, full_name: fullName, phone_number: phone, image_data: imageData,
       reason: '', wallet_applied: 0, updated_at: now()
     });
 
     await sendWallet(uid);
-    return { ok: true, id };
+    return { ok: true, id, clientRequestId: String(data.clientRequestId || '').slice(0, 128) };
   } catch (e) {
-    return { ok: false, reason: e.message || 'transaction-failed' };
+    if (reservationApplied) {
+      await db.ref('users/' + uid).transaction(u => {
+        if (!u) return u;
+        u.pending_withdrawal = Math.max(0, Number(u.pending_withdrawal || 0) - amount);
+        u.updated_at = now();
+        return u;
+      }).catch(() => {});
+    }
+    return { ok: false, reason: 'transaction-failed' };
   }
 }
 
@@ -366,7 +428,7 @@ class Room {
       winners: [...this.winners].map(uid => this.players.get(uid)?.displayName || uid),
       winningNumber: this.winningNumber,
       prizePool: this.prizePool, potAmount: this.prizePool,
-      totalBets: [...this.players.values()].filter(p => p.active || p.isBot).reduce((s, p) => s + p.picks.length * this.bet, 0),
+      totalBets: [...this.players.values()].filter(p => p.active && !p.isBot).reduce((s, p) => s + p.picks.length * this.bet, 0),
       serverNow: now(), lastResult: this.lastResult,
     };
   }
@@ -480,12 +542,14 @@ async function toSpinning(room) {
   const withPicks = [...room.players.values()].filter(p => p.picks.length > 0 && (p.isBot || p.active));
   const humans = withPicks.filter(p => !p.isBot);
   if (!humans.length) return resetRound(room, 'no-humans');
-  const nums = [...room.taken.keys()];
-  if (!nums.length) return resetRound(room, 'no-picks');
-  const winningNumber = nums[Math.floor(Math.random() * nums.length)];
-  const winners = withPicks.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
-  const totalPicks = withPicks.reduce((s,p) => s + p.picks.length, 0);
-  const prizePool = Math.floor(totalPicks * room.bet * PAYOUT_RATE);
+  const humanNums = [...new Set(humans.flatMap(p => p.picks))];
+  if (!humanNums.length) return resetRound(room, 'no-human-picks');
+  // Bots are visual participants only: they do not fund the pot, win payouts,
+  // or determine the winning number. The winning number is selected from real player picks.
+  const winningNumber = humanNums[Math.floor(Math.random() * humanNums.length)];
+  const winners = humans.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
+  const humanPicks = humans.reduce((s,p) => s + p.picks.length, 0);
+  const prizePool = Math.floor(humanPicks * room.bet * PAYOUT_RATE);
   room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
   room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
   
@@ -567,8 +631,9 @@ setInterval(async()=>{
       if(room.phase==='selection' && t>=room.endsAt) await toSpinning(room);
       else if(room.phase==='spinning' && t>=room.endsAt) await toResults(room);
       else if(room.phase==='results' && t>=room.endsAt) await resetRound(room,'results-done');
+      if(room.dirty) await room.persist();
+      room.broadcast();
     });
-    if(room.dirty) await saveRoom(room);
   }
 },500);
 
@@ -579,10 +644,13 @@ function send(ws,obj){ if(ws.readyState===1) ws.send(JSON.stringify(obj)); }
 function sendRoomState(room){ if(room) room.broadcast(); }
 
 wss.on('connection',(ws)=>{
-  ws.isAlive=true; ws.uid=null; ws.roomId=null; ws.authed=false; ws.isAdmin=false;
+  ws.isAlive=true;
+  ws.authenticatedAt=null;
+  ws.authTimer=setTimeout(()=>{ if(!ws.authed){ try{ws.close(4001,'authentication timeout');}catch{} } }, 10000); ws.uid=null; ws.roomId=null; ws.authed=false; ws.isAdmin=false;
   ws.on('pong',()=>{ws.isAlive=true;});
   ws.on('message',async raw=>{let m;try{m=JSON.parse(raw.toString());}catch{return}try{await handle(ws,m);}catch(e){console.error('[WS-MSG]',e);send(ws,{type:'error',message:'server-error'});}});
   ws.on('close',()=>{
+    clearTimeout(ws.authTimer);
     if(ws.uid){const set=conns.get(ws.uid);if(set){set.delete(ws);if(!set.size)conns.delete(ws.uid);}
       if(ws.roomId){const room=rooms[ws.roomId];const p=room?.players.get(ws.uid);if(p&&!p.isBot){p.active=false;room.dirty=true;}}
     }
@@ -594,20 +662,31 @@ async function handle(ws,m){
   if(m.type==='ping') return send(ws,{type:'pong',t:now()});
 
   if(m.type==='auth'){
-    let uid=null; const user=validateInitData(m.initData||'');
-    if(user?.username) uid=safeUser(user.username);
-    else if(DEV_ALLOW_ANY && m.devUsername && /^[A-Za-z0-9_]{1,32}$/.test(m.devUsername)) uid=m.devUsername;
-    if(!uid) return send(ws,{type:'error',message:'auth-failed'});
-    await ensureUser(uid,m.ref||null,false);
-    ws.uid=uid;ws.authed=true;
+    const user = validateInitData(m.initData || '');
+    let resolved = null;
+    if (user) resolved = await resolveTelegramUser(user, m.ref || null);
+    if (!resolved && DEV_ALLOW_ANY && m.devUsername && /^[A-Za-z0-9_]{1,32}$/.test(m.devUsername)) {
+      const uid = safeUser(m.devUsername);
+      resolved = { uid, user: await ensureUser(uid, m.ref || null, false, { display_name: uid }) };
+    }
+    if(!resolved?.uid){
+      send(ws,{type:'error',message:'auth-failed',code:'AUTH_REQUIRED'});
+      try { ws.close(4001, 'authentication required'); } catch {}
+      return;
+    }
+    const uid = resolved.uid;
+    await ensureUser(uid, m.ref || null, false, { telegram_id: user?.id, display_name: user ? ([user.first_name,user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid });
+    clearTimeout(ws.authTimer); ws.authenticatedAt=now();
+    ws.uid=uid; ws.displayName = user ? ([user.first_name,user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid;
+    ws.authed=true;
     let set=conns.get(uid);if(!set){set=new Set();conns.set(uid,set);}set.add(ws);
-    send(ws,{type:'authed',uid}); send(ws,{type:'wallet',...(await walletFor(uid))});
-    
+    send(ws,{type:'authed',uid,displayName:ws.displayName}); send(ws,{type:'wallet',...(await walletFor(uid))});
+
     const txSnap = await db.ref('transactions').orderByChild('username').equalTo(uid).once('value');
     const pending = [];
     txSnap.forEach(child => {
       const d = child.val();
-      if (d.status === 'pending') pending.push({ id: child.key, type: d.type, amount: d.amount, status: d.status });
+      if (d.status === 'pending') pending.push({ id: child.key, type: d.type, amount: d.amount, status: d.status, timestamp: Number(d.timestamp || 0) });
     });
     pending.sort((a,b) => b.timestamp - a.timestamp);
     send(ws,{type:'pending-transactions',transactions:pending.slice(0, 10)});
@@ -615,7 +694,11 @@ async function handle(ws,m){
   }
 
   if(m.type==='admin-auth'){
-    if(!ADMIN_KEY || m.key !== ADMIN_KEY) return send(ws,{type:'admin-auth-fail'});
+    if(!ADMIN_KEY || typeof m.key !== 'string' || !constantTimeEqual(m.key, ADMIN_KEY)) {
+      send(ws,{type:'admin-auth-fail'});
+      try { ws.close(4003, 'admin authentication failed'); } catch {}
+      return;
+    }
     ws.authed=true;ws.isAdmin=true;send(ws,{type:'admin-authed'});return;
   }
   if(ws.isAdmin){
@@ -636,11 +719,9 @@ async function handle(ws,m){
     if(ws.roomId && rooms[ws.roomId] && ws.roomId!==m.room){ const oldPlayer=rooms[ws.roomId].players.get(ws.uid); if(oldPlayer) oldPlayer.active=false; }
     ws.roomId=m.room;
     const existing=room.players.get(ws.uid);
-    if(existing && existing.picks.length && !existing.active){
-      await refundDisconnectedPlayer(room,existing);
-    }
-    if(!room.players.has(ws.uid)) room.players.set(ws.uid,{uid:ws.uid,picks:[],isBot:false,active:true,displayName:ws.uid});
-    else room.players.get(ws.uid).active=true;
+    if(existing && existing.picks.length && !existing.active){ await refundDisconnectedPlayer(room,existing); }
+    if(!room.players.has(ws.uid)) room.players.set(ws.uid,{uid:ws.uid,picks:[],isBot:false,active:true,displayName:ws.displayName || ws.uid});
+    else { const p=room.players.get(ws.uid); p.active=true; p.displayName=ws.displayName || p.displayName || ws.uid; }
     room.dirty=true; await saveRoom(room); return;
   }
   if(m.type==='leave'){
@@ -661,14 +742,14 @@ async function handle(ws,m){
     send(ws,{type:'wallet',...(await walletFor(ws.uid))});if(room.dirty)await saveRoom(room);return;
   }
   if(m.type==='transfer'){
-    const amount=Number(m.amount);if(!Number.isFinite(amount)||amount<=0)return;
+    const amount=Number(m.amount);if(!Number.isFinite(amount)||amount<=0||amount>1000000)return send(ws,{type:'error',message:'bad-amount'});
     let success = false;
     await db.ref('users/' + ws.uid).transaction(u => {
       if (!u) return u;
-      const available = Number(u.main_wallet) - Number(u.pending_withdrawal);
+      const available = Number(u.main_wallet || 0) - Number(u.pending_withdrawal || 0);
       if (available < amount) return;
-      u.main_wallet -= amount;
-      u.play_wallet = (u.play_wallet || 0) + amount;
+      u.main_wallet = Number(u.main_wallet || 0) - amount;
+      u.play_wallet = Number(u.play_wallet || 0) + amount;
       u.updated_at = now();
       success = true;
       return u;
@@ -680,12 +761,17 @@ async function handle(ws,m){
   if(m.type==='wallet-refresh'){send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;}
   if(m.type==='transaction-request'){
     const r=await transactionRequest(ws.uid,m);if(!r.ok)return send(ws,{type:'error',message:r.reason});
-    send(ws,{type:'transaction-created',id:r.id});send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;
+    send(ws,{type:'transaction-created',id:r.id,clientRequestId:r.clientRequestId || null});send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;
   }
   if(m.type==='transaction-image'){
     await transactionImage(ws.uid,String(m.id||''),String(m.imageData||''));return;
   }
-  if(m.type==='notification-read'){await markNotificationRead(ws.uid,String(m.id||''));return;}
+  if(m.type==='notification-read'){
+    const id=String(m.id||'');
+    const snap=await db.ref('notifications/'+id).once('value');
+    if (snap.exists() && snap.val()?.username === ws.uid) await markNotificationRead(ws.uid,id);
+    return;
+  }
 }
 
 setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue;}ws.isAlive=false;try{ws.ping();}catch{}}},25000);
@@ -696,18 +782,47 @@ app.get('/health',async (_,res)=>{
   for (const room of Object.values(rooms)) {
     roomInfo[room.id] = { phase: room.phase, round: room.round, players: Object.keys(room.snapshot().players).length, taken: room.taken.size };
   }
-  res.json({ok:true,database:'realtime-database',rooms:roomInfo});
+  try {
+    await Promise.race([
+      db.ref('rooms').limitToFirst(1).once('value'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('database-timeout')), 2500))
+    ]);
+    res.json({ok:true,service:'winzo-authoritative-server',database:'firebase-realtime-database',websocket:true,uptime:process.uptime(),origins:ALLOWED_ORIGINS,rooms:roomInfo});
+  } catch (e) {
+    res.status(503).json({ok:false,service:'winzo-authoritative-server',database:'unavailable',websocket:true,error:e.message || 'database-unavailable'});
+  }
 });
 app.get('/',(_,res)=>res.type('text').send('Winzo authoritative server is running.'));
 
 const server=http.createServer(app);
 
-// ─── ALLOW EVERY ORIGIN (no whitelist) ───
 server.on('upgrade',(req,socket,head)=>{
-  const origin=req.headers.origin||'(none)';
-  console.log(`[WS-ACCEPT] origin="${origin}"`);
+  const origin = req.headers.origin || '';
+  const allowed = !origin || ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin);
+  if (!allowed) {
+    console.warn(`[WS-REJECT] origin="${origin}"`);
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  console.log(`[WS-ACCEPT] origin="${origin || '(none)'}"`);
   wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
 });
+
+async function gracefulShutdown(signal) {
+  console.log(`[SHUTDOWN] ${signal}`);
+  try {
+    for (const room of Object.values(rooms)) {
+      await room.mutex.run(async () => { if (room.dirty) await room.persist(); });
+      clearBotTimers(room);
+    }
+  } catch (e) { console.error('[SHUTDOWN] persist failed', e); }
+  for (const ws of wss.clients) { try { ws.close(1001, 'server shutting down'); } catch {} }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 loadRooms().then(() => {
   server.listen(PORT,'0.0.0.0',()=>console.log(`Winzo Realtime Database server listening on :${PORT}`));
@@ -720,7 +835,7 @@ loadRooms().then(() => {
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
   console.log(`Bot pool size: ${BOT_NAMES.length}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
-  console.log(`Origin check: DISABLED (all origins accepted)`);
+  console.log(`Allowed WebSocket origins: ${ALLOWED_ORIGINS.join(', ')}`);
 }).catch(err => {
   console.error("Failed to load rooms from Realtime Database. Check your credentials and database URL.", err);
   process.exit(1);
