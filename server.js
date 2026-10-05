@@ -563,37 +563,65 @@ async function refundDisconnectedPlayer(room, p) {
 
 async function toSpinning(room) {
   if (room.phase !== 'selection') return;
-  const withPicks = [...room.players.values()].filter(p => p.picks.length > 0 && (p.isBot || p.active));
-  const humans = withPicks.filter(p => !p.isBot);
-  if (!humans.length) return resetRound(room, 'no-humans');
-  const humanNums = [...new Set(humans.flatMap(p => p.picks))];
-  if (!humanNums.length) return resetRound(room, 'no-human-picks');
-  // Bots are visual participants only: they do not fund the pot, win payouts,
-  // or determine the winning number. The winning number is selected from real player picks.
-  const winningNumber = humanNums[Math.floor(Math.random() * humanNums.length)];
-  const winners = humans.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
-  const humanPicks = humans.reduce((s,p) => s + p.picks.length, 0);
-  const prizePool = Math.floor(humanPicks * room.bet * PAYOUT_RATE);
-  room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
-  room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
-  
-  if (winners.length) {
+
+  const allWithPicks = [...room.players.values()]
+    .filter(p => p.picks.length > 0 && (p.isBot || p.active));
+  const humans = allWithPicks.filter(p => !p.isBot);
+  const bots = allWithPicks.filter(p => p.isBot);
+
+  if (!allWithPicks.length) return resetRound(room, 'no-picks');
+
+  let winningNumber = null;
+  let winners = [];
+  let prizePool = 0;
+
+  if (humans.length) {
+    // Real players are present: they fund the pot and decide the outcome.
+    const humanNums = [...new Set(humans.flatMap(p => p.picks))];
+    if (!humanNums.length) return resetRound(room, 'no-human-picks');
+    winningNumber = humanNums[Math.floor(Math.random() * humanNums.length)];
+    winners = humans.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
+    const humanPicks = humans.reduce((s, p) => s + p.picks.length, 0);
+    prizePool = Math.floor(humanPicks * room.bet * PAYOUT_RATE);
+  } else {
+    // No real player picked this round. Bots are visual participants only and
+    // never receive payouts, but the round still resolves so every round shows
+    // a winning number and a winner list instead of silently restarting.
+    const botNums = [...new Set(bots.flatMap(p => p.picks))];
+    if (!botNums.length) return resetRound(room, 'no-picks');
+    winningNumber = botNums[Math.floor(Math.random() * botNums.length)];
+    winners = bots.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
+    prizePool = 0;
+  }
+
+  room.winningNumber = winningNumber;
+  room.winners = winners;
+  room.prizePool = prizePool;
+  room.phase = 'spinning';
+  room.endsAt = now() + SPINNING_SECONDS * 1000;
+  room.dirty = true;
+
+  if (winners.length && prizePool > 0) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
+      if (share <= 0) break;
+      if (room.players.get(uid)?.isBot) continue; // bots never receive payouts
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      await addNotification(uid, { message:`🏆 You won ${share} Birr in round ${room.round}!`, type:'notification' });
+      await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
       const uSnap = await db.ref('users/' + uid).once('value');
       const ref = uSnap.val()?.referred_by;
       if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
     }
   }
+
   room.lastResult = {
-    round: room.round, winningNumber,
+    round: room.round,
+    winningNumber,
     winners: winners.map(uid => room.players.get(uid)?.displayName || uid),
-    winAmount: winners.length ? Math.floor(prizePool / winners.length) : 0,
+    winAmount: (winners.length && prizePool > 0) ? Math.floor(prizePool / winners.length) : 0,
     setAt: now()
   };
-  console.log(`[${room.id}] r${room.round} → spin num=${winningNumber} winners=${winners.join(',') || '—'} pool=${prizePool}`);
+  console.log(`[${room.id}] r${room.round} → spin num=${winningNumber} winners=${room.lastResult.winners.join(',') || '—'} pool=${prizePool}${humans.length ? '' : ' (bots only)'}`);
 }
 
 async function toResults(room) {
@@ -649,58 +677,89 @@ function normalizeRoundBots(room) {
 function scheduleBots(room) {
   clearBotTimers(room);
   if (room.phase !== 'selection') return;
+
   const roster = normalizeRoundBots(room);
-  const windowMs = Math.max(1000, SELECTION_SECONDS * 1000 - 8000);
+  const names = [...roster];
+  if (!names.length) return;
 
-  roster.forEach((displayName, i) => {
+  // How many numbers each bot will claim this round (1..MAX_PICKS).
+  const remaining = new Map();
+  names.forEach(n => remaining.set(n, 1 + Math.floor(Math.random() * MAX_PICKS)));
+
+  // Build a turn-by-turn order: bots take turns in shuffled passes so the
+  // picks are spread across the whole selection window instead of all bots
+  // dumping their numbers at the very start of the round.
+  const order = [];
+  for (;;) {
+    const pass = names.filter(n => (remaining.get(n) || 0) > 0);
+    if (!pass.length) break;
+    for (let i = pass.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pass[i], pass[j]] = [pass[j], pass[i]];
+    }
+    for (const n of pass) {
+      order.push(n);
+      remaining.set(n, remaining.get(n) - 1);
+    }
+  }
+  if (!order.length) return;
+
+  const totalPicks = order.length;
+  const windowMs = Math.max(1500, SELECTION_SECONDS * 1000 - 6000);
+  const startDelay = 2500;
+  const usableMs = Math.max(1000, windowMs - startDelay);
+  const baseGap = usableMs / totalPicks;
+
+  let index = 0;
+
+  const runNextPick = async () => {
+    if (room.phase !== 'selection') return;
+    if (index >= order.length) return;
+
+    const displayName = order[index++];
     const uid = botUid(displayName);
-    const delay = 2000 + (windowMs / Math.max(1, roster.size)) * i + Math.random() * 1500;
 
-    const pickOne = async () => {
-      await room.mutex.run(async () => {
-        if (room.phase !== 'selection') return;
-        await ensureUser(uid, null, true);
+    await room.mutex.run(async () => {
+      if (room.phase !== 'selection') return;
+      await ensureUser(uid, null, true);
 
-        let p = room.players.get(uid);
-        if (!p) {
-          p = { uid, picks: [], isBot: true, active: true, displayName };
-          room.players.set(uid, p);
-        } else {
-          p.active = true;
-          p.isBot = true;
-          p.displayName = displayName;
-        }
-
-        if (p.picks.length >= MAX_PICKS) return;
-
-        const free = [];
-        for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
-        if (!free.length) return;
-
-        // The room mutex makes this check-and-claim atomic with real players.
-        const num = free[Math.floor(Math.random() * free.length)];
-        room.taken.set(num, uid);
-        p.picks.push(num);
-        room.dirty = true;
-
-        // Persist + broadcast THIS pick before the next bot pick. This makes
-        // the running total and online state update one pick at a time.
-        await room.persist();
-        room.broadcast();
-      });
-
-      // Schedule the next pick independently so one bot never holds the room
-      // mutex while waiting. That also keeps simultaneous human picks fair.
-      const p = room.players.get(uid);
-      if (room.phase === 'selection' && p?.active && p.picks.length < MAX_PICKS) {
-        const t = setTimeout(pickOne, 250 + Math.random() * 700);
-        room.botTimers.push(t);
+      let p = room.players.get(uid);
+      if (!p) {
+        p = { uid, picks: [], isBot: true, active: true, displayName };
+        room.players.set(uid, p);
+      } else {
+        p.active = true;
+        p.isBot = true;
+        p.displayName = displayName;
       }
-    };
 
-    const t = setTimeout(pickOne, delay);
-    room.botTimers.push(t);
-  });
+      if (p.picks.length >= MAX_PICKS) return;
+
+      const free = [];
+      for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
+      if (!free.length) return;
+
+      // The room mutex makes this check-and-claim atomic with real players.
+      const num = free[Math.floor(Math.random() * free.length)];
+      room.taken.set(num, uid);
+      p.picks.push(num);
+      room.dirty = true;
+
+      // Persist + broadcast THIS pick before the next bot pick.
+      await room.persist();
+      room.broadcast();
+    });
+
+    if (room.phase === 'selection' && index < order.length) {
+      const jitter = 0.7 + Math.random() * 0.5; // 0.70x .. 1.20x of baseGap
+      const gap = Math.max(450, Math.round(baseGap * jitter));
+      const t = setTimeout(runNextPick, gap);
+      room.botTimers.push(t);
+    }
+  };
+
+  const first = setTimeout(runNextPick, startDelay);
+  room.botTimers.push(first);
 }
 
 setInterval(async()=>{
