@@ -108,7 +108,9 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     const current = snapshot.val() || {};
     const patch = {};
     if (extra.telegram_id != null && current.telegram_id == null) patch.telegram_id = Number(extra.telegram_id);
-    if (extra.display_name && !current.display_name) patch.display_name = String(extra.display_name).slice(0, 128);
+    if (extra.display_name && String(current.display_name || '') !== String(extra.display_name)) {
+      patch.display_name = String(extra.display_name).slice(0, 128);
+    }
     if (Object.keys(patch).length) await userRef.update({ ...patch, updated_at: now() });
     return { ...current, ...patch };
   }
@@ -246,8 +248,11 @@ async function transactionRequest(uid, data) {
       if (!exists.exists()) return { ok: false, reason: 'user-not-found' };
     }
 
+    const userSnap = await db.ref('users/' + uid).once('value');
+    const userRecord = userSnap.val() || {};
+    const displayName = String(userRecord.display_name || userRecord.username || uid).slice(0, 128);
     await txRef.set({
-      username: uid, type, amount, status: 'pending', timestamp: now(),
+      username: uid, display_name: displayName, type, amount, status: 'pending', timestamp: now(),
       reference, full_name: fullName, phone_number: phone, image_data: imageData,
       reason: '', wallet_applied: 0, updated_at: now()
     });
@@ -282,8 +287,8 @@ async function adminListTransactions() {
   snapshot.forEach(child => {
     const d = child.val();
     txs.push({
-      id: child.key, username: d.username, type: d.type, amount: d.amount,
-      status: d.status, timestamp: d.timestamp, reference: d.reference,
+      id: child.key, username: d.username, displayName: d.display_name || d.full_name || d.username,
+      type: d.type, amount: d.amount, status: d.status, timestamp: d.timestamp, reference: d.reference,
       fullName: d.full_name, phoneNumber: d.phone_number, imageData: d.image_data, reason: d.reason
     });
   });
@@ -291,6 +296,10 @@ async function adminListTransactions() {
 }
 
 async function adminDecision(id, decision, reason = '') {
+  // Accept both the server vocabulary and the admin UI button vocabulary.
+  decision = String(decision || '').toLowerCase();
+  if (decision === 'approve') decision = 'approved';
+  if (decision === 'reject') decision = 'rejected';
   if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
   try {
     const txRef = db.ref('transactions/' + id);
@@ -420,6 +429,12 @@ class Room {
       if (!p.active && !p.isBot) continue;
       players[uid] = { name: p.displayName || uid, picks: [...p.picks], isBot: !!p.isBot, bet: this.bet };
     }
+    const activePlayers = [...this.players.values()].filter(p => p.active);
+    const totalPicks = activePlayers.reduce((sum, p) => sum + p.picks.length, 0);
+    const totalBets = totalPicks * this.bet;
+    const humanBets = activePlayers
+      .filter(p => !p.isBot)
+      .reduce((sum, p) => sum + p.picks.length * this.bet, 0);
     return {
       gameState: this.phase, round: this.round, betAmount: this.bet,
       selectionEndsAt: this.endsAt, endsAt: this.endsAt,
@@ -427,8 +442,17 @@ class Room {
       players,
       winners: [...this.winners].map(uid => this.players.get(uid)?.displayName || uid),
       winningNumber: this.winningNumber,
+      // prizePool remains the real, human-funded payout pool.
       prizePool: this.prizePool, potAmount: this.prizePool,
-      totalBets: [...this.players.values()].filter(p => p.active && !p.isBot).reduce((s, p) => s + p.picks.length * this.bet, 0),
+      totalBets,
+      humanBets,
+      totalPicks,
+      // UI may use this virtual running figure to show every pick immediately,
+      // including visual bot picks, without changing real wallet payouts.
+      displayedPrizePool: Math.floor(totalBets * PAYOUT_RATE),
+      onlineCount: activePlayers.length,
+      botCount: activePlayers.filter(p => p.isBot).length,
+      realPlayerCount: activePlayers.filter(p => !p.isBot).length,
       serverNow: now(), lastResult: this.lastResult,
     };
   }
@@ -584,7 +608,7 @@ async function resetRound(room, why) {
   }
   room.round += 1; room.phase='selection'; room.endsAt=now()+SELECTION_SECONDS*1000;
   room.taken.clear(); room.winningNumber=null; room.winners=[]; room.prizePool=0; room.lastResult=null;
-  for (const p of room.players.values()) { p.picks=[]; if (!p.isBot) p.active=false; }
+  for (const p of room.players.values()) { p.picks=[]; p.active=false; }
   room.dirty=true;
   console.log(`[${room.id}] reset (${why}) → round ${room.round}`);
   scheduleBots(room);
@@ -597,30 +621,85 @@ function botRoster(count, round) {
 }
 function botUid(displayName) { return `__bot_${safeUser(displayName)}`; }
 function clearBotTimers(room) { room.botTimers.forEach(clearTimeout); room.botTimers=[]; }
+function currentBotRoster(room) {
+  const count = BOT_MIN + (room.round % (BOT_MAX - BOT_MIN + 1));
+  return botRoster(count, room.round);
+}
+
+function normalizeRoundBots(room) {
+  const roster = new Set(currentBotRoster(room));
+  const activeBotUids = new Set([...roster].map(botUid));
+
+  // Only bots selected for THIS round are participants. Release stale bot
+  // picks left over from an older roster so online/pot counts cannot accumulate.
+  for (const [uid, p] of room.players) {
+    if (!p.isBot) continue;
+    if (!activeBotUids.has(uid)) {
+      for (const n of p.picks || []) if (room.taken.get(n) === uid) room.taken.delete(n);
+      p.picks = [];
+      p.active = false;
+    } else {
+      p.active = true;
+      p.displayName = p.displayName || uid.replace(/^__bot_/, '');
+    }
+  }
+  return roster;
+}
+
 function scheduleBots(room) {
   clearBotTimers(room);
-  const count = BOT_MIN + (room.round % (BOT_MAX - BOT_MIN + 1));
-  const roster = botRoster(count, room.round); const windowMs=SELECTION_SECONDS*1000-8000;
-  roster.forEach((displayName,i)=>{
+  if (room.phase !== 'selection') return;
+  const roster = normalizeRoundBots(room);
+  const windowMs = Math.max(1000, SELECTION_SECONDS * 1000 - 8000);
+
+  roster.forEach((displayName, i) => {
     const uid = botUid(displayName);
-    const delay=2000+(windowMs/roster.length)*i+Math.random()*1500;
-    const t=setTimeout(async()=>{ await room.mutex.run(async()=>{
-      if(room.phase!=='selection') return;
-      await ensureUser(uid,null,true);
-      let p=room.players.get(uid);
-      if(!p){
-        p={uid,picks:[],isBot:true,active:true,displayName};
-        room.players.set(uid,p);
-      } else {
-        p.active=true; p.isBot=true; p.displayName=displayName;
+    const delay = 2000 + (windowMs / Math.max(1, roster.size)) * i + Math.random() * 1500;
+
+    const pickOne = async () => {
+      await room.mutex.run(async () => {
+        if (room.phase !== 'selection') return;
+        await ensureUser(uid, null, true);
+
+        let p = room.players.get(uid);
+        if (!p) {
+          p = { uid, picks: [], isBot: true, active: true, displayName };
+          room.players.set(uid, p);
+        } else {
+          p.active = true;
+          p.isBot = true;
+          p.displayName = displayName;
+        }
+
+        if (p.picks.length >= MAX_PICKS) return;
+
+        const free = [];
+        for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
+        if (!free.length) return;
+
+        // The room mutex makes this check-and-claim atomic with real players.
+        const num = free[Math.floor(Math.random() * free.length)];
+        room.taken.set(num, uid);
+        p.picks.push(num);
+        room.dirty = true;
+
+        // Persist + broadcast THIS pick before the next bot pick. This makes
+        // the running total and online state update one pick at a time.
+        await room.persist();
+        room.broadcast();
+      });
+
+      // Schedule the next pick independently so one bot never holds the room
+      // mutex while waiting. That also keeps simultaneous human picks fair.
+      const p = room.players.get(uid);
+      if (room.phase === 'selection' && p?.active && p.picks.length < MAX_PICKS) {
+        const t = setTimeout(pickOne, 250 + Math.random() * 700);
+        room.botTimers.push(t);
       }
-      for(let k=0;k<MAX_PICKS;k++){
-        if(room.phase!=='selection') return;
-        const free=[]; for(let n=1;n<=200;n++) if(!room.taken.has(n)) free.push(n); if(!free.length)return;
-        const num=free[Math.floor(Math.random()*free.length)]; room.taken.set(num,uid); p.picks.push(num); room.dirty=true;
-        await new Promise(r=>setTimeout(r,250+Math.random()*700));
-      }
-    }); },delay); room.botTimers.push(t);
+    };
+
+    const t = setTimeout(pickOne, delay);
+    room.botTimers.push(t);
   });
 }
 
@@ -649,10 +728,37 @@ wss.on('connection',(ws)=>{
   ws.authTimer=setTimeout(()=>{ if(!ws.authed){ try{ws.close(4001,'authentication timeout');}catch{} } }, 10000); ws.uid=null; ws.roomId=null; ws.authed=false; ws.isAdmin=false;
   ws.on('pong',()=>{ws.isAlive=true;});
   ws.on('message',async raw=>{let m;try{m=JSON.parse(raw.toString());}catch{return}try{await handle(ws,m);}catch(e){console.error('[WS-MSG]',e);send(ws,{type:'error',message:'server-error'});}});
-  ws.on('close',()=>{
+  ws.on('close', async ()=>{
     clearTimeout(ws.authTimer);
-    if(ws.uid){const set=conns.get(ws.uid);if(set){set.delete(ws);if(!set.size)conns.delete(ws.uid);}
-      if(ws.roomId){const room=rooms[ws.roomId];const p=room?.players.get(ws.uid);if(p&&!p.isBot){p.active=false;room.dirty=true;}}
+    if(!ws.uid) return;
+
+    const set = conns.get(ws.uid);
+    if (set) {
+      set.delete(ws);
+      if (set.size) return; // Another tab/device is still connected.
+      conns.delete(ws.uid);
+    }
+
+    if (ws.roomId) {
+      const room = rooms[ws.roomId];
+      if (!room) return;
+
+      // Refund immediately on the last real-player connection closing.
+      // The room mutex prevents a race with a simultaneous pick.
+      await room.mutex.run(async () => {
+        const p = room.players.get(ws.uid);
+        if (!p || p.isBot) return;
+        if (room.phase === 'selection') {
+          // During picking, refund immediately and release every owned number.
+          await refundDisconnectedPlayer(room, p);
+        }
+        // After selection has ended, keep the existing round settlement rules;
+        // resetRound() will handle the inactive player's wager at round end.
+        p.active = false;
+        room.dirty = true;
+        await room.persist();
+        room.broadcast();
+      }).catch(err => console.error('[WS-CLOSE] disconnect refund failed', err));
     }
   });
   ws.on('error',()=>{});
@@ -829,6 +935,7 @@ loadRooms().then(() => {
   
   for(const room of Object.values(rooms)){
     if(room.phase==='selection' && room.endsAt<=now()) { room.endsAt=now()+SELECTION_SECONDS*1000; room.dirty=true; }
+    if (room.phase === 'selection') normalizeRoundBots(room);
     room.persist();
     scheduleBots(room);
   }
