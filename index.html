@@ -287,7 +287,7 @@
             <div class="subtitle">Bet 15 or 30 Birr</div>
             <div id="authError" class="auth-error"></div>
             <div class="telegram-info" id="telegramInfo">📱 Detecting Telegram user...</div>
-            <input type="text" id="authUsername" placeholder="Username" maxlength="20" autocomplete="username">
+            <input type="text" id="authUsername" placeholder="Telegram detected name" maxlength="64" autocomplete="off" readonly>
             <button class="auth-btn" id="authLoginBtn">Login</button>
             <button class="auth-btn auth-btn-secondary" id="authSignupBtn">Sign Up</button>
             <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:4px;">
@@ -535,6 +535,8 @@
         const TELEGRAM_BOT_LINK = 'http://t.me/WinzoBettingBot';
 
         let telegramDetectedUsername = null;
+        let telegramDetectedDisplayName = null;
+        let currentDisplayName = null;
         let pendingReferralCode = null;
 
         function captureReferralCode() {
@@ -732,11 +734,22 @@
                     }
                     if (user) {
                         telegramUser = user; captureReferralCode();
-                        const name = user.username || user.first_name || '';
+                        const detectedName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
+                            || user.username
+                            || '';
                         const infoEl = document.getElementById('telegramInfo');
+                        telegramDetectedDisplayName = detectedName || null;
+                        telegramDetectedUsername = user.username || null;
                         if (infoEl) {
-                            if (name) { infoEl.textContent = '✅ Detected Telegram: @' + name; infoEl.className = 'telegram-info detected'; telegramDetectedUsername = name; applyTelegramAutoLogin(name); }
-                            else { infoEl.textContent = '📱 Telegram detected (no username). Enter manually.'; infoEl.className = 'telegram-info not-detected'; telegramDetectedUsername = null; }
+                            if (detectedName) {
+                                infoEl.textContent = '✅ Detected Telegram: ' + detectedName;
+                                infoEl.className = 'telegram-info detected';
+                                applyTelegramAutoLogin(detectedName);
+                            } else {
+                                infoEl.textContent = '📱 Telegram detected.';
+                                infoEl.className = 'telegram-info detected';
+                                applyTelegramAutoLogin('');
+                            }
                         }
                         return true;
                     }
@@ -755,13 +768,17 @@
             if (!detected && telegramDetectionAttempts < maxTelegramAttempts) setTimeout(attemptTelegramDetection, 500);
             return detected;
         }
-        function applyTelegramAutoLogin(username) {
+        function applyTelegramAutoLogin(displayName) {
             const usernameInput = document.getElementById('authUsername');
             if (!usernameInput) return;
-            usernameInput.value = username; usernameInput.readOnly = true; usernameInput.style.color = '#8affb0';
-            usernameInput.addEventListener('focus', function() { this.value = username; });
-            usernameInput.addEventListener('input', function() { this.value = username; });
-            usernameInput.addEventListener('keydown', function(e) { e.preventDefault(); return false; });
+            usernameInput.value = displayName || '';
+            usernameInput.placeholder = 'Telegram detected name';
+            usernameInput.readOnly = true;
+            usernameInput.style.color = '#8affb0';
+            usernameInput.style.opacity = displayName ? '1' : '0.65';
+            usernameInput.onfocus = function() { this.value = displayName || ''; };
+            usernameInput.oninput = function() { this.value = displayName || ''; };
+            usernameInput.onkeydown = function(e) { e.preventDefault(); return false; };
         }
 
         const APP_VERSION = '11.1';
@@ -960,8 +977,11 @@
         function updateTotalBetDisplay() {
             if (!totalBetDisplayEl) return;
             const bet = Number(currentBet || 0);
+            const serverDisplayedPool = Number(lastRoomSnapshotRaw?.displayedPrizePool);
             const totalPicks = getTotalPicks();
-            const pool = Math.floor(bet * totalPicks * PAYOUT_RATE);
+            const pool = Number.isFinite(serverDisplayedPool)
+                ? serverDisplayedPool
+                : Math.floor(bet * totalPicks * PAYOUT_RATE);
             totalBetDisplayEl.textContent = String(pool);
         }
         function updatePrizeDisplay() { updateTotalBetDisplay(); }
@@ -1462,7 +1482,7 @@
             if (mainWalletEl) mainWalletEl.textContent = walletData.main;
             if (playWalletEl) playWalletEl.textContent = walletData.play;
             if (refWalletEl) refWalletEl.textContent = walletData.refEarn || 0;
-            if (walletUsername) walletUsername.textContent = currentUser;
+            if (walletUsername) walletUsername.textContent = currentDisplayName || currentUser;
             if (pendingItem && pendingAmount) {
                 if (walletData.pending > 0) { pendingItem.style.display = 'inline-flex'; pendingAmount.textContent = walletData.pending; }
                 else pendingItem.style.display = 'none';
@@ -1795,8 +1815,14 @@
             if (authError) authError.textContent = '';
             setConnectionStatus(false, '📡 Ready');
             DB.setSavedBet(null);
-            const saved = DB.getSavedCredentials();
-            if (saved?.username && authUsername) authUsername.value = saved.username;
+            telegramDetectedUsername = null;
+            telegramDetectedDisplayName = null;
+            currentDisplayName = null;
+            if (authUsername) {
+                authUsername.value = '';
+                authUsername.placeholder = 'Telegram detected name';
+                authUsername.readOnly = true;
+            }
             stopNotificationListener(); stopStickyBroadcastListener(); stopResilienceEngine();
             attemptTelegramDetection();
         }
@@ -1831,23 +1857,24 @@
         //  LOGIN FLOW (async, waits for initData)
         // ============================================================
         function resolveLoginUsername() {
-            const username = authUsername ? authUsername.value.trim() : '';
+            const displayName = authUsername ? authUsername.value.trim() : '';
             if (!DEV_MODE && !(tg && tg.initData)) {
                 if (authError) authError.textContent = 'Please open Winzo from the Telegram Mini App.';
                 return null;
             }
-            if (DEV_MODE && !username) { if (authError) authError.textContent = 'Enter a development username.'; return null; }
-            if (telegramDetectedUsername && username && username !== telegramDetectedUsername) {
-                if (authError) authError.textContent = 'The username does not match your Telegram account.';
-                if (authUsername) authUsername.value = telegramDetectedUsername;
+            if (DEV_MODE && !displayName) { if (authError) authError.textContent = 'Enter a development username.'; return null; }
+            if (!DEV_MODE && !telegramUser) {
+                if (authError) authError.textContent = 'Telegram user could not be detected. Please reopen Winzo from Telegram.';
                 return null;
             }
-            return username || telegramDetectedUsername || '';
+            return displayName || telegramDetectedDisplayName || telegramDetectedUsername || '';
         }
-        async function beginSession(username) {
-            currentUser = username;
-            DB.setCurrentUser(username);
-            DB.setSavedCredentials(username, '');
+        async function beginSession(displayName) {
+            currentDisplayName = displayName;
+            // Do not use the Telegram display name as the authoritative account key.
+            // The server binds the session to the verified Telegram ID.
+            currentUser = null;
+            DB.setSavedCredentials('', '');
             if (authError) authError.textContent = '';
             showWelcomeScreen();
             setConnectionStatus(false, '⚡ Connecting to game server…');
@@ -2286,7 +2313,9 @@
             }
             engineState.players = players;
             engineState.playerNames = playerNames;
-            engineState.activePlayersCount = playerNames.length;
+            engineState.activePlayersCount = Number.isFinite(Number(data.onlineCount))
+                ? Number(data.onlineCount)
+                : playerNames.length;
             engineState.gamePhase = phase;
             engineState.roundNumber = round;
             phaseDeadline = Number(data.endsAt || data.selectionEndsAt) || 0;
@@ -2305,7 +2334,7 @@
                 displayedCardRound = null; lastResultData = null;
                 clearCardFetchRetry();
             }
-            if (playerCountEl) playerCountEl.textContent = String(playerNames.length);
+            if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
             updateTotalBetDisplay();
             if (phase === 'selection') {
                 if (!isTimerRunning && !gamePausedBySticky) startTimer();
@@ -2476,7 +2505,12 @@
                 if (footer) footer.style.display = 'none';
             }
             client = new WinzoClient({
-                onAuth: (uid) => { currentUser = uid; updateWalletUI(); updateWelcomeUI(); },
+                onAuth: (uid, displayName) => {
+                    currentUser = uid;
+                    currentDisplayName = displayName || currentDisplayName || telegramDetectedDisplayName || telegramDetectedUsername || uid;
+                    DB.setCurrentUser(uid);
+                    updateWalletUI(); updateWelcomeUI();
+                },
                 onState: (state, room) => {
                     if (!state || (room && room !== currentRoom)) return;
                     syncGameState(state); markSyncReceived();
