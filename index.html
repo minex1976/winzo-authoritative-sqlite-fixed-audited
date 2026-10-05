@@ -1880,7 +1880,7 @@
             setConnectionStatus(false, '⚡ Connecting to game server…');
             let initData = (tg && tg.initData) ? tg.initData : '';
             if (!initData && isTelegram) initData = await waitForTelegramInitData(5000);
-            if (client) client.connect(initData, pendingReferralCode, null, username);
+            if (client) client.connect(initData, pendingReferralCode, null, displayName);
             else { console.error('[WINZO] client not initialized'); }
         }
         function handleLogin() { const u = resolveLoginUsername(); if (u) beginSession(u); }
