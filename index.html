@@ -394,7 +394,7 @@
                 </div>
                 <div class="winning-card-sub">This Round's Result</div>
             </div>
-            <div style="text-align:center;margin-top:14px;color:#7a6a9a;font-size:0.6rem;letter-spacing:1px;">closes in 5s · auto restart</div>
+            <div style="text-align:center;margin-top:14px;color:#7a6a9a;font-size:0.6rem;letter-spacing:1px;">closes in 15s · auto restart</div>
         </div>
     </div>
     <div class="deposit-modal" id="depositModal">
@@ -510,9 +510,6 @@
         const DEV_MODE = false;
         window.WINZO_CONFIG = window.WINZO_CONFIG || { WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com/' };
 
-        // ============================================================
-        //  SERVER WEBSOCKET (single source of truth)
-        // ============================================================
         const SERVER_WS_URL = (window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com';
         let client = null;
 
@@ -534,11 +531,18 @@
         // ============================================================
         const PAYOUT_RATE = 0.80;
         const TELEGRAM_BOT_LINK = 'http://t.me/WinzoBettingBot';
+        const DEFAULT_RESULTS_SECONDS = 15;
 
         let telegramDetectedUsername = null;
         let telegramDetectedDisplayName = null;
         let currentDisplayName = null;
         let pendingReferralCode = null;
+
+        // Always returns a finite number, never NaN.
+        function safeNum(value, fallback = 0) {
+            const n = Number(value);
+            return Number.isFinite(n) ? n : fallback;
+        }
 
         function captureReferralCode() {
             try {
@@ -699,7 +703,7 @@
         }
 
         // ============================================================
-        //  TELEGRAM (fixed: wait for initData to be populated)
+        //  TELEGRAM
         // ============================================================
         let tg = null; let telegramUser = null; let isTelegram = false;
         let telegramDetectionAttempts = 0; const maxTelegramAttempts = 10;
@@ -782,7 +786,7 @@
             usernameInput.onkeydown = function(e) { e.preventDefault(); return false; };
         }
 
-        const APP_VERSION = '11.1';
+        const APP_VERSION = '11.3';
         const DB = {
             getCurrentUser() { return localStorage.getItem('bingo_current_user') || null; },
             setCurrentUser(u) { if (u) localStorage.setItem('bingo_current_user', u); else localStorage.removeItem('bingo_current_user'); },
@@ -977,7 +981,7 @@
         }
         function updateTotalBetDisplay() {
             if (!totalBetDisplayEl) return;
-            const bet = Number(currentBet || 0);
+            const bet = safeNum(currentBet, 0);
             const serverDisplayedPool = Number(lastRoomSnapshotRaw?.displayedPrizePool);
             const totalPicks = getTotalPicks();
             const pool = Number.isFinite(serverDisplayedPool)
@@ -1395,7 +1399,7 @@
             ballAnimationPlayedRounds.add(animKey);
             ballAnimationPlaying = true;
             window._ballAnimStartedAt = Date.now();
-            if (timerDisplay) timerDisplay.textContent = '5';
+            if (timerDisplay) timerDisplay.textContent = String(DEFAULT_RESULTS_SECONDS);
             playBallAnimation(winners, n, r).then(() => {
                 ballAnimationPlaying = false; window._ballAnimStartedAt = null;
                 if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== r) return;
@@ -1648,7 +1652,7 @@
                 if (withdrawError) withdrawError.textContent = 'Please fill in all fields.';
                 return false;
             }
-            if (Number(walletData.main || 0) < amount) {
+            if (safeNum(walletData.main) < amount) {
                 if (withdrawError) withdrawError.textContent = 'Insufficient main balance.';
                 return false;
             }
@@ -1660,7 +1664,7 @@
             if (!currentUser) return false;
             amount = Number(amount);
             if (!amount || amount <= 0) { alert('Enter a valid amount.'); return false; }
-            if (Number(walletData.main) - Number(walletData.pending) < amount) {
+            if (safeNum(walletData.main) - safeNum(walletData.pending) < amount) {
                 alert('Insufficient available main balance.');
                 return false;
             }
@@ -1855,7 +1859,7 @@
         }
 
         // ============================================================
-        //  LOGIN FLOW (async, waits for initData)
+        //  LOGIN FLOW
         // ============================================================
         function resolveLoginUsername() {
             const displayName = authUsername ? authUsername.value.trim() : '';
@@ -1872,8 +1876,6 @@
         }
         async function beginSession(displayName) {
             currentDisplayName = displayName;
-            // Do not use the Telegram display name as the authoritative account key.
-            // The server binds the session to the verified Telegram ID.
             currentUser = null;
             DB.setSavedCredentials('', '');
             if (authError) authError.textContent = '';
@@ -2017,7 +2019,8 @@
         function startResultsCountdown() {
             if (isResultsCountdownRunning) return;
             isResultsCountdownRunning = true;
-            let remaining = 5;
+            let remaining = getRemainingSeconds(phaseDeadline);
+            if (!remaining || remaining <= 0) remaining = DEFAULT_RESULTS_SECONDS;
             if (timerDisplay) timerDisplay.textContent = remaining;
             resultsCountdownInterval = setInterval(() => {
                 remaining -= 1;
@@ -2049,10 +2052,12 @@
         }
         function updatePickStatus() {
             const picks = getMyPicks();
-            const insufficient = Number(walletData.play) < Number(currentBet);
+            const play = safeNum(walletData.play);
+            const bet = safeNum(currentBet);
+            const insufficient = play < bet;
             if (pickStatus) {
                 if (gamePausedBySticky) pickStatus.innerHTML = `⏸ <span class="highlight">Paused by admin</span>`;
-                else if (insufficient && !picks.length) pickStatus.innerHTML = `💰 Insufficient play balance — transfer from Main wallet to pick`;
+                else if (insufficient && !picks.length) pickStatus.innerHTML = `💰 Insufficient play balance (${play} Birr) — transfer from Main wallet to pick`;
                 else if (insufficient) pickStatus.innerHTML = `💰 Low play balance · picks: <span class="highlight">${picks.join(', ')}</span> (${picks.length}/${MAX_PICKS_PER_ROUND})`;
                 else if (picks.length) pickStatus.innerHTML = `🎯 Your picks: <span class="highlight">${picks.join(', ')}</span> (${picks.length}/${MAX_PICKS_PER_ROUND})`;
                 else pickStatus.innerHTML = `🎯 Pick up to <span class="highlight">3</span> numbers`;
@@ -2095,7 +2100,7 @@
                     buttons = numPicker.querySelectorAll('.num-btn[data-num]');
                 }
                 const myPicks = getMyPicks();
-                const insufficientBalance = Number(walletData.play) < Number(currentBet);
+                const insufficientBalance = safeNum(walletData.play) < safeNum(currentBet);
                 const locked = gamePausedBySticky || engineState.gamePhase !== 'selection' ||
                     engineState.activePlayersCount <= 1 || !isNetworkConnected;
                 buttons.forEach(btn => {
@@ -2141,10 +2146,16 @@
                 const remaining = myPicks.filter(n => n !== num);
                 syncLocalPlayerPicks(remaining, engineState.roundNumber, remaining.length > 0);
             }
+            // Always resync the wallet after a failed pick. If our cached balance
+            // was stale (e.g. right after a deposit), this brings it back in sync.
+            if (client) client.walletRefresh();
             renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+            const play = safeNum(walletData.play);
             const msgs = {
                 'taken':         `❌ Number ${num} was just taken!`,
-                'insufficient':  `⚠️ Insufficient play balance.`,
+                'insufficient':  `⚠️ Insufficient play balance. Current: ${play} Birr.`,
+                'user-not-found':`⚠️ Account not found on server. Please reconnect.`,
+                'debit-error':   `⚠️ Server error while deducting balance. Try again.`,
                 'max-picks':     `❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`,
                 'not-selection': `⛔ Cannot pick numbers now.`,
                 'duplicate':     `❌ Already picked.`,
@@ -2178,7 +2189,11 @@
                 }
                 if (myPicks.length >= MAX_PICKS_PER_ROUND) { updateStatus(`❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`); return; }
                 if (engineState.allTakenNumbers.has(num)) { updateStatus(`❌ Number ${num} is already taken!`); return; }
-                if (Number(walletData.play) < Number(currentBet)) { updateStatus(`⚠️ Insufficient play balance. Need ${currentBet} Birr.`); return; }
+                if (safeNum(walletData.play) < safeNum(currentBet)) {
+                    updateStatus(`⚠️ Insufficient play balance (${safeNum(walletData.play)} Birr). Need ${safeNum(currentBet)} Birr.`);
+                    if (client) client.walletRefresh();
+                    return;
+                }
                 pendingPickOps.add(num);
                 syncLocalPlayerPicks([...myPicks, num], opRound, true);
                 renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
@@ -2195,7 +2210,7 @@
         }
 
         // ============================================================
-        //  SERVER CLIENT (fixed: async connect + waits for initData)
+        //  SERVER CLIENT
         // ============================================================
         class WinzoClient {
             constructor(handlers) {
@@ -2413,7 +2428,7 @@
                 setTimeout(() => { updateStatus('✅ Reconnect requested.'); }, 500);
             };
             if (withdrawBtn) withdrawBtn.onclick = () => {
-                const available = walletData.main - walletData.pending;
+                const available = safeNum(walletData.main) - safeNum(walletData.pending);
                 if (withdrawAvailableBalance) withdrawAvailableBalance.textContent = available;
                 if (withdrawError) withdrawError.textContent = '';
                 if (withdrawName) withdrawName.value = '';
@@ -2530,9 +2545,12 @@
                 onPickOk: handlePickOk,
                 onPickFail: handlePickFail,
                 onWallet: (w) => {
-                    walletData.main = Number(w.main || 0);
-                    walletData.play = Number(w.play || 0);
-                    walletData.pending = Number(w.pending || 0);
+                    // Always run every incoming value through safeNum so a stray
+                    // "30abc" or null can never poison the local wallet cache.
+                    walletData.main = safeNum(w.main, 0);
+                    walletData.play = safeNum(w.play, 0);
+                    walletData.pending = safeNum(w.pending, 0);
+                    walletData.refEarn = safeNum(w.refEarn, 0);
                     updateWalletUI(); updateWelcomeUI();
                     renderNumberPicker();
                 },
@@ -2543,6 +2561,8 @@
                     const approved = m.status === 'approved';
                     transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
                     transactionStatus.className = 'status-text ' + (approved ? 'approved' : 'rejected');
+                    // Immediately pull a fresh wallet so the user can pick right away.
+                    if (client) client.walletRefresh();
                     setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
