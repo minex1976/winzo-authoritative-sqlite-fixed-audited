@@ -1,41 +1,42 @@
-# Winzo Authoritative Server — Render deployment
+# Winzo Authoritative Server — Render deployment (V3.2)
 
-This package keeps the existing authoritative game engine, WebSocket protocol, SQLite persistence, bot engine, wallets, transactions, and GitHub Pages client.
+This project uses **Firebase Realtime Database** as its persistence layer. The old SQLite references have been removed because the running server is Firebase-based.
 
 ## Render Web Service
 
-Create a **Web Service** from this repository. The included `render.yaml` is a Blueprint configuration for a paid Starter web service with a 1 GB persistent disk for SQLite.
+Use the included `render.yaml` as a Blueprint or create a Node Web Service manually.
 
-Required secrets:
+Required Render secrets:
 
-- `BOT_TOKEN`: Telegram bot token used to validate Telegram Mini App `initData`.
-- `ADMIN_KEY`: private key used by the admin client.
+- `BOT_TOKEN` — Telegram bot token used to validate Mini App `initData`.
+- `ADMIN_KEY` — long random secret used by the admin client.
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+- `FIREBASE_DATABASE_URL`
 
-The service uses:
+`ALLOWED_ORIGINS` is configured by the Blueprint for the GitHub Pages app and Telegram web client.
 
-- `PORT=10000`
-- `NODE_ENV=production`
-- `ALLOWED_ORIGIN=https://minex1976.github.io`
-- `SQLITE_DB_PATH=/var/data/winzo.sqlite`
+The service listens on Render's `PORT` and binds to `0.0.0.0`.
 
-After deployment, Render provides a URL such as:
+After deployment, the expected URL is:
 
 `https://winzo-authoritative-server.onrender.com`
 
-The player client must use the corresponding WebSocket URL:
+The player and admin WebSocket clients use:
 
 `wss://winzo-authoritative-server.onrender.com`
 
-Replace `REPLACE_WITH_RENDER_SERVICE` in `index.html` with the actual Render service name, then commit/push the frontend to GitHub Pages.
-
 ## Health check
 
-Open:
+Open `https://YOUR-RENDER-SERVICE.onrender.com/health`. A successful response contains `ok: true`, `websocket: true`, database status, and room status.
 
-`https://YOUR-RENDER-SERVICE.onrender.com/health`
+## Telegram authentication
 
-A successful response contains `ok: true` and room status.
+Production player authentication requires a valid Telegram Mini App `initData`. The server validates Telegram's HMAC signature and binds the numeric Telegram user ID to the Winzo account. Username is treated as display information, not as the permanent identity.
 
-## Important
+For local-only development, `DEV_ALLOW_ANY=true` may be enabled together with `NODE_ENV=development`. Never enable it in production.
 
-Do not use `DEV_ALLOW_ANY=true` or `ALLOWED_ORIGIN=*` in production. Telegram authentication remains authoritative in production.
+## Security
+
+Never commit real Firebase credentials, Telegram bot tokens, or `ADMIN_KEY`. Rotate any credentials that were previously committed to the repository.
