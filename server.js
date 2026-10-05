@@ -39,7 +39,7 @@ if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 2;
-const RESULTS_SECONDS = 5;
+const RESULTS_SECONDS = 6;
 const MAX_PICKS = 3;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
@@ -59,6 +59,12 @@ const BOT_NAMES = [
   'Goshu','Gudeta','Haile','Hiruy','Isayas','Kassa','Kefelegn','Kiflom','Lema','Melese',
   'Mihret','Million','Molla','Mulatu','Negasi','Nigussie','Petros','Robel','Sisay','Tekle'
 ];
+
+// Robust numeric coercion — always returns a finite number, never NaN.
+function toFiniteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 function validateInitData(initData, maxAge = 86400) {
   if (!BOT_TOKEN) return null;
@@ -152,8 +158,6 @@ async function resolveTelegramUser(user, referredBy = null) {
   let uid = username;
   if (!uid) uid = `tg_${telegramId}`;
 
-  // Preserve existing username-keyed accounts where possible, while binding the
-  // Telegram numeric ID so a username change does not create a second account.
   const existing = await db.ref('users/' + uid).once('value');
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || username || uid;
   const record = await ensureUser(uid, referredBy, false, { telegram_id: telegramId, display_name: displayName });
@@ -162,13 +166,18 @@ async function resolveTelegramUser(user, referredBy = null) {
   return { uid, user: record };
 }
 
+// Reads the live wallet straight from the DB. This bypasses any intermediate
+// object so the values it returns are always the freshest ones on the server.
 async function walletFor(username) {
-  const u = await ensureUser(username);
+  const clean = safeUid(username);
+  if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0 };
+  const snap = await db.ref('users/' + clean).once('value');
+  const u = snap.val() || {};
   return {
-    main: Number(u?.main_wallet || 0),
-    play: Number(u?.play_wallet || 0),
-    pending: Number(u?.pending_withdrawal || 0),
-    refEarn: Number(u?.referral_earnings || 0),
+    main: toFiniteNumber(u.main_wallet, 0),
+    play: toFiniteNumber(u.play_wallet, 0),
+    pending: toFiniteNumber(u.pending_withdrawal, 0),
+    refEarn: toFiniteNumber(u.referral_earnings, 0),
   };
 }
 
@@ -181,7 +190,7 @@ async function sendWallet(uid) {
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const payload = { type: 'notification', id, ...data, timestamp: Number(data.timestamp || now()) };
-  
+
   await db.ref('notifications/' + id).set({
     username,
     type: data.type || 'notification',
@@ -215,7 +224,6 @@ async function notifyTransaction(username, tx) {
 }
 
 async function transactionRequest(uid, data) {
-  // Transaction IDs are generated server-side. Client-supplied IDs are ignored.
   const type = data.txType;
   const amount = Number(data.amount);
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
@@ -235,9 +243,9 @@ async function transactionRequest(uid, data) {
     if (type === 'withdraw') {
       await db.ref('users/' + uid).transaction(u => {
         if (!u) return;
-        const available = Number(u.main_wallet || 0) - Number(u.pending_withdrawal || 0);
+        const available = toFiniteNumber(u.main_wallet, 0) - toFiniteNumber(u.pending_withdrawal, 0);
         if (available < amount) return;
-        u.pending_withdrawal = Number(u.pending_withdrawal || 0) + amount;
+        u.pending_withdrawal = toFiniteNumber(u.pending_withdrawal, 0) + amount;
         u.updated_at = now();
         reservationApplied = true;
         return u;
@@ -263,7 +271,7 @@ async function transactionRequest(uid, data) {
     if (reservationApplied) {
       await db.ref('users/' + uid).transaction(u => {
         if (!u) return u;
-        u.pending_withdrawal = Math.max(0, Number(u.pending_withdrawal || 0) - amount);
+        u.pending_withdrawal = Math.max(0, toFiniteNumber(u.pending_withdrawal, 0) - amount);
         u.updated_at = now();
         return u;
       }).catch(() => {});
@@ -296,7 +304,6 @@ async function adminListTransactions() {
 }
 
 async function adminDecision(id, decision, reason = '') {
-  // Accept both the server vocabulary and the admin UI button vocabulary.
   decision = String(decision || '').toLowerCase();
   if (decision === 'approve') decision = 'approved';
   if (decision === 'reject') decision = 'rejected';
@@ -308,23 +315,35 @@ async function adminDecision(id, decision, reason = '') {
     const tx = txSnap.val();
     if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
 
+    const txAmount = toFiniteNumber(tx.amount, 0);
+    if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
+
     let success = false;
+    let newPlay = null;
+    let newMain = null;
+
     await db.ref('users/' + tx.username).transaction(u => {
-      if (!u) return u;
+      if (!u) return;
+      const play = toFiniteNumber(u.play_wallet, 0);
+      const main = toFiniteNumber(u.main_wallet, 0);
+      const pending = toFiniteNumber(u.pending_withdrawal, 0);
+
       if (tx.type === 'deposit' && decision === 'approved') {
-        u.play_wallet = (u.play_wallet || 0) + tx.amount;
+        u.play_wallet = play + txAmount;
       }
       if (tx.type === 'withdraw') {
         if (decision === 'approved') {
-          if (Number(u.pending_withdrawal) < Number(tx.amount) || Number(u.main_wallet) < Number(tx.amount)) return;
-          u.main_wallet -= tx.amount;
-          u.pending_withdrawal -= tx.amount;
+          if (pending < txAmount || main < txAmount) return;
+          u.main_wallet = main - txAmount;
+          u.pending_withdrawal = pending - txAmount;
         } else {
-          u.pending_withdrawal = Math.max(0, (u.pending_withdrawal || 0) - tx.amount);
+          u.pending_withdrawal = Math.max(0, pending - txAmount);
         }
       }
       u.updated_at = now();
       success = true;
+      newPlay = toFiniteNumber(u.play_wallet, 0);
+      newMain = toFiniteNumber(u.main_wallet, 0);
       return u;
     });
 
@@ -338,10 +357,12 @@ async function adminDecision(id, decision, reason = '') {
     });
 
     const updatedTx = { ...tx, status: decision, reason, id };
+    console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} amount=${txAmount} → play=${newPlay} main=${newMain}`);
     await sendWallet(tx.username);
     await notifyTransaction(tx.username, updatedTx);
     return { ok: true, tx: updatedTx };
   } catch (e) {
+    console.error('[ADMIN] decision failed', e);
     return { ok: false, reason: e.message };
   }
 }
@@ -358,8 +379,8 @@ async function claimPayout(uid, amount, roomId, round, kind) {
 
   let success = false;
   await db.ref('users/' + uid).transaction(u => {
-    if (!u) return u;
-    u.main_wallet = (u.main_wallet || 0) + amount;
+    if (!u) return;
+    u.main_wallet = toFiniteNumber(u.main_wallet, 0) + amount;
     u.updated_at = now();
     success = true;
     return u;
@@ -381,9 +402,9 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   await ensureUser(ref);
   let success = false;
   await db.ref('users/' + ref).transaction(u => {
-    if (!u) return u;
-    u.main_wallet = (u.main_wallet || 0) + amount;
-    u.referral_earnings = (u.referral_earnings || 0) + amount;
+    if (!u) return;
+    u.main_wallet = toFiniteNumber(u.main_wallet, 0) + amount;
+    u.referral_earnings = toFiniteNumber(u.referral_earnings, 0) + amount;
     u.updated_at = now();
     success = true;
     return u;
@@ -442,13 +463,10 @@ class Room {
       players,
       winners: [...this.winners].map(uid => this.players.get(uid)?.displayName || uid),
       winningNumber: this.winningNumber,
-      // prizePool remains the real, human-funded payout pool.
       prizePool: this.prizePool, potAmount: this.prizePool,
       totalBets,
       humanBets,
       totalPicks,
-      // UI may use this virtual running figure to show every pick immediately,
-      // including visual bot picks, without changing real wallet payouts.
       displayedPrizePool: Math.floor(totalBets * PAYOUT_RATE),
       onlineCount: activePlayers.length,
       botCount: activePlayers.filter(p => p.isBot).length,
@@ -462,7 +480,7 @@ class Room {
       picks: [...p.picks], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid
     };
     const taken = Object.fromEntries(this.taken.entries());
-    
+
     await db.ref('rooms/' + this.id).set({
       bet: this.bet, phase: this.phase, round: this.round, ends_at: this.endsAt,
       winning_number: this.winningNumber, winners_json: JSON.stringify(this.winners),
@@ -492,64 +510,109 @@ async function loadRooms() {
     room_15: new Room('room_15', 15, rowMap.get('room_15')),
     room_30: new Room('room_30', 30, rowMap.get('room_30')),
   };
-  for (const room of Object.values(rooms)) { 
-    for (const p of room.players.values()) if (!p.isBot) p.active = false; 
+  for (const room of Object.values(rooms)) {
+    for (const p of room.players.values()) if (!p.isBot) p.active = false;
   }
 }
 
 async function saveRoom(room) { await room.persist(); room.broadcast(); }
 
+// Debit the play wallet. Returns a rich object so callers can distinguish
+// "user has no money" from "user record missing" from "db error".
 async function debit(uid, amount, roomId, round) {
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u || Number(u.play_wallet) < amount) return;
-    u.play_wallet -= amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-  if (success) await sendWallet(uid);
-  return success;
+  const amt = toFiniteNumber(amount, 0);
+  if (amt <= 0) return { ok: false, reason: 'bad-amount' };
+  try {
+    const result = await db.ref('users/' + uid).transaction(u => {
+      if (!u) return; // abort
+      const balance = toFiniteNumber(u.play_wallet, 0);
+      if (balance < amt) return; // abort — insufficient
+      u.play_wallet = balance - amt;
+      u.updated_at = now();
+      return u;
+    });
+
+    const committed = !!(result && result.committed);
+    const snap = result && result.snapshot;
+    const currentPlay = snap && snap.exists() ? toFiniteNumber(snap.val()?.play_wallet, 0) : null;
+
+    if (committed) {
+      console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${currentPlay} room=${roomId} round=${round}`);
+      await sendWallet(uid);
+      return { ok: true, balance: currentPlay };
+    }
+
+    // Not committed. Figure out why so the client can show the right message.
+    const refSnap = await db.ref('users/' + uid).once('value');
+    if (!refSnap.exists()) {
+      console.warn(`[DEBIT] uid=${uid} → user-not-found`);
+      return { ok: false, reason: 'user-not-found' };
+    }
+    const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
+    console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
+    await sendWallet(uid); // resync client with actual balance
+    return { ok: false, reason: 'insufficient', balance: live };
+  } catch (e) {
+    console.error(`[DEBIT] uid=${uid} amount=${amt} ERROR`, e);
+    return { ok: false, reason: 'debit-error' };
+  }
 }
 
 async function refundWager(uid, amount, roomId, round) {
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u) return;
-    u.play_wallet = (u.play_wallet || 0) + amount;
-    u.updated_at = now();
-    success = true;
-    return u;
-  });
-  if (success) await sendWallet(uid);
-  return success;
+  const amt = toFiniteNumber(amount, 0);
+  if (amt <= 0) return false;
+  try {
+    let committed = false;
+    const result = await db.ref('users/' + uid).transaction(u => {
+      if (!u) return;
+      u.play_wallet = toFiniteNumber(u.play_wallet, 0) + amt;
+      u.updated_at = now();
+      committed = true;
+      return u;
+    });
+    const ok = committed && !!(result && result.committed);
+    if (ok) {
+      const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
+      console.log(`[REFUND] uid=${uid} amount=${amt} newPlay=${newPlay} room=${roomId} round=${round}`);
+      await sendWallet(uid);
+    }
+    return ok;
+  } catch (e) {
+    console.error(`[REFUND] uid=${uid} amount=${amt} ERROR`, e);
+    return false;
+  }
 }
 
 async function pickIntent(room, uid, num) {
   return room.mutex.run(async () => {
-    if (room.phase !== 'selection') return { ok:false, reason:'not-selection' };
-    if (!(num >= 1 && num <= 200)) return { ok:false, reason:'range' };
+    if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
+    if (!(num >= 1 && num <= 200)) return { ok: false, reason: 'range' };
     let p = room.players.get(uid);
-    if (!p) { p = { uid, picks:[], isBot:false, active:true, displayName:uid }; room.players.set(uid,p); }
+    if (!p) { p = { uid, picks: [], isBot: false, active: true, displayName: uid }; room.players.set(uid, p); }
     p.active = true;
-    if (p.picks.length >= MAX_PICKS) return { ok:false, reason:'max-picks' };
-    if (p.picks.includes(num)) return { ok:false, reason:'duplicate' };
-    if (room.taken.has(num)) return { ok:false, reason:'taken' };
-    if (!(await debit(uid, room.bet, room.id, room.round))) return { ok:false, reason:'insufficient' };
-    room.taken.set(num, uid); p.picks.push(num); room.dirty = true;
-    return { ok:true };
+    if (p.picks.length >= MAX_PICKS) return { ok: false, reason: 'max-picks' };
+    if (p.picks.includes(num)) return { ok: false, reason: 'duplicate' };
+    if (room.taken.has(num)) return { ok: false, reason: 'taken' };
+
+    const debitResult = await debit(uid, room.bet, room.id, room.round);
+    if (!debitResult.ok) return { ok: false, reason: debitResult.reason || 'insufficient' };
+
+    room.taken.set(num, uid);
+    p.picks.push(num);
+    room.dirty = true;
+    return { ok: true };
   });
 }
 
 async function unpickIntent(room, uid, num) {
   return room.mutex.run(async () => {
-    if (room.phase !== 'selection') return { ok:false, reason:'not-selection' };
+    if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
     const p = room.players.get(uid);
-    if (!p || !p.picks.includes(num)) return { ok:false, reason:'not-picked' };
-    if (room.taken.get(num) !== uid) return { ok:false, reason:'not-owner' };
-    if (!(await refundWager(uid, room.bet, room.id, room.round))) return { ok:false, reason:'refund-failed' };
+    if (!p || !p.picks.includes(num)) return { ok: false, reason: 'not-picked' };
+    if (room.taken.get(num) !== uid) return { ok: false, reason: 'not-owner' };
+    if (!(await refundWager(uid, room.bet, room.id, room.round))) return { ok: false, reason: 'refund-failed' };
     p.picks = p.picks.filter(n => n !== num); room.taken.delete(num); room.dirty = true;
-    return { ok:true };
+    return { ok: true };
   });
 }
 
@@ -576,7 +639,6 @@ async function toSpinning(room) {
   let prizePool = 0;
 
   if (humans.length) {
-    // Real players are present: they fund the pot and decide the outcome.
     const humanNums = [...new Set(humans.flatMap(p => p.picks))];
     if (!humanNums.length) return resetRound(room, 'no-human-picks');
     winningNumber = humanNums[Math.floor(Math.random() * humanNums.length)];
@@ -584,9 +646,6 @@ async function toSpinning(room) {
     const humanPicks = humans.reduce((s, p) => s + p.picks.length, 0);
     prizePool = Math.floor(humanPicks * room.bet * PAYOUT_RATE);
   } else {
-    // No real player picked this round. Bots are visual participants only and
-    // never receive payouts, but the round still resolves so every round shows
-    // a winning number and a winner list instead of silently restarting.
     const botNums = [...new Set(bots.flatMap(p => p.picks))];
     if (!botNums.length) return resetRound(room, 'no-picks');
     winningNumber = botNums[Math.floor(Math.random() * botNums.length)];
@@ -605,7 +664,7 @@ async function toSpinning(room) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
       if (share <= 0) break;
-      if (room.players.get(uid)?.isBot) continue; // bots never receive payouts
+      if (room.players.get(uid)?.isBot) continue;
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
       await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
       const uSnap = await db.ref('users/' + uid).once('value');
@@ -634,21 +693,21 @@ async function resetRound(room, why) {
     if (p.isBot || !p.picks.length) continue;
     if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round);
   }
-  room.round += 1; room.phase='selection'; room.endsAt=now()+SELECTION_SECONDS*1000;
-  room.taken.clear(); room.winningNumber=null; room.winners=[]; room.prizePool=0; room.lastResult=null;
-  for (const p of room.players.values()) { p.picks=[]; p.active=false; }
-  room.dirty=true;
+  room.round += 1; room.phase = 'selection'; room.endsAt = now() + SELECTION_SECONDS * 1000;
+  room.taken.clear(); room.winningNumber = null; room.winners = []; room.prizePool = 0; room.lastResult = null;
+  for (const p of room.players.values()) { p.picks = []; p.active = false; }
+  room.dirty = true;
   console.log(`[${room.id}] reset (${why}) → round ${room.round}`);
   scheduleBots(room);
 }
 
 function botRoster(count, round) {
-  const pool=[...BOT_NAMES]; const off=((round-1)*7)%pool.length;
-  const rot=pool.slice(off).concat(pool.slice(0,off));
-  return rot.slice(0,Math.min(count,pool.length));
+  const pool = [...BOT_NAMES]; const off = ((round - 1) * 7) % pool.length;
+  const rot = pool.slice(off).concat(pool.slice(0, off));
+  return rot.slice(0, Math.min(count, pool.length));
 }
 function botUid(displayName) { return `__bot_${safeUser(displayName)}`; }
-function clearBotTimers(room) { room.botTimers.forEach(clearTimeout); room.botTimers=[]; }
+function clearBotTimers(room) { room.botTimers.forEach(clearTimeout); room.botTimers = []; }
 function currentBotRoster(room) {
   const count = BOT_MIN + (room.round % (BOT_MAX - BOT_MIN + 1));
   return botRoster(count, room.round);
@@ -658,8 +717,6 @@ function normalizeRoundBots(room) {
   const roster = new Set(currentBotRoster(room));
   const activeBotUids = new Set([...roster].map(botUid));
 
-  // Only bots selected for THIS round are participants. Release stale bot
-  // picks left over from an older roster so online/pot counts cannot accumulate.
   for (const [uid, p] of room.players) {
     if (!p.isBot) continue;
     if (!activeBotUids.has(uid)) {
@@ -682,13 +739,9 @@ function scheduleBots(room) {
   const names = [...roster];
   if (!names.length) return;
 
-  // How many numbers each bot will claim this round (1..MAX_PICKS).
   const remaining = new Map();
   names.forEach(n => remaining.set(n, 1 + Math.floor(Math.random() * MAX_PICKS)));
 
-  // Build a turn-by-turn order: bots take turns in shuffled passes so the
-  // picks are spread across the whole selection window instead of all bots
-  // dumping their numbers at the very start of the round.
   const order = [];
   for (;;) {
     const pass = names.filter(n => (remaining.get(n) || 0) > 0);
@@ -704,97 +757,107 @@ function scheduleBots(room) {
   }
   if (!order.length) return;
 
-  const totalPicks = order.length;
-  const windowMs = Math.max(1500, SELECTION_SECONDS * 1000 - 6000);
-  const startDelay = 2500;
-  const usableMs = Math.max(1000, windowMs - startDelay);
-  const baseGap = usableMs / totalPicks;
+  const START_DELAY_MS   = 1500;
+  const SAFETY_BUFFER_MS = 2500;
+  const MIN_GAP_MS       = 300;
 
   let index = 0;
 
   const runNextPick = async () => {
     if (room.phase !== 'selection') return;
     if (index >= order.length) return;
+    if (now() > room.endsAt - SAFETY_BUFFER_MS) return;
 
     const displayName = order[index++];
     const uid = botUid(displayName);
 
-    await room.mutex.run(async () => {
-      if (room.phase !== 'selection') return;
-      await ensureUser(uid, null, true);
+    try {
+      await room.mutex.run(async () => {
+        if (room.phase !== 'selection') return;
+        await ensureUser(uid, null, true);
 
-      let p = room.players.get(uid);
-      if (!p) {
-        p = { uid, picks: [], isBot: true, active: true, displayName };
-        room.players.set(uid, p);
-      } else {
-        p.active = true;
-        p.isBot = true;
-        p.displayName = displayName;
-      }
+        let p = room.players.get(uid);
+        if (!p) {
+          p = { uid, picks: [], isBot: true, active: true, displayName };
+          room.players.set(uid, p);
+        } else {
+          p.active = true;
+          p.isBot = true;
+          p.displayName = displayName;
+        }
 
-      if (p.picks.length >= MAX_PICKS) return;
+        if (p.picks.length >= MAX_PICKS) return;
 
-      const free = [];
-      for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
-      if (!free.length) return;
+        const free = [];
+        for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
+        if (!free.length) return;
 
-      // The room mutex makes this check-and-claim atomic with real players.
-      const num = free[Math.floor(Math.random() * free.length)];
-      room.taken.set(num, uid);
-      p.picks.push(num);
-      room.dirty = true;
+        const num = free[Math.floor(Math.random() * free.length)];
+        room.taken.set(num, uid);
+        p.picks.push(num);
+        room.dirty = true;
 
-      // Persist + broadcast THIS pick before the next bot pick.
-      await room.persist();
-      room.broadcast();
-    });
-
-    if (room.phase === 'selection' && index < order.length) {
-      const jitter = 0.7 + Math.random() * 0.5; // 0.70x .. 1.20x of baseGap
-      const gap = Math.max(450, Math.round(baseGap * jitter));
-      const t = setTimeout(runNextPick, gap);
-      room.botTimers.push(t);
+        await room.persist();
+        room.broadcast();
+      });
+    } catch (err) {
+      console.error('[BOT-PICK]', err);
     }
+
+    if (room.phase !== 'selection') return;
+    if (index >= order.length) return;
+
+    const remainingPicks = order.length - index;
+    const timeLeftMs = Math.max(0, room.endsAt - now() - SAFETY_BUFFER_MS);
+    const rawGap = Math.floor(timeLeftMs / Math.max(1, remainingPicks));
+    const jitter = 0.85 + Math.random() * 0.30;
+    const gap = Math.max(MIN_GAP_MS, Math.floor(rawGap * jitter));
+
+    const t = setTimeout(runNextPick, gap);
+    room.botTimers.push(t);
   };
 
-  const first = setTimeout(runNextPick, startDelay);
+  const first = setTimeout(runNextPick, START_DELAY_MS);
   room.botTimers.push(first);
 }
 
-setInterval(async()=>{
-  for(const room of Object.values(rooms)){
-    await room.mutex.run(async()=>{
-      const t=now();
-      if(room.phase==='selection' && t>=room.endsAt) await toSpinning(room);
-      else if(room.phase==='spinning' && t>=room.endsAt) await toResults(room);
-      else if(room.phase==='results' && t>=room.endsAt) await resetRound(room,'results-done');
-      if(room.dirty) await room.persist();
+setInterval(async () => {
+  for (const room of Object.values(rooms)) {
+    await room.mutex.run(async () => {
+      const t = now();
+      if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
+      else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
+      else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
+      if (room.dirty) await room.persist();
       room.broadcast();
     });
   }
-},500);
+}, 500);
 
-const conns=new Map();
-const wss=new WebSocketServer({noServer:true});
+const conns = new Map();
+const wss = new WebSocketServer({ noServer: true });
 
-function send(ws,obj){ if(ws.readyState===1) ws.send(JSON.stringify(obj)); }
-function sendRoomState(room){ if(room) room.broadcast(); }
+function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function sendRoomState(room) { if (room) room.broadcast(); }
 
-wss.on('connection',(ws)=>{
-  ws.isAlive=true;
-  ws.authenticatedAt=null;
-  ws.authTimer=setTimeout(()=>{ if(!ws.authed){ try{ws.close(4001,'authentication timeout');}catch{} } }, 10000); ws.uid=null; ws.roomId=null; ws.authed=false; ws.isAdmin=false;
-  ws.on('pong',()=>{ws.isAlive=true;});
-  ws.on('message',async raw=>{let m;try{m=JSON.parse(raw.toString());}catch{return}try{await handle(ws,m);}catch(e){console.error('[WS-MSG]',e);send(ws,{type:'error',message:'server-error'});}});
-  ws.on('close', async ()=>{
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.authenticatedAt = null;
+  ws.authTimer = setTimeout(() => { if (!ws.authed) { try { ws.close(4001, 'authentication timeout'); } catch {} } }, 10000);
+  ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', async raw => {
+    let m; try { m = JSON.parse(raw.toString()); } catch { return; }
+    try { await handle(ws, m); } catch (e) { console.error('[WS-MSG]', e); send(ws, { type: 'error', message: 'server-error' }); }
+  });
+  ws.on('close', async () => {
     clearTimeout(ws.authTimer);
-    if(!ws.uid) return;
+    if (!ws.uid) return;
 
     const set = conns.get(ws.uid);
     if (set) {
       set.delete(ws);
-      if (set.size) return; // Another tab/device is still connected.
+      if (set.size) return;
       conns.delete(ws.uid);
     }
 
@@ -802,17 +865,12 @@ wss.on('connection',(ws)=>{
       const room = rooms[ws.roomId];
       if (!room) return;
 
-      // Refund immediately on the last real-player connection closing.
-      // The room mutex prevents a race with a simultaneous pick.
       await room.mutex.run(async () => {
         const p = room.players.get(ws.uid);
         if (!p || p.isBot) return;
         if (room.phase === 'selection') {
-          // During picking, refund immediately and release every owned number.
           await refundDisconnectedPlayer(room, p);
         }
-        // After selection has ended, keep the existing round settlement rules;
-        // resetRound() will handle the inactive player's wager at round end.
         p.active = false;
         room.dirty = true;
         await room.persist();
@@ -820,13 +878,13 @@ wss.on('connection',(ws)=>{
       }).catch(err => console.error('[WS-CLOSE] disconnect refund failed', err));
     }
   });
-  ws.on('error',()=>{});
+  ws.on('error', () => {});
 });
 
-async function handle(ws,m){
-  if(m.type==='ping') return send(ws,{type:'pong',t:now()});
+async function handle(ws, m) {
+  if (m.type === 'ping') return send(ws, { type: 'pong', t: now() });
 
-  if(m.type==='auth'){
+  if (m.type === 'auth') {
     const user = validateInitData(m.initData || '');
     let resolved = null;
     if (user) resolved = await resolveTelegramUser(user, m.ref || null);
@@ -834,18 +892,21 @@ async function handle(ws,m){
       const uid = safeUser(m.devUsername);
       resolved = { uid, user: await ensureUser(uid, m.ref || null, false, { display_name: uid }) };
     }
-    if(!resolved?.uid){
-      send(ws,{type:'error',message:'auth-failed',code:'AUTH_REQUIRED'});
+    if (!resolved?.uid) {
+      send(ws, { type: 'error', message: 'auth-failed', code: 'AUTH_REQUIRED' });
       try { ws.close(4001, 'authentication required'); } catch {}
       return;
     }
     const uid = resolved.uid;
-    await ensureUser(uid, m.ref || null, false, { telegram_id: user?.id, display_name: user ? ([user.first_name,user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid });
-    clearTimeout(ws.authTimer); ws.authenticatedAt=now();
-    ws.uid=uid; ws.displayName = user ? ([user.first_name,user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid;
-    ws.authed=true;
-    let set=conns.get(uid);if(!set){set=new Set();conns.set(uid,set);}set.add(ws);
-    send(ws,{type:'authed',uid,displayName:ws.displayName}); send(ws,{type:'wallet',...(await walletFor(uid))});
+    await ensureUser(uid, m.ref || null, false, { telegram_id: user?.id, display_name: user ? ([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid });
+    clearTimeout(ws.authTimer); ws.authenticatedAt = now();
+    ws.uid = uid;
+    ws.displayName = user ? ([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid;
+    ws.authed = true;
+    let set = conns.get(uid); if (!set) { set = new Set(); conns.set(uid, set); } set.add(ws);
+    send(ws, { type: 'authed', uid, displayName: ws.displayName });
+    send(ws, { type: 'wallet', ...(await walletFor(uid)) });
+    console.log(`[AUTH] uid=${uid} → wallet sent`);
 
     const txSnap = await db.ref('transactions').orderByChild('username').equalTo(uid).once('value');
     const pending = [];
@@ -853,96 +914,110 @@ async function handle(ws,m){
       const d = child.val();
       if (d.status === 'pending') pending.push({ id: child.key, type: d.type, amount: d.amount, status: d.status, timestamp: Number(d.timestamp || 0) });
     });
-    pending.sort((a,b) => b.timestamp - a.timestamp);
-    send(ws,{type:'pending-transactions',transactions:pending.slice(0, 10)});
+    pending.sort((a, b) => b.timestamp - a.timestamp);
+    send(ws, { type: 'pending-transactions', transactions: pending.slice(0, 10) });
     return;
   }
 
-  if(m.type==='admin-auth'){
-    if(!ADMIN_KEY || typeof m.key !== 'string' || !constantTimeEqual(m.key, ADMIN_KEY)) {
-      send(ws,{type:'admin-auth-fail'});
+  if (m.type === 'admin-auth') {
+    if (!ADMIN_KEY || typeof m.key !== 'string' || !constantTimeEqual(m.key, ADMIN_KEY)) {
+      send(ws, { type: 'admin-auth-fail' });
       try { ws.close(4003, 'admin authentication failed'); } catch {}
       return;
     }
-    ws.authed=true;ws.isAdmin=true;send(ws,{type:'admin-authed'});return;
+    ws.authed = true; ws.isAdmin = true; send(ws, { type: 'admin-authed' }); return;
   }
-  if(ws.isAdmin){
-    if(m.type==='admin-list-transactions') return send(ws,{type:'admin-transactions',transactions:await adminListTransactions()});
-    if(m.type==='admin-decision'){
-      const r=await adminDecision(String(m.id||''),String(m.decision||''),String(m.reason||''));
-      if(!r.ok) return send(ws,{type:'admin-error',message:r.reason});
-      send(ws,{type:'admin-decision-ok',id:m.id,status:r.tx.status});
+  if (ws.isAdmin) {
+    if (m.type === 'admin-list-transactions') return send(ws, { type: 'admin-transactions', transactions: await adminListTransactions() });
+    if (m.type === 'admin-decision') {
+      const r = await adminDecision(String(m.id || ''), String(m.decision || ''), String(m.reason || ''));
+      if (!r.ok) return send(ws, { type: 'admin-error', message: r.reason });
+      send(ws, { type: 'admin-decision-ok', id: m.id, status: r.tx.status });
       return;
     }
     return;
   }
 
-  if(!ws.authed) return send(ws,{type:'error',message:'not-authed'});
+  if (!ws.authed) return send(ws, { type: 'error', message: 'not-authed' });
 
-  if(m.type==='join'){
-    const room=rooms[m.room];if(!room)return send(ws,{type:'error',message:'bad-room'});
-    if(ws.roomId && rooms[ws.roomId] && ws.roomId!==m.room){ const oldPlayer=rooms[ws.roomId].players.get(ws.uid); if(oldPlayer) oldPlayer.active=false; }
-    ws.roomId=m.room;
-    const existing=room.players.get(ws.uid);
-    if(existing && existing.picks.length && !existing.active){ await refundDisconnectedPlayer(room,existing); }
-    if(!room.players.has(ws.uid)) room.players.set(ws.uid,{uid:ws.uid,picks:[],isBot:false,active:true,displayName:ws.displayName || ws.uid});
-    else { const p=room.players.get(ws.uid); p.active=true; p.displayName=ws.displayName || p.displayName || ws.uid; }
-    room.dirty=true; await saveRoom(room); return;
+  if (m.type === 'join') {
+    const room = rooms[m.room]; if (!room) return send(ws, { type: 'error', message: 'bad-room' });
+    if (ws.roomId && rooms[ws.roomId] && ws.roomId !== m.room) { const oldPlayer = rooms[ws.roomId].players.get(ws.uid); if (oldPlayer) oldPlayer.active = false; }
+    ws.roomId = m.room;
+    const existing = room.players.get(ws.uid);
+    if (existing && existing.picks.length && !existing.active) { await refundDisconnectedPlayer(room, existing); }
+    if (!room.players.has(ws.uid)) room.players.set(ws.uid, { uid: ws.uid, picks: [], isBot: false, active: true, displayName: ws.displayName || ws.uid });
+    else { const p = room.players.get(ws.uid); p.active = true; p.displayName = ws.displayName || p.displayName || ws.uid; }
+    room.dirty = true; await saveRoom(room);
+    await sendWallet(ws.uid);
+    return;
   }
-  if(m.type==='leave'){
-    const room=rooms[ws.roomId]; const p=room?.players.get(ws.uid);
-    if(room&&p&&!p.isBot){ await refundDisconnectedPlayer(room,p); room.players.delete(ws.uid); room.dirty=true;await saveRoom(room); }
-    ws.roomId=null;return;
+  if (m.type === 'leave') {
+    const room = rooms[ws.roomId]; const p = room?.players.get(ws.uid);
+    if (room && p && !p.isBot) { await refundDisconnectedPlayer(room, p); room.players.delete(ws.uid); room.dirty = true; await saveRoom(room); }
+    ws.roomId = null; return;
   }
-  if(m.type==='pick'){
-    const room=rooms[ws.roomId];if(!room)return;
-    const r=await pickIntent(room,ws.uid,Number(m.number));
-    send(ws,r.ok?{type:'pick-ok',number:Number(m.number)}:{type:'pick-fail',number:Number(m.number),reason:r.reason});
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});if(room.dirty)await saveRoom(room);return;
+  if (m.type === 'pick') {
+    const room = rooms[ws.roomId]; if (!room) return;
+    const r = await pickIntent(room, ws.uid, Number(m.number));
+    send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
+    // Always push the fresh wallet after a pick attempt. If the pick failed
+    // because of a stale balance, this resyncs the client.
+    send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
+    if (room.dirty) await saveRoom(room);
+    return;
   }
-  if(m.type==='unpick'){
-    const room=rooms[ws.roomId];if(!room)return;
-    const r=await unpickIntent(room,ws.uid,Number(m.number));
-    send(ws,r.ok?{type:'unpick-ok',number:Number(m.number)}:{type:'unpick-fail',number:Number(m.number),reason:r.reason});
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});if(room.dirty)await saveRoom(room);return;
+  if (m.type === 'unpick') {
+    const room = rooms[ws.roomId]; if (!room) return;
+    const r = await unpickIntent(room, ws.uid, Number(m.number));
+    send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
+    send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
+    if (room.dirty) await saveRoom(room);
+    return;
   }
-  if(m.type==='transfer'){
-    const amount=Number(m.amount);if(!Number.isFinite(amount)||amount<=0||amount>1000000)return send(ws,{type:'error',message:'bad-amount'});
+  if (m.type === 'transfer') {
+    const amount = Number(m.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return send(ws, { type: 'error', message: 'bad-amount' });
     let success = false;
     await db.ref('users/' + ws.uid).transaction(u => {
       if (!u) return u;
-      const available = Number(u.main_wallet || 0) - Number(u.pending_withdrawal || 0);
-      if (available < amount) return;
-      u.main_wallet = Number(u.main_wallet || 0) - amount;
-      u.play_wallet = Number(u.play_wallet || 0) + amount;
+      const main = toFiniteNumber(u.main_wallet, 0);
+      const pending = toFiniteNumber(u.pending_withdrawal, 0);
+      const play = toFiniteNumber(u.play_wallet, 0);
+      if (main - pending < amount) return;
+      u.main_wallet = main - amount;
+      u.play_wallet = play + amount;
       u.updated_at = now();
       success = true;
       return u;
     });
-    send(ws,{type:'wallet',...(await walletFor(ws.uid))});
-    if(!success) send(ws,{type:'error',message:'transfer-failed'});
+    await sendWallet(ws.uid);
+    if (!success) send(ws, { type: 'error', message: 'transfer-failed' });
     return;
   }
-  if(m.type==='wallet-refresh'){send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;}
-  if(m.type==='transaction-request'){
-    const r=await transactionRequest(ws.uid,m);if(!r.ok)return send(ws,{type:'error',message:r.reason});
-    send(ws,{type:'transaction-created',id:r.id,clientRequestId:r.clientRequestId || null});send(ws,{type:'wallet',...(await walletFor(ws.uid))});return;
+  if (m.type === 'wallet-refresh') { await sendWallet(ws.uid); return; }
+  if (m.type === 'transaction-request') {
+    const r = await transactionRequest(ws.uid, m);
+    if (!r.ok) return send(ws, { type: 'error', message: r.reason });
+    send(ws, { type: 'transaction-created', id: r.id, clientRequestId: r.clientRequestId || null });
+    send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
+    return;
   }
-  if(m.type==='transaction-image'){
-    await transactionImage(ws.uid,String(m.id||''),String(m.imageData||''));return;
+  if (m.type === 'transaction-image') {
+    await transactionImage(ws.uid, String(m.id || ''), String(m.imageData || '')); return;
   }
-  if(m.type==='notification-read'){
-    const id=String(m.id||'');
-    const snap=await db.ref('notifications/'+id).once('value');
-    if (snap.exists() && snap.val()?.username === ws.uid) await markNotificationRead(ws.uid,id);
+  if (m.type === 'notification-read') {
+    const id = String(m.id || '');
+    const snap = await db.ref('notifications/' + id).once('value');
+    if (snap.exists() && snap.val()?.username === ws.uid) await markNotificationRead(ws.uid, id);
     return;
   }
 }
 
-setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue;}ws.isAlive=false;try{ws.ping();}catch{}}},25000);
+setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 25000);
 
-const app=express();
-app.get('/health',async (_,res)=>{
+const app = express();
+app.get('/health', async (_, res) => {
   const roomInfo = {};
   for (const room of Object.values(rooms)) {
     roomInfo[room.id] = { phase: room.phase, round: room.round, players: Object.keys(room.snapshot().players).length, taken: room.taken.size };
@@ -952,16 +1027,16 @@ app.get('/health',async (_,res)=>{
       db.ref('rooms').limitToFirst(1).once('value'),
       new Promise((_, reject) => setTimeout(() => reject(new Error('database-timeout')), 2500))
     ]);
-    res.json({ok:true,service:'winzo-authoritative-server',database:'firebase-realtime-database',websocket:true,uptime:process.uptime(),origins:ALLOWED_ORIGINS,rooms:roomInfo});
+    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'firebase-realtime-database', websocket: true, uptime: process.uptime(), origins: ALLOWED_ORIGINS, rooms: roomInfo });
   } catch (e) {
-    res.status(503).json({ok:false,service:'winzo-authoritative-server',database:'unavailable',websocket:true,error:e.message || 'database-unavailable'});
+    res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
 });
-app.get('/',(_,res)=>res.type('text').send('Winzo authoritative server is running.'));
+app.get('/', (_, res) => res.type('text').send('Winzo authoritative server is running.'));
 
-const server=http.createServer(app);
+const server = http.createServer(app);
 
-server.on('upgrade',(req,socket,head)=>{
+server.on('upgrade', (req, socket, head) => {
   const origin = req.headers.origin || '';
   const allowed = !origin || ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin);
   if (!allowed) {
@@ -971,7 +1046,7 @@ server.on('upgrade',(req,socket,head)=>{
     return;
   }
   console.log(`[WS-ACCEPT] origin="${origin || '(none)'}"`);
-  wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
 });
 
 async function gracefulShutdown(signal) {
@@ -990,10 +1065,10 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 loadRooms().then(() => {
-  server.listen(PORT,'0.0.0.0',()=>console.log(`Winzo Realtime Database server listening on :${PORT}`));
-  
-  for(const room of Object.values(rooms)){
-    if(room.phase==='selection' && room.endsAt<=now()) { room.endsAt=now()+SELECTION_SECONDS*1000; room.dirty=true; }
+  server.listen(PORT, '0.0.0.0', () => console.log(`Winzo Realtime Database server listening on :${PORT}`));
+
+  for (const room of Object.values(rooms)) {
+    if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
     if (room.phase === 'selection') normalizeRoundBots(room);
     room.persist();
     scheduleBots(room);
@@ -1001,6 +1076,7 @@ loadRooms().then(() => {
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
   console.log(`Bot pool size: ${BOT_NAMES.length}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
+  console.log(`Results phase length: ${RESULTS_SECONDS}s`);
   console.log(`Allowed WebSocket origins: ${ALLOWED_ORIGINS.join(', ')}`);
 }).catch(err => {
   console.error("Failed to load rooms from Realtime Database. Check your credentials and database URL.", err);
