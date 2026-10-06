@@ -206,11 +206,12 @@ async function resolveTelegramUser(user, referredBy = null) {
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
     || telegramUsername
     || `tg_${telegramId}`;
+    
+  // ALWAYS use the immutable Telegram ID as the primary key
   const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
 
-  // 1. Existing explicit Telegram mapping wins, but only if it points to a
-  //    real user and does not contradict that user's telegram_id.
+  // 1. Check the explicit Telegram mapping first
   const mappedSnap = await mapRef.once('value');
   if (mappedSnap.exists() && mappedSnap.val()?.uid) {
     const mappedUid = safeUid(mappedSnap.val().uid);
@@ -227,18 +228,15 @@ async function resolveTelegramUser(user, referredBy = null) {
     console.warn(`[IDENTITY] stale/conflicting telegram_users/${telegramId}; repairing mapping`);
   }
 
-  // 2. Prefer a user that already carries this immutable telegram_id.
-  let found = await findUserByTelegramId(telegramId);
+  // 2. Check if the canonical tg_<id> record already exists
+  let found = await readUserByUid(canonicalUid);
 
-  // 3. Prefer the canonical tg_<id> key if it exists. This handles the
-  //    database shape visible in the Firebase screenshots.
-  if (!found) found = await readUserByUid(canonicalUid);
+  // 3. If it doesn't exist, check if there is a legacy record with this telegram_id
+  if (!found) {
+    found = await findUserByTelegramId(telegramId);
+  }
 
-  // 4. Legacy installations may have keyed the wallet by Telegram username.
-  //    Preserve that account rather than creating a fresh zero/30 Birr wallet.
-  if (!found && telegramUsername) found = await readUserByUid(telegramUsername);
-  if (!found && telegramUsername) found = await findUserByStoredUsername(telegramUsername);
-
+  // 4. If a record was found (either canonical or legacy with telegram_id), use it
   if (found) {
     const existingTelegramId = found.data.telegram_id != null ? Number(found.data.telegram_id) : null;
     if (existingTelegramId && existingTelegramId !== telegramId) {
@@ -246,29 +244,49 @@ async function resolveTelegramUser(user, referredBy = null) {
       return null;
     }
 
-    const updated = await ensureUser(found.uid, referredBy, false, {
-      telegram_id: telegramId,
-      display_name: displayName,
-      telegram_username: telegramUsername || null
-    });
+    // If the legacy record doesn't use the tg_ prefix, migrate it now
+    if (found.uid !== canonicalUid) {
+        console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
+        const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
+            telegram_id: telegramId,
+            display_name: displayName,
+            telegram_username: telegramUsername || null,
+            // Copy over existing balances
+            main_wallet: found.data.main_wallet,
+            play_wallet: found.data.play_wallet,
+            pending_withdrawal: found.data.pending_withdrawal,
+            referral_earnings: found.data.referral_earnings
+        });
+        // Remove the old record to prevent future conflicts
+        await db.ref('users/' + found.uid).remove();
+        found = { uid: canonicalUid, data: migratedUser };
+    } else {
+        const updated = await ensureUser(found.uid, referredBy, false, {
+            telegram_id: telegramId,
+            display_name: displayName,
+            telegram_username: telegramUsername || null
+        });
+        found.data = updated;
+    }
+
     await mapRef.set({
       uid: found.uid,
-      username: updated.username || found.uid,
+      username: found.data.username || found.uid,
       telegram_username: telegramUsername || null,
       updated_at: now()
     });
-    console.log(`[IDENTITY] telegram_id=${telegramId} username=@${telegramUsername || '(none)'} → uid=${found.uid} (existing wallet preserved)`);
-    return { uid: found.uid, user: updated, telegramId, telegramUsername };
+    console.log(`[IDENTITY] telegram_id=${telegramId} username=@${telegramUsername || '(none)'} → uid=${found.uid}`);
+    return { uid: found.uid, user: found.data, telegramId, telegramUsername };
   }
 
-  // 5. Brand-new user. The wallet key is now immutable and independent of
-  //    future Telegram username changes.
+  // 5. Brand-new user. Force the tg_<id> key.
   const created = await ensureUser(canonicalUid, referredBy, false, {
     telegram_id: telegramId,
     display_name: displayName,
     telegram_username: telegramUsername || null
   });
   if (!created) return null;
+  
   await mapRef.set({
     uid: canonicalUid,
     username: created.username || canonicalUid,
