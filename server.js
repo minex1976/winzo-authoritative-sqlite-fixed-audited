@@ -125,7 +125,8 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     if (current.pending_withdrawal == null) patch.pending_withdrawal = pending;
     if (current.referral_earnings == null) patch.referral_earnings = refEarn;
 
-    if (extra.telegram_id != null && current.telegram_id == null) patch.telegram_id = Number(extra.telegram_id);
+    if (extra.telegram_id != null && (!current.telegram_id || Number(current.telegram_id) !== Number(extra.telegram_id))) patch.telegram_id = Number(extra.telegram_id);
+    if (extra.telegram_username !== undefined && String(current.telegram_username || '') !== String(extra.telegram_username || '')) patch.telegram_username = extra.telegram_username || null;
     if (extra.display_name && String(current.display_name || '') !== String(extra.display_name)) {
       patch.display_name = String(extra.display_name).slice(0, 128);
     }
@@ -143,6 +144,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     username: clean,
     display_name: String(extra.display_name || clean).slice(0, 128),
     telegram_id: extra.telegram_id != null ? Number(extra.telegram_id) : null,
+    telegram_username: extra.telegram_username || null,
     main_wallet: 0,
     play_wallet: bot ? BOT_START_WALLET : 30,
     pending_withdrawal: 0,
@@ -156,32 +158,125 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   return newUser;
 }
 
+async function readUserByUid(uid) {
+  const clean = safeUid(uid);
+  if (!clean) return null;
+  const ref = db.ref('users/' + clean);
+  const snap = await ref.once('value');
+  return snap.exists() ? { ref, uid: clean, data: snap.val() || {} } : null;
+}
+
+async function findUserByTelegramId(telegramId) {
+  const id = Number(telegramId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const snap = await db.ref('users').orderByChild('telegram_id').equalTo(id).once('value');
+  let found = null;
+  snap.forEach(child => {
+    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+  });
+  return found;
+}
+
+async function findUserByStoredUsername(username) {
+  const clean = safeUser(username);
+  if (!clean) return null;
+  const snap = await db.ref('users').orderByChild('username').equalTo(clean).once('value');
+  let found = null;
+  snap.forEach(child => {
+    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+  });
+  return found;
+}
+
+/*
+ * Telegram identity is immutable by telegram_id. Telegram usernames are NOT
+ * immutable and must never be used as the wallet identity.
+ *
+ * Existing installations may have wallets under username keys, so this
+ * resolver deliberately preserves an existing wallet instead of creating a
+ * second account when the user changes username or when the old schema was
+ * keyed by username.
+ */
 async function resolveTelegramUser(user, referredBy = null) {
   if (!user?.id) return null;
   const telegramId = Number(user.id);
   if (!Number.isSafeInteger(telegramId) || telegramId <= 0) return null;
 
+  const telegramUsername = safeUser(user.username || '');
+  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
+    || telegramUsername
+    || `tg_${telegramId}`;
+  const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
-  const mapped = await mapRef.once('value');
-  if (mapped.exists() && mapped.val()?.uid) {
-    const uid = safeUid(mapped.val().uid);
-    const existing = await ensureUser(uid, referredBy, false, {
-      telegram_id: telegramId,
-      display_name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid
-    });
-    return existing ? { uid, user: existing } : null;
+
+  // 1. Existing explicit Telegram mapping wins, but only if it points to a
+  //    real user and does not contradict that user's telegram_id.
+  const mappedSnap = await mapRef.once('value');
+  if (mappedSnap.exists() && mappedSnap.val()?.uid) {
+    const mappedUid = safeUid(mappedSnap.val().uid);
+    const mappedUser = await readUserByUid(mappedUid);
+    if (mappedUser && (!mappedUser.data.telegram_id || Number(mappedUser.data.telegram_id) === telegramId)) {
+      await ensureUser(mappedUid, referredBy, false, {
+        telegram_id: telegramId,
+        display_name: displayName,
+        telegram_username: telegramUsername || null
+      });
+      await mapRef.update({ uid: mappedUid, username: mappedUser.data.username || mappedUid, updated_at: now() });
+      return { uid: mappedUid, user: (await readUserByUid(mappedUid)).data, telegramId, telegramUsername };
+    }
+    console.warn(`[IDENTITY] stale/conflicting telegram_users/${telegramId}; repairing mapping`);
   }
 
-  const username = safeUser(user.username || '');
-  let uid = username;
-  if (!uid) uid = `tg_${telegramId}`;
+  // 2. Prefer a user that already carries this immutable telegram_id.
+  let found = await findUserByTelegramId(telegramId);
 
-  const existing = await db.ref('users/' + uid).once('value');
-  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || username || uid;
-  const record = await ensureUser(uid, referredBy, false, { telegram_id: telegramId, display_name: displayName });
-  if (!record) return null;
-  await mapRef.set({ uid, username: uid, updated_at: now() });
-  return { uid, user: record };
+  // 3. Prefer the canonical tg_<id> key if it exists. This handles the
+  //    database shape visible in the Firebase screenshots.
+  if (!found) found = await readUserByUid(canonicalUid);
+
+  // 4. Legacy installations may have keyed the wallet by Telegram username.
+  //    Preserve that account rather than creating a fresh zero/30 Birr wallet.
+  if (!found && telegramUsername) found = await readUserByUid(telegramUsername);
+  if (!found && telegramUsername) found = await findUserByStoredUsername(telegramUsername);
+
+  if (found) {
+    const existingTelegramId = found.data.telegram_id != null ? Number(found.data.telegram_id) : null;
+    if (existingTelegramId && existingTelegramId !== telegramId) {
+      console.error(`[IDENTITY] refusing conflicting user uid=${found.uid} telegram_id=${existingTelegramId} login_id=${telegramId}`);
+      return null;
+    }
+
+    const updated = await ensureUser(found.uid, referredBy, false, {
+      telegram_id: telegramId,
+      display_name: displayName,
+      telegram_username: telegramUsername || null
+    });
+    await mapRef.set({
+      uid: found.uid,
+      username: updated.username || found.uid,
+      telegram_username: telegramUsername || null,
+      updated_at: now()
+    });
+    console.log(`[IDENTITY] telegram_id=${telegramId} username=@${telegramUsername || '(none)'} → uid=${found.uid} (existing wallet preserved)`);
+    return { uid: found.uid, user: updated, telegramId, telegramUsername };
+  }
+
+  // 5. Brand-new user. The wallet key is now immutable and independent of
+  //    future Telegram username changes.
+  const created = await ensureUser(canonicalUid, referredBy, false, {
+    telegram_id: telegramId,
+    display_name: displayName,
+    telegram_username: telegramUsername || null
+  });
+  if (!created) return null;
+  await mapRef.set({
+    uid: canonicalUid,
+    username: created.username || canonicalUid,
+    telegram_username: telegramUsername || null,
+    updated_at: now()
+  });
+  console.log(`[IDENTITY] NEW telegram_id=${telegramId} username=@${telegramUsername || '(none)'} → uid=${canonicalUid}`);
+  return { uid: canonicalUid, user: created, telegramId, telegramUsername };
 }
 
 // Reads the live wallet straight from the DB. This bypasses any intermediate
@@ -298,6 +393,10 @@ async function transactionRequest(uid, data) {
     const displayName = String(userRecord.display_name || userRecord.username || uid).slice(0, 128);
     await txRef.set({
       username: uid,
+      uid,
+      wallet_uid: uid,
+      telegram_id: userRecord.telegram_id != null ? Number(userRecord.telegram_id) : null,
+      telegram_username: userRecord.telegram_username || null,
       display_name: displayName,
       type,
       amount,
@@ -356,33 +455,48 @@ async function adminListTransactions() {
   snapshot.forEach(child => {
     const d = child.val();
     txs.push({
-      id: child.key, username: d.username, displayName: d.display_name || d.full_name || d.username,
+      id: child.key, username: d.username, uid: d.uid || d.wallet_uid || d.username,
+      walletUid: d.wallet_uid || d.uid || d.username,
+      telegramId: d.telegram_id || null, telegramUsername: d.telegram_username || null,
+      displayName: d.display_name || d.full_name || d.username,
       type: d.type, amount: d.amount, status: d.status, timestamp: d.timestamp, reference: d.reference,
-      fullName: d.full_name, phoneNumber: d.phone_number, imageData: d.image_data, reason: d.reason
+      fullName: d.full_name, phoneNumber: d.phone_number, imageData: d.image_data, reason: d.reason,
+      walletApplied: Number(d.wallet_applied || 0)
     });
   });
   return txs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
-async function findUserRefForWallet(username) {
-  const clean = safeUid(username);
-  if (!clean) return null;
+async function findUserRefForWallet(identity = {}) {
+  const raw = typeof identity === 'string' ? identity : '';
+  const tx = typeof identity === 'object' && identity ? identity : {};
+  const walletUid = safeUid(tx.wallet_uid || tx.uid || raw);
+  const telegramId = Number(tx.telegram_id || 0);
+  const username = safeUser(tx.telegram_username || tx.username || raw);
 
-  // First try the canonical Firebase key used by the current auth system.
-  const directRef = db.ref('users/' + clean);
-  const directSnap = await directRef.once('value');
-  if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
+  // 1. A transaction created by the current server stores wallet_uid. This is
+  //    the strongest reference because it is the actual Firebase user key.
+  if (walletUid) {
+    const direct = await readUserByUid(walletUid);
+    if (direct) {
+      if (!telegramId || !direct.data.telegram_id || Number(direct.data.telegram_id) === telegramId) return direct;
+    }
+  }
 
-  // Compatibility for older accounts where the Firebase key and the stored
-  // username were different (for example legacy Telegram/OIDC accounts).
-  const byUsername = await db.ref('users').orderByChild('username').equalTo(String(username)).once('value');
-  let found = null;
-  byUsername.forEach(child => {
-    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
-  });
-  if (found) {
-    console.warn(`[WALLET] legacy user-key resolved username=${username} uid=${found.uid}`);
-    return found;
+  // 2. Immutable Telegram ID is stronger than a mutable username.
+  if (telegramId > 0) {
+    const byTelegram = await findUserByTelegramId(telegramId);
+    if (byTelegram) return byTelegram;
+    const canonical = await readUserByUid(`tg_${telegramId}`);
+    if (canonical) return canonical;
+  }
+
+  // 3. Legacy transaction records used username as the wallet reference.
+  if (username) {
+    const byKey = await readUserByUid(username);
+    if (byKey) return byKey;
+    const byUsername = await findUserByStoredUsername(username);
+    if (byUsername) return byUsername;
   }
 
   return null;
@@ -409,25 +523,34 @@ async function adminDecision(id, decision, reason = '') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
-    // Deposit rejection never changes a wallet. Claim the transaction itself
-    // atomically so two admins cannot reject it twice.
+    // Deposit rejection never changes a wallet. Resolve the real wallet UID
+    // first so legacy transactions cannot notify a stale username account.
     if (tx.type === 'deposit' && decision === 'rejected') {
+      const userInfo = await findUserRefForWallet({
+        uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
+        telegram_username: tx.telegram_username, username: tx.username
+      });
+      if (!userInfo) return { ok: false, reason: 'wallet-user-not-found' };
       const claim = await txRef.transaction(current => {
         if (!current || current.status !== 'pending') return;
         current.status = 'rejected';
         current.reason = String(reason || '').slice(0, 256);
         current.wallet_applied = 0;
+        current.wallet_uid = userInfo.uid;
         current.updated_at = now();
         return current;
       });
       if (!claim?.committed) return { ok: false, reason: 'already-decided' };
-      const updatedTx = { ...tx, status: 'rejected', reason: String(reason || '').slice(0, 256), wallet_applied: 0 };
-      await sendWallet(tx.username);
-      await notifyTransaction(tx.username, updatedTx);
+      const updatedTx = { ...tx, status: 'rejected', reason: String(reason || '').slice(0, 256), wallet_applied: 0, wallet_uid: userInfo.uid };
+      await sendWallet(userInfo.uid);
+      await notifyTransaction(userInfo.uid, updatedTx);
       return { ok: true, tx: updatedTx };
     }
 
-    const userInfo = await findUserRefForWallet(tx.username);
+    const userInfo = await findUserRefForWallet({
+      uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
+      telegram_username: tx.telegram_username, username: tx.username
+    });
     if (!userInfo) return { ok: false, reason: 'wallet-user-not-found' };
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
@@ -1035,17 +1158,19 @@ async function handle(ws, m) {
       return;
     }
     const uid = resolved.uid;
-    await ensureUser(uid, m.ref || null, false, { telegram_id: user?.id, display_name: user ? ([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid });
+    await ensureUser(uid, m.ref || null, false, { telegram_id: user?.id, telegram_username: user ? safeUser(user.username || '') : null, display_name: user ? ([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid });
     clearTimeout(ws.authTimer); ws.authenticatedAt = now();
     ws.uid = uid;
+    ws.telegramId = user ? Number(user.id) : null;
+    ws.telegramUsername = user ? safeUser(user.username || '') : '';
     ws.displayName = user ? ([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid) : uid;
     ws.authed = true;
     let set = conns.get(uid); if (!set) { set = new Set(); conns.set(uid, set); } set.add(ws);
-    send(ws, { type: 'authed', uid, displayName: ws.displayName });
+    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: ws.telegramId, telegramUsername: ws.telegramUsername || null });
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
     console.log(`[AUTH] uid=${uid} → wallet sent`);
 
-    const txSnap = await db.ref('transactions').orderByChild('username').equalTo(uid).once('value');
+    const txSnap = await db.ref('transactions').orderByChild('wallet_uid').equalTo(uid).once('value');
     const pending = [];
     txSnap.forEach(child => {
       const d = child.val();
@@ -1170,6 +1295,27 @@ app.get('/health', async (_, res) => {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
 });
+app.get('/identity/:telegramId', async (req, res) => {
+  const suppliedKey = String(req.get('x-admin-key') || '');
+  if (!ADMIN_KEY || !constantTimeEqual(suppliedKey, ADMIN_KEY)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const telegramId = Number(req.params.telegramId);
+  if (!Number.isSafeInteger(telegramId) || telegramId <= 0) return res.status(400).json({ ok: false, error: 'bad-telegram-id' });
+  try {
+    const mapped = await db.ref('telegram_users/' + telegramId).once('value');
+    const byTelegram = await findUserByTelegramId(telegramId);
+    const canonical = await readUserByUid(`tg_${telegramId}`);
+    res.json({
+      ok: true,
+      telegramId,
+      mapping: mapped.exists() ? mapped.val() : null,
+      byTelegram: byTelegram ? { uid: byTelegram.uid, username: byTelegram.data.username, displayName: byTelegram.data.display_name, telegramId: byTelegram.data.telegram_id, main: toFiniteNumber(byTelegram.data.main_wallet), play: toFiniteNumber(byTelegram.data.play_wallet), pending: toFiniteNumber(byTelegram.data.pending_withdrawal) } : null,
+      canonical: canonical ? { uid: canonical.uid, username: canonical.data.username, displayName: canonical.data.display_name, telegramId: canonical.data.telegram_id, main: toFiniteNumber(canonical.data.main_wallet), play: toFiniteNumber(canonical.data.play_wallet), pending: toFiniteNumber(canonical.data.pending_withdrawal) } : null
+    });
+  } catch (e) {
+    res.status(503).json({ ok: false, error: e.message || 'identity-check-failed' });
+  }
+});
+
 app.get('/config', (_, res) => res.json({
   ok: true,
   service: 'winzo-authoritative-server',
