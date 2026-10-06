@@ -145,10 +145,15 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     display_name: String(extra.display_name || clean).slice(0, 128),
     telegram_id: extra.telegram_id != null ? Number(extra.telegram_id) : null,
     telegram_username: extra.telegram_username || null,
-    main_wallet: 0,
-    play_wallet: bot ? BOT_START_WALLET : 30,
-    pending_withdrawal: 0,
-    referral_earnings: 0,
+
+    // FIX: honour balances supplied by the caller (used during the
+    // username → tg_<id> migration). Without this, the migration silently
+    // reset every wallet to 0 / 30 and then deleted the real record.
+    main_wallet:        extra.main_wallet        != null ? toFiniteNumber(extra.main_wallet, 0)        : 0,
+    play_wallet:        extra.play_wallet        != null ? toFiniteNumber(extra.play_wallet, bot ? BOT_START_WALLET : 30) : (bot ? BOT_START_WALLET : 30),
+    pending_withdrawal: extra.pending_withdrawal != null ? toFiniteNumber(extra.pending_withdrawal, 0) : 0,
+    referral_earnings:  extra.referral_earnings  != null ? toFiniteNumber(extra.referral_earnings, 0)  : 0,
+
     wallet_updated_at: t,
     referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
     created_at: t,
@@ -251,11 +256,11 @@ async function resolveTelegramUser(user, referredBy = null) {
             telegram_id: telegramId,
             display_name: displayName,
             telegram_username: telegramUsername || null,
-            // Copy over existing balances
-            main_wallet: found.data.main_wallet,
-            play_wallet: found.data.play_wallet,
-            pending_withdrawal: found.data.pending_withdrawal,
-            referral_earnings: found.data.referral_earnings
+            // Copy over existing balances — ensureUser now honours these.
+            main_wallet: found.data.main_wallet ?? found.data.mainWallet ?? found.data.main_balance ?? found.data.mainBalance ?? 0,
+            play_wallet: found.data.play_wallet ?? found.data.playWallet ?? found.data.play_balance ?? found.data.playBalance ?? 0,
+            pending_withdrawal: found.data.pending_withdrawal ?? found.data.pendingWithdrawal ?? 0,
+            referral_earnings: found.data.referral_earnings ?? found.data.referralEarnings ?? 0
         });
         // Remove the old record to prevent future conflicts
         await db.ref('users/' + found.uid).remove();
@@ -426,7 +431,6 @@ async function transactionRequest(uid, data) {
       image_data: imageData,
       reason: '',
       wallet_applied: 0,
-      wallet_uid: uid,
       client_request_id: clientRequestId || null,
       updated_at: now()
     });
@@ -615,11 +619,27 @@ async function adminDecision(id, decision, reason = '') {
     if (!result?.committed || !updatedUser) {
       const recovery = await userRef.once('value');
       updatedUser = recovery.exists() ? (recovery.val() || {}) : null;
+      const rec = updatedUser || {};
+      const pending = toFiniteNumber(rec.pending_withdrawal ?? rec.pendingWithdrawal ?? 0, 0);
+      const main = toFiniteNumber(rec.main_wallet ?? rec.mainWallet ?? 0, 0);
+      console.warn(
+        `[ADMIN] transaction aborted id=${id} type=${tx.type} decision=${decision} ` +
+        `need=${txAmount} pending=${pending} main=${main} uid=${userUid}`
+      );
     }
-    if (!updatedUser) return { ok: false, reason: 'wallet-write-not-committed' };
+    if (!updatedUser) return { ok: false, reason: 'wallet-user-not-found' };
 
     const ledgerEntry = updatedUser.wallet_ledger?.[id];
-    if (!ledgerEntry) return { ok: false, reason: 'wallet-write-not-committed' };
+    if (!ledgerEntry) {
+      // Aborted by one of the guard checks inside the transaction.
+      if (tx.type === 'withdraw') {
+        const pending = toFiniteNumber(updatedUser.pending_withdrawal ?? updatedUser.pendingWithdrawal ?? 0, 0);
+        const main = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? 0, 0);
+        if (pending < txAmount) return { ok: false, reason: `insufficient-pending (pending=${pending} need=${txAmount})` };
+        if (main < txAmount)    return { ok: false, reason: `insufficient-main (main=${main} need=${txAmount})` };
+      }
+      return { ok: false, reason: 'wallet-write-not-committed' };
+    }
     if (String(ledgerEntry.decision) !== decision) return { ok: false, reason: 'already-decided' };
 
     const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? 0, 0);
@@ -655,25 +675,44 @@ async function markNotificationRead(uid, id) {
 }
 
 async function claimPayout(uid, amount, roomId, round, kind) {
+  const amt = toFiniteNumber(amount, 0);
+  if (amt <= 0) return false;
+
   const key = `payout:${roomId}_${round}_${uid}_${kind}`;
   const markerRef = db.ref('notifications/' + key);
   const marker = await markerRef.once('value');
   if (marker.exists()) return false;
 
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
-    if (!u) return;
-    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
-    u.wallet_updated_at = now();
-    u.updated_at = u.wallet_updated_at;
-    success = true;
-    return u;
-  });
+  try {
+    const result = await db.ref('users/' + uid).transaction(u => {
+      if (!u) return; // abort if the user record doesn't exist
+      const cur = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+      u.main_wallet = cur + amt;
+      u.wallet_updated_at = now();
+      u.updated_at = u.wallet_updated_at;
+      return u;
+    });
 
-  if (success) {
+    // FIX: trust the SDK's committed flag, not a local boolean that could
+    // be stale after a retry / abort.
+    if (!result?.committed) {
+      console.warn(`[PAYOUT] uid=${uid} amount=${amt} room=${roomId} round=${round} kind=${kind} NOT committed`);
+      return false;
+    }
+
     await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now() });
+
+    // FIX: tell the connected clients the wallet changed. Without this the
+    // win was written to Firebase but never appeared in the UI.
+    await sendWallet(uid);
+
+    const newMain = toFiniteNumber(result.snapshot.val()?.main_wallet, 0);
+    console.log(`[PAYOUT] uid=${uid} amount=${amt} → main=${newMain} room=${roomId} round=${round} kind=${kind}`);
+    return true;
+  } catch (e) {
+    console.error(`[PAYOUT] uid=${uid} amount=${amt} ERROR`, e);
+    return false;
   }
-  return success;
 }
 
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
@@ -684,22 +723,32 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (marker.exists()) return false;
 
   await ensureUser(ref);
-  let success = false;
-  await db.ref('users/' + ref).transaction(u => {
-    if (!u) return;
-    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
-    u.referral_earnings = toFiniteNumber(u.referral_earnings, 0) + amount;
-    u.wallet_updated_at = now();
-    u.updated_at = u.wallet_updated_at;
-    success = true;
-    return u;
-  });
 
-  if (success) {
+  try {
+    const result = await db.ref('users/' + ref).transaction(u => {
+      if (!u) return;
+      const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+      const refEarn = toFiniteNumber(u.referral_earnings ?? u.referralEarnings ?? 0, 0);
+      u.main_wallet = main + amount;
+      u.referral_earnings = refEarn + amount;
+      u.wallet_updated_at = now();
+      u.updated_at = u.wallet_updated_at;
+      return u;
+    });
+
+    if (!result?.committed) {
+      console.warn(`[REFERRAL] ref=${ref} amount=${amount} NOT committed`);
+      return false;
+    }
+
     await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
+    await sendWallet(ref); // FIX: refresh the referrer's client too.
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
+    return true;
+  } catch (e) {
+    console.error(`[REFERRAL] ref=${ref} amount=${amount} ERROR`, e);
+    return false;
   }
-  return success;
 }
 
 // --- Room / Game Logic ---
@@ -856,15 +905,13 @@ async function refundWager(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return false;
   try {
-    let committed = false;
     const result = await db.ref('users/' + uid).transaction(u => {
       if (!u) return;
       u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
-      committed = true;
       return u;
     });
-    const ok = committed && !!(result && result.committed);
+    const ok = !!(result && result.committed);
     if (ok) {
       const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
       console.log(`[REFUND] uid=${uid} amount=${amt} newPlay=${newPlay} room=${roomId} round=${round}`);
@@ -958,12 +1005,17 @@ async function toSpinning(room) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
       if (share <= 0) break;
-      if (room.players.get(uid)?.isBot) continue;
-      if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
-      const uSnap = await db.ref('users/' + uid).once('value');
-      const ref = uSnap.val()?.referred_by;
-      if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+      const p = room.players.get(uid);
+      if (!p || p.isBot) continue;
+      try {
+        if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
+        await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
+        const uSnap = await db.ref('users/' + uid).once('value');
+        const ref = uSnap.val()?.referred_by;
+        if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+      } catch (e) {
+        console.error(`[WIN] payout failed for uid=${uid}`, e);
+      }
     }
   }
 
@@ -1277,6 +1329,7 @@ async function handle(ws, m) {
       u.main_wallet = main - amount;
       u.play_wallet = play + amount;
       u.updated_at = now();
+      u.wallet_updated_at = u.updated_at;
       success = true;
       return u;
     });
