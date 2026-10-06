@@ -512,9 +512,12 @@
         //  PRODUCTION FLAG
         // ============================================================
         const DEV_MODE = false;
-        window.WINZO_CONFIG = window.WINZO_CONFIG || { WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com/' };
-
-        const SERVER_WS_URL = (window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com';
+        // IMPORTANT: this must be the Render deployment running the Firebase-backed
+        // server.js. Do not point the game at an older SQLite wallet service.
+        window.WINZO_CONFIG = window.WINZO_CONFIG || {
+            WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com/'
+        };
+        const SERVER_WS_URL = String((window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || '').trim().replace(/\/$/, '');
         let client = null;
 
         // ============================================================
@@ -1505,6 +1508,18 @@
             }
         }
         function updateWelcomeUI() { if (currentUser && welcomeBalance) welcomeBalance.textContent = walletData.play; }
+        function walletDiagnostics() {
+            return {
+                uid: currentUser,
+                main: safeNum(walletData.main),
+                play: safeNum(walletData.play),
+                pending: safeNum(walletData.pending),
+                refEarn: safeNum(walletData.refEarn),
+                server: SERVER_WS_URL,
+                updatedAt: walletData.updatedAt || 0
+            };
+        }
+        window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
 
         // ============================================================
         //  NOTIFICATIONS
@@ -2248,6 +2263,8 @@
                     return;
                 }
                 this.authenticated = false;
+                this.connectionGeneration = (this.connectionGeneration || 0) + 1;
+                const generation = this.connectionGeneration;
                 this.ws.onopen = () => {
                     this.connecting = false;
                     this.backoff = 800;
@@ -2284,6 +2301,7 @@
                     else if (m.type === 'error')        { this.onError && this.onError(m); if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} } }
                 };
                 this.ws.onclose = (ev) => {
+                    if (generation !== this.connectionGeneration) return;
                     clearInterval(this._ka);
                     this.authenticated = false;
                     this.connecting = false;
@@ -2418,7 +2436,11 @@
                 fullName: extra.name ? safeProductionName(extra.name) : '',
                 phoneNumber: extra.phone ? safeProductionName(extra.phone) : ''
             });
-            if (!sent) { transactionStatus.textContent = '⚠️ Network unavailable.'; return Promise.resolve(false); }
+            if (!sent) {
+                if (client.pendingTransactionImages) client.pendingTransactionImages.delete(id);
+                transactionStatus.textContent = '⚠️ Network unavailable.';
+                return Promise.resolve(false);
+            }
             transactionStatus.textContent = '⏳ Pending admin approval...';
             return Promise.resolve(true);
         }
@@ -2552,7 +2574,7 @@
                     syncGameState(state); markSyncReceived();
                 },
                 onConnection: (online) => {
-                    setConnectionStatus(online, online ? '🔑 Server connected' : '⚡ Reconnecting…');
+                    setConnectionStatus(online, online ? '🔑 Firebase wallet server connected' : '⚡ Reconnecting…');
                     isNetworkConnected = !!online;
                     renderNumberPicker();
                 },
@@ -2591,7 +2613,7 @@
         // ============================================================
         if (DEV_MODE) {
             console.info('WINZO client booted (server-authoritative mode)');
-            console.info('WS endpoint:', SERVER_WS_URL);
+            console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
             console.info('Dev tip: window.WINZO_ERRORS collects runtime errors.');
         }
         init();
