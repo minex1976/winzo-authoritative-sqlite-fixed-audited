@@ -113,11 +113,28 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   if (snapshot.exists()) {
     const current = snapshot.val() || {};
     const patch = {};
+
+    // Migrate all legacy wallet field names to the canonical schema without
+    // resetting an existing balance. This is important for older accounts.
+    const main = toFiniteNumber(current.main_wallet ?? current.mainWallet ?? current.main_balance ?? current.mainBalance ?? 0, 0);
+    const play = toFiniteNumber(current.play_wallet ?? current.playWallet ?? current.play_balance ?? current.playBalance ?? (bot ? BOT_START_WALLET : 0), 0);
+    const pending = toFiniteNumber(current.pending_withdrawal ?? current.pendingWithdrawal ?? 0, 0);
+    const refEarn = toFiniteNumber(current.referral_earnings ?? current.referralEarnings ?? 0, 0);
+    if (current.main_wallet == null) patch.main_wallet = main;
+    if (current.play_wallet == null) patch.play_wallet = play;
+    if (current.pending_withdrawal == null) patch.pending_withdrawal = pending;
+    if (current.referral_earnings == null) patch.referral_earnings = refEarn;
+
     if (extra.telegram_id != null && current.telegram_id == null) patch.telegram_id = Number(extra.telegram_id);
     if (extra.display_name && String(current.display_name || '') !== String(extra.display_name)) {
       patch.display_name = String(extra.display_name).slice(0, 128);
     }
-    if (Object.keys(patch).length) await userRef.update({ ...patch, updated_at: now() });
+    if (!current.username) patch.username = clean;
+    if (!current.wallet_updated_at) patch.wallet_updated_at = Number(current.updated_at || now());
+    if (Object.keys(patch).length) {
+      patch.updated_at = now();
+      await userRef.update(patch);
+    }
     return { ...current, ...patch };
   }
 
@@ -145,55 +162,22 @@ async function resolveTelegramUser(user, referredBy = null) {
   if (!Number.isSafeInteger(telegramId) || telegramId <= 0) return null;
 
   const mapRef = db.ref('telegram_users/' + telegramId);
-  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || `tg_${telegramId}`;
-
-  // 1) Prefer the existing Telegram -> user mapping, but resolve it against
-  // legacy Firebase user keys before creating anything new.
   const mapped = await mapRef.once('value');
   if (mapped.exists() && mapped.val()?.uid) {
-    const mappedUid = safeUid(mapped.val().uid);
-    const found = await findUserRefForWallet(mappedUid, telegramId);
-    if (found) {
-      await found.ref.update({
-        telegram_id: telegramId,
-        display_name: displayName,
-        updated_at: now()
-      });
-      if (found.uid !== mappedUid) {
-        await mapRef.update({ uid: found.uid, username: found.uid, updated_at: now() });
-      }
-      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
-    }
+    const uid = safeUid(mapped.val().uid);
+    const existing = await ensureUser(uid, referredBy, false, {
+      telegram_id: telegramId,
+      display_name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid
+    });
+    return existing ? { uid, user: existing } : null;
   }
 
-  // 2) Try the Telegram username and telegram_id against existing records.
   const username = safeUser(user.username || '');
-  if (username) {
-    const found = await findUserRefForWallet(username, telegramId);
-    if (found) {
-      await found.ref.update({
-        telegram_id: telegramId,
-        display_name: displayName,
-        updated_at: now()
-      });
-      await mapRef.set({ uid: found.uid, username: found.uid, updated_at: now() });
-      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
-    }
-  } else {
-    const found = await findUserRefForWallet(`tg_${telegramId}`, telegramId);
-    if (found) {
-      await found.ref.update({
-        telegram_id: telegramId,
-        display_name: displayName,
-        updated_at: now()
-      });
-      await mapRef.set({ uid: found.uid, username: found.uid, updated_at: now() });
-      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
-    }
-  }
+  let uid = username;
+  if (!uid) uid = `tg_${telegramId}`;
 
-  // 3) No existing account matched: create one canonical record.
-  const uid = username || `tg_${telegramId}`;
+  const existing = await db.ref('users/' + uid).once('value');
+  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || username || uid;
   const record = await ensureUser(uid, referredBy, false, { telegram_id: telegramId, display_name: displayName });
   if (!record) return null;
   await mapRef.set({ uid, username: uid, updated_at: now() });
@@ -205,17 +189,12 @@ async function resolveTelegramUser(user, referredBy = null) {
 async function walletFor(username) {
   const clean = safeUid(username);
   if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
-
-  // Do not assume the authenticated uid is always the Firebase node key.
-  // Older accounts can have a different key while storing the same username
-  // or Telegram id inside the record.
-  const found = await findUserRefForWallet(clean);
-  if (!found) {
+  const snap = await db.ref('users/' + clean).once('value');
+  if (!snap.exists()) {
     console.warn(`[WALLET] user-not-found uid=${clean}`);
     return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
   }
-
-  const u = found.data || {};
+  const u = snap.val() || {};
   return {
     main: toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0),
     play: toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0),
@@ -273,11 +252,26 @@ async function transactionRequest(uid, data) {
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
 
+  const clientRequestId = String(data.clientRequestId || '').slice(0, 128);
+  const requestKey = clientRequestId ? safeUid(uid) + ':' + clientRequestId : '';
+  if (requestKey) {
+    const prior = await db.ref('transaction_requests/' + safeUid(uid) + '/' + safeUid(clientRequestId)).once('value');
+    if (prior.exists() && prior.val()?.tx_id) {
+      const priorId = String(prior.val().tx_id);
+      const priorTx = await db.ref('transactions/' + priorId).once('value');
+      if (priorTx.exists()) return { ok: true, id: priorId, clientRequestId, duplicate: true };
+    }
+  }
+
   const reference = String(data.reference || '').slice(0, 128);
   const fullName = String(data.fullName || '').slice(0, 128);
   const phone = String(data.phoneNumber || '').slice(0, 64);
   const imageData = String(data.imageData || '');
   if (imageData.length > 2_500_000) return { ok: false, reason: 'image-too-large' };
+
+  const userRef = db.ref('users/' + uid);
+  const userSnap = await userRef.once('value');
+  if (!userSnap.exists()) return { ok: false, reason: 'user-not-found' };
 
   const txRef = db.ref('transactions').push();
   const id = txRef.key;
@@ -285,42 +279,64 @@ async function transactionRequest(uid, data) {
 
   try {
     if (type === 'withdraw') {
-      await db.ref('users/' + uid).transaction(u => {
+      const result = await userRef.transaction(u => {
         if (!u) return;
-        const available = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) - toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+        const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+        const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+        const available = main - pending;
         if (available < amount) return;
-        u.pending_withdrawal = toFiniteNumber(u.pending_withdrawal, 0) + amount;
-        u.updated_at = now();
+        u.pending_withdrawal = pending + amount;
+        u.wallet_updated_at = now();
+        u.updated_at = u.wallet_updated_at;
         reservationApplied = true;
         return u;
       });
-      if (!reservationApplied) return { ok: false, reason: 'insufficient-main' };
-    } else {
-      const exists = await db.ref('users/' + uid).once('value');
-      if (!exists.exists()) return { ok: false, reason: 'user-not-found' };
+      if (!result?.committed || !reservationApplied) return { ok: false, reason: 'insufficient-main' };
     }
 
-    const userSnap = await db.ref('users/' + uid).once('value');
-    const userRecord = userSnap.val() || {};
+    const userRecord = (await userRef.once('value')).val() || {};
     const displayName = String(userRecord.display_name || userRecord.username || uid).slice(0, 128);
     await txRef.set({
-      username: uid, display_name: displayName, type, amount, status: 'pending', timestamp: now(),
-      reference, full_name: fullName, phone_number: phone, image_data: imageData,
-      reason: '', wallet_applied: 0, updated_at: now()
+      username: uid,
+      display_name: displayName,
+      type,
+      amount,
+      status: 'pending',
+      timestamp: now(),
+      reference,
+      full_name: fullName,
+      phone_number: phone,
+      image_data: imageData,
+      reason: '',
+      wallet_applied: 0,
+      wallet_uid: uid,
+      client_request_id: clientRequestId || null,
+      updated_at: now()
     });
 
+    if (requestKey) {
+      await db.ref('transaction_requests/' + safeUid(uid) + '/' + safeUid(clientRequestId)).set({
+        tx_id: id,
+        type,
+        amount,
+        created_at: now()
+      });
+    }
+
     await sendWallet(uid);
-    return { ok: true, id, clientRequestId: String(data.clientRequestId || '').slice(0, 128) };
+    return { ok: true, id, clientRequestId, duplicate: false };
   } catch (e) {
     if (reservationApplied) {
-      await db.ref('users/' + uid).transaction(u => {
+      await userRef.transaction(u => {
         if (!u) return u;
-        u.pending_withdrawal = Math.max(0, toFiniteNumber(u.pending_withdrawal, 0) - amount);
-        u.updated_at = now();
-        u.wallet_updated_at = u.updated_at;
+        const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+        u.pending_withdrawal = Math.max(0, pending - amount);
+        u.wallet_updated_at = now();
+        u.updated_at = u.wallet_updated_at;
         return u;
       }).catch(() => {});
     }
+    console.error('[TX-REQUEST] failed', e);
     return { ok: false, reason: 'transaction-failed' };
   }
 }
@@ -348,49 +364,25 @@ async function adminListTransactions() {
   return txs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
-async function findUserRefForWallet(username, telegramId = null) {
+async function findUserRefForWallet(username) {
   const clean = safeUid(username);
-  if (!clean && !telegramId) return null;
+  if (!clean) return null;
 
-  // 1) Canonical Firebase key.
-  if (clean) {
-    const directRef = db.ref('users/' + clean);
-    const directSnap = await directRef.once('value');
-    if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
+  // First try the canonical Firebase key used by the current auth system.
+  const directRef = db.ref('users/' + clean);
+  const directSnap = await directRef.once('value');
+  if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
 
-    // 2) Legacy record whose stored username differs from its Firebase key.
-    const candidates = [...new Set([String(username || ''), clean].filter(Boolean))];
-    for (const candidate of candidates) {
-      const byUsername = await db.ref('users').orderByChild('username').equalTo(candidate).once('value');
-      let found = null;
-      byUsername.forEach(child => {
-        if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
-      });
-      if (found) {
-        console.warn(`[WALLET] legacy user-key resolved username=${candidate} uid=${found.uid}`);
-        return found;
-      }
-    }
-  }
-
-  // 3) Telegram id fallback. This is important for older accounts whose
-  // Firebase node key changed but telegram_id stayed the same.
-  let tid = telegramId != null ? Number(telegramId) : null;
-  if (!Number.isSafeInteger(tid) || tid <= 0) {
-    const m = String(username || '').match(/^tg_(\d+)$/);
-    if (m) tid = Number(m[1]);
-    else if (/^\d+$/.test(String(username || ''))) tid = Number(username);
-  }
-  if (Number.isSafeInteger(tid) && tid > 0) {
-    const byTelegram = await db.ref('users').orderByChild('telegram_id').equalTo(tid).once('value');
-    let found = null;
-    byTelegram.forEach(child => {
-      if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
-    });
-    if (found) {
-      console.warn(`[WALLET] telegram-id resolved telegram_id=${tid} uid=${found.uid}`);
-      return found;
-    }
+  // Compatibility for older accounts where the Firebase key and the stored
+  // username were different (for example legacy Telegram/OIDC accounts).
+  const byUsername = await db.ref('users').orderByChild('username').equalTo(String(username)).once('value');
+  let found = null;
+  byUsername.forEach(child => {
+    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+  });
+  if (found) {
+    console.warn(`[WALLET] legacy user-key resolved username=${username} uid=${found.uid}`);
+    return found;
   }
 
   return null;
@@ -407,38 +399,46 @@ async function adminDecision(id, decision, reason = '') {
     const txSnap = await txRef.once('value');
     if (!txSnap.exists()) return { ok: false, reason: 'not-found' };
 
-    const tx = txSnap.val() || {};
-    if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
-
+    const tx = { ...(txSnap.val() || {}), id };
     const txAmount = toFiniteNumber(tx.amount, 0);
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
+    if (!['deposit', 'withdraw'].includes(tx.type)) return { ok: false, reason: 'bad-type' };
 
-    // A rejected deposit does not touch the wallet.
+    // If this transaction was already finalized, never touch the wallet again.
+    if (tx.status !== 'pending' && tx.status !== 'processing') {
+      return { ok: false, reason: 'already-decided', tx };
+    }
+
+    // Deposit rejection never changes a wallet. Claim the transaction itself
+    // atomically so two admins cannot reject it twice.
     if (tx.type === 'deposit' && decision === 'rejected') {
-      await txRef.update({
-        status: 'rejected',
-        reason: String(reason || '').slice(0, 256),
-        wallet_applied: 0,
-        updated_at: now()
+      const claim = await txRef.transaction(current => {
+        if (!current || current.status !== 'pending') return;
+        current.status = 'rejected';
+        current.reason = String(reason || '').slice(0, 256);
+        current.wallet_applied = 0;
+        current.updated_at = now();
+        return current;
       });
-      const updatedTx = { ...tx, status: 'rejected', reason, id };
+      if (!claim?.committed) return { ok: false, reason: 'already-decided' };
+      const updatedTx = { ...tx, status: 'rejected', reason: String(reason || '').slice(0, 256), wallet_applied: 0 };
       await sendWallet(tx.username);
       await notifyTransaction(tx.username, updatedTx);
-      console.log(`[ADMIN] rejected deposit id=${id} user=${tx.username} amount=${txAmount}`);
       return { ok: true, tx: updatedTx };
     }
 
     const userInfo = await findUserRefForWallet(tx.username);
-    if (!userInfo) {
-      console.error(`[ADMIN] wallet user not found for transaction id=${id} username=${tx.username}`);
-      return { ok: false, reason: 'wallet-user-not-found' };
-    }
-
+    if (!userInfo) return { ok: false, reason: 'wallet-user-not-found' };
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
+    // The ledger marker lives inside the same Firebase user transaction as the
+    // balance mutation. Therefore a retried admin click can never credit/debit
+    // the wallet twice, even if the server crashes before updating /transactions.
     const result = await userRef.transaction(u => {
       if (!u) return;
+      const ledger = u.wallet_ledger && u.wallet_ledger[id];
+      if (ledger) return u; // already applied by an earlier attempt
 
       const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
@@ -453,35 +453,52 @@ async function adminDecision(id, decision, reason = '') {
           u.main_wallet = main - txAmount;
           u.pending_withdrawal = pending - txAmount;
         } else {
-          u.pending_withdrawal = Math.max(0, pending - txAmount);
+          if (pending < txAmount) return;
+          u.pending_withdrawal = pending - txAmount;
         }
-      } else {
-        return;
       }
 
-      u.updated_at = now();
-      u.wallet_updated_at = u.updated_at;
+      if (!u.wallet_ledger || typeof u.wallet_ledger !== 'object') u.wallet_ledger = {};
+      u.wallet_ledger[id] = {
+        type: tx.type,
+        decision,
+        amount: txAmount,
+        applied_at: now()
+      };
+      u.wallet_updated_at = now();
+      u.updated_at = u.wallet_updated_at;
       return u;
     });
 
-    if (!result || !result.committed || !result.snapshot?.exists()) {
-      console.error(`[ADMIN] wallet transaction did not commit id=${id} username=${tx.username} uid=${userUid} type=${tx.type} decision=${decision}`);
-      return { ok: false, reason: 'wallet-write-not-committed' };
+    let updatedUser = result?.snapshot?.exists() ? (result.snapshot.val() || {}) : null;
+    if (!result?.committed || !updatedUser) {
+      const recovery = await userRef.once('value');
+      updatedUser = recovery.exists() ? (recovery.val() || {}) : null;
     }
+    if (!updatedUser) return { ok: false, reason: 'wallet-write-not-committed' };
 
-    const updatedUser = result.snapshot.val() || {};
-    const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? updatedUser.play_balance ?? updatedUser.playBalance ?? 0, 0);
-    const newMain = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? updatedUser.main_balance ?? updatedUser.mainBalance ?? 0, 0);
+    const ledgerEntry = updatedUser.wallet_ledger?.[id];
+    if (!ledgerEntry) return { ok: false, reason: 'wallet-write-not-committed' };
+    if (String(ledgerEntry.decision) !== decision) return { ok: false, reason: 'already-decided' };
+
+    const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? 0, 0);
+    const newMain = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? 0, 0);
 
     await txRef.update({
       status: decision,
       reason: String(reason || '').slice(0, 256),
-      wallet_applied: decision === 'rejected' ? 0 : 1,
+      wallet_applied: 1,
       wallet_uid: userUid,
       updated_at: now()
     });
 
-    const updatedTx = { ...tx, status: decision, reason, id };
+    const updatedTx = {
+      ...tx,
+      status: decision,
+      reason: String(reason || '').slice(0, 256),
+      wallet_applied: 1,
+      wallet_uid: userUid
+    };
     console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} walletUid=${userUid} amount=${txAmount} → play=${newPlay} main=${newMain}`);
     await sendWallet(userUid);
     await notifyTransaction(userUid, updatedTx);
@@ -506,7 +523,8 @@ async function claimPayout(uid, amount, roomId, round, kind) {
   await db.ref('users/' + uid).transaction(u => {
     if (!u) return;
     u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
-    u.updated_at = now();
+    u.wallet_updated_at = now();
+    u.updated_at = u.wallet_updated_at;
     success = true;
     return u;
   });
@@ -530,7 +548,8 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
     if (!u) return;
     u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
     u.referral_earnings = toFiniteNumber(u.referral_earnings, 0) + amount;
-    u.updated_at = now();
+    u.wallet_updated_at = now();
+    u.updated_at = u.wallet_updated_at;
     success = true;
     return u;
   });
@@ -648,13 +667,7 @@ async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
   try {
-    const userInfo = await findUserRefForWallet(uid);
-    if (!userInfo) {
-      console.warn(`[DEBIT] uid=${uid} → user-not-found`);
-      return { ok: false, reason: 'user-not-found' };
-    }
-
-    const result = await userInfo.ref.transaction(u => {
+    const result = await db.ref('users/' + uid).transaction(u => {
       if (!u) return; // abort
       const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       if (balance < amt) return; // abort — insufficient
@@ -675,14 +688,12 @@ async function debit(uid, amount, roomId, round) {
     }
 
     // Not committed. Figure out why so the client can show the right message.
-    const userInfo2 = await findUserRefForWallet(uid);
-    if (!userInfo2) {
+    const refSnap = await db.ref('users/' + uid).once('value');
+    if (!refSnap.exists()) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
       return { ok: false, reason: 'user-not-found' };
     }
-    const refSnap = await userInfo2.ref.once('value');
-    const refData = refSnap.val() || {};
-    const live = toFiniteNumber(refData.play_wallet ?? refData.playWallet ?? refData.play_balance ?? refData.playBalance ?? 0, 0);
+    const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
     await sendWallet(uid); // resync client with actual balance
     return { ok: false, reason: 'insufficient', balance: live };
@@ -1058,7 +1069,8 @@ async function handle(ws, m) {
     if (m.type === 'admin-decision') {
       const r = await adminDecision(String(m.id || ''), String(m.decision || ''), String(m.reason || ''));
       if (!r.ok) return send(ws, { type: 'admin-error', message: r.reason });
-      send(ws, { type: 'admin-decision-ok', id: m.id, status: r.tx.status });
+      send(ws, { type: 'admin-decision-ok', id: m.id, status: r.tx.status, transaction: r.tx });
+      send(ws, { type: 'admin-transactions', transactions: await adminListTransactions() });
       return;
     }
     return;
@@ -1158,7 +1170,15 @@ app.get('/health', async (_, res) => {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
 });
-app.get('/', (_, res) => res.type('text').send('Winzo authoritative server is running.'));
+app.get('/config', (_, res) => res.json({
+  ok: true,
+  service: 'winzo-authoritative-server',
+  database: 'firebase-realtime-database',
+  walletSchema: 'users/<uid>/{main_wallet,play_wallet,pending_withdrawal,referral_earnings}',
+  websocket: true
+}));
+
+app.get('/', (_, res) => res.type('text').send('Winzo authoritative Firebase server is running.'));
 
 const server = http.createServer(app);
 
