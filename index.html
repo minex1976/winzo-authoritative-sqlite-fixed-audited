@@ -229,17 +229,21 @@
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
         .ball-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .ball-anim-overlay.active { display: flex; }
-        .ball-anim-machine { position: relative; width: min(460px, 100%); height: min(640px, 94vh); border-radius: 30px; padding: 14px; background: linear-gradient(145deg, #2a1a4a, #1a2a4a); border: 1px solid rgba(180,120,255,.28); box-shadow: 0 20px 60px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: 10px; }
-        .ball-anim-glass { position: relative; flex: 1 1 auto; min-height: 0; border-radius: 22px; background: linear-gradient(180deg, #eaf2fb 0%, #cddceb 100%); border: 5px solid #b8c9d8; overflow: hidden; }
-        .ball-anim-glass::before { content: "LUCKY DRAW"; position: absolute; top: 10px; left: 0; right: 0; text-align: center; font-size: 13px; font-weight: 900; letter-spacing: 4px; color: #8a9bad; opacity: .35; pointer-events: none; z-index: 0; }
-        .ball-anim-glass::after { content: ""; position: absolute; left: 4%; right: 4%; bottom: 2px; height: 14px; background: radial-gradient(ellipse at 50% 100%, rgba(70,90,115,.32) 0%, rgba(70,90,115,0) 72%); border-radius: 50%; pointer-events: none; z-index: 1; }
-        #baBalls { position: absolute; inset: 0; z-index: 2; }
-        .ba-ball { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; line-height: 1; text-align: center; padding: 2px; overflow: hidden; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
-        .ba-ball.ba-white { background: radial-gradient(circle at 34% 30%, #ffffff 0%, #eef1f5 55%, #b8c2cc 100%); color: #101820; box-shadow: inset -2px -3px 4px rgba(0,0,0,.14), 0 2px 3px rgba(0,0,0,.22); }
-        .ba-ball.ba-yellow { background: radial-gradient(circle at 34% 30%, #fffbe0 0%, #ffe868 40%, #d18a00 100%); color: #3d2c00; word-break: break-word; box-shadow: inset -2px -3px 4px rgba(0,0,0,.16), 0 2px 3px rgba(0,0,0,.22); }
-        .ba-ball.ba-bounce { -webkit-animation: baBounce var(--dur, 1.6s) cubic-bezier(0.37, 0, 0.63, 1) var(--delay, 0s) infinite; animation: baBounce var(--dur, 1.6s) cubic-bezier(0.37, 0, 0.63, 1) var(--delay, 0s) infinite; }
-        @-webkit-keyframes baBounce { 0%, 100% { -webkit-transform: translate3d(0, 0, 0) rotate(0deg); transform: translate3d(0, 0, 0) rotate(0deg); } 46% { -webkit-transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(140deg); transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(140deg); } 55% { -webkit-transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(200deg); transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(200deg); } }
-        @keyframes baBounce { 0%, 100% { -webkit-transform: translate3d(0, 0, 0) rotate(0deg); transform: translate3d(0, 0, 0) rotate(0deg); } 46% { -webkit-transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(140deg); transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(140deg); } 55% { -webkit-transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(200deg); transform: translate3d(var(--dx, 3px), var(--jump, -16px), 0) rotate(200deg); } }
+        .ball-anim-machine { position: relative; width: min(460px, 100%); height: min(640px, 94vh); border-radius: 34px; padding: 14px; background: radial-gradient(circle at 50% 0%, rgba(255,204,68,.13), transparent 34%), linear-gradient(145deg, #17122d, #101d34 58%, #0b1323); border: 1px solid rgba(255,204,68,.30); box-shadow: 0 28px 80px rgba(0,0,0,.82), inset 0 1px 0 rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 10px; }
+        .ball-anim-machine::before { content: "WINZO  •  LUCKY DRAW"; position: absolute; top: 8px; left: 0; right: 0; text-align: center; color: rgba(255,216,102,.55); font-size: 10px; font-weight: 900; letter-spacing: 3px; pointer-events: none; z-index: 10; }
+        .ball-anim-glass { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 8px; border-radius: 48% 48% 25px 25px / 38px 38px 25px 25px; background: radial-gradient(ellipse at 50% 8%, rgba(255,255,255,.72), rgba(230,244,255,.18) 28%, rgba(85,142,184,.12) 62%, rgba(7,20,38,.62) 100%), linear-gradient(180deg, rgba(205,236,255,.32), rgba(20,48,72,.55)); border: 3px solid rgba(190,232,255,.72); overflow: hidden; box-shadow: inset 0 0 35px rgba(115,205,255,.16), inset 0 -18px 28px rgba(0,0,0,.30), 0 8px 28px rgba(0,0,0,.45), 0 0 26px rgba(120,210,255,.10); backdrop-filter: blur(2px); }
+        .ball-anim-glass::before { content: "LUCKY DRAW"; position: absolute; top: 13px; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 900; letter-spacing: 4px; color: #d9f3ff; opacity: .40; pointer-events: none; z-index: 0; }
+        .ball-anim-glass::after { content: ""; position: absolute; left: 5%; right: 5%; bottom: 3px; height: 20px; background: radial-gradient(ellipse at 50% 100%, rgba(100,180,230,.30) 0%, rgba(70,90,115,0) 72%); border-radius: 50%; pointer-events: none; z-index: 1; }
+        #baBalls { position: absolute; inset: 0; z-index: 2; transform-origin: 50% 65%; }
+        .ba-ball { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; line-height: 1; text-align: center; padding: 2px; overflow: hidden; -webkit-backface-visibility: hidden; backface-visibility: hidden; border: 1px solid rgba(255,255,255,.48); }
+        .ba-ball::after { content: ""; position: absolute; width: 38%; height: 24%; left: 20%; top: 11%; border-radius: 50%; background: rgba(255,255,255,.70); filter: blur(2px); transform: rotate(-28deg); pointer-events: none; }
+        .ba-ball.ba-white { background: radial-gradient(circle at 34% 30%, #ffffff 0%, #e8f4ff 42%, #8da7ba 100%); color: #101820; box-shadow: inset -4px -5px 7px rgba(0,0,0,.18), inset 3px 3px 5px rgba(255,255,255,.80), 0 4px 10px rgba(0,0,0,.35); }
+        .ba-ball.ba-yellow { background: radial-gradient(circle at 34% 28%, #fffde8 0%, #ffe66b 36%, #f4a900 70%, #9a5600 100%); color: #3d2c00; word-break: break-word; box-shadow: inset -4px -5px 7px rgba(0,0,0,.20), inset 3px 3px 5px rgba(255,255,255,.75), 0 4px 10px rgba(0,0,0,.35); }
+        .ba-ball.ba-bounce { -webkit-animation: baBounce var(--dur, 1.45s) cubic-bezier(.22,.72,.28,1) var(--delay, 0s) infinite; animation: baBounce var(--dur, 1.45s) cubic-bezier(.22,.72,.28,1) var(--delay, 0s) infinite; }
+        #baBalls.shaking { animation: baMachineShake .16s ease-in-out infinite alternate; }
+        @keyframes baMachineShake { 0% { transform: translate3d(-3px,1px,0) rotate(-.7deg); } 100% { transform: translate3d(3px,-1px,0) rotate(.7deg); } }
+        @-webkit-keyframes baBounce { 0%,100% { -webkit-transform: translate3d(0,0,0) rotate(0deg) scale(1); transform: translate3d(0,0,0) rotate(0deg) scale(1); } 32% { -webkit-transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); } 50% { -webkit-transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); } 68% { -webkit-transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); } }
+        @keyframes baBounce { 0%,100% { transform: translate3d(0,0,0) rotate(0deg) scale(1); } 32% { transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); } 50% { transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); } 68% { transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); } }
         .ba-hole { position: absolute; left: 50%; bottom: -3px; width: 76px; height: 38px; transform: translateX(-50%); border-radius: 76px 76px 0 0; background: #05040a; box-shadow: 0 -2px 0 2px rgba(130,150,175,.5), inset 0 6px 10px rgba(0,0,0,.9); z-index: 5; overflow: hidden; }
         .ba-hole-lid { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; border-radius: 76px 76px 0 0; background: linear-gradient(#e6edf4, #a9b7c6); transition: transform .5s cubic-bezier(.55,0,.75,.35), opacity .45s ease; }
         .ba-hole.open .ba-hole-lid { transform: translateY(115%); opacity: 0; }
@@ -1248,7 +1252,7 @@
                 const tray = document.getElementById('baTray');
                 const status = document.getElementById('baStatus');
                 if (!machine || !glass || !ballBox || !hole || !tray || !status) { resolve(); return; }
-                const ANIM = { mixMs: BALL_ANIM_LOW_END ? 900 : 1300, holeOpenMs: BALL_ANIM_LOW_END ? 300 : 420, dropMs: BALL_ANIM_LOW_END ? 440 : 560, gapBeforeWinner: 240, gapBetweenWinners: 200, finalHoldMs: 700 };
+                const ANIM = { mixMs: BALL_ANIM_LOW_END ? 1400 : 2200, holeOpenMs: BALL_ANIM_LOW_END ? 300 : 420, dropMs: BALL_ANIM_LOW_END ? 440 : 560, gapBeforeWinner: 240, gapBetweenWinners: 200, finalHoldMs: 700 };
                 let resolved = false;
                 const timers = [];
                 const wait = ms => new Promise(r => { const t = setTimeout(r, ms); timers.push(t); });
@@ -1258,6 +1262,7 @@
                     resolved = true; clearTimeout(safetyTimer); cleanup();
                     overlay.classList.remove('active');
                     machine.querySelectorAll('.ba-drop').forEach(el => el.remove());
+                    ballBox.classList.remove('shaking');
                     ballBox.innerHTML = '';
                     resolve();
                 };
@@ -1310,9 +1315,9 @@
                     el.style.left = x.toFixed(1) + 'px'; el.style.top = y.toFixed(1) + 'px';
                     el.style.zIndex = String(1 + Math.floor(Math.random() * 4));
                     el.style.setProperty('--delay', (Math.random() * 1.5).toFixed(2) + 's');
-                    el.style.setProperty('--dur', (1.1 + Math.random() * 0.9).toFixed(2) + 's');
-                    el.style.setProperty('--dx', ((Math.random() - 0.5) * 4).toFixed(1) + 'px');
-                    el.style.setProperty('--jump', (-(7 + Math.random() * 12)).toFixed(0) + 'px');
+                    el.style.setProperty('--dur', (0.85 + Math.random() * 0.75).toFixed(2) + 's');
+                    el.style.setProperty('--dx', ((Math.random() - 0.5) * 10).toFixed(1) + 'px');
+                    el.style.setProperty('--jump', (-(10 + Math.random() * 20)).toFixed(0) + 'px');
                     ballBox.appendChild(el);
                     balls.push({ el, kind: item.kind, num: item.num, owner: item.owner, text: item.text });
                 });
@@ -1348,7 +1353,9 @@
                 }
                 (async () => {
                     status.textContent = '🎲 Mixing the balls…';
+                    ballBox.classList.add('shaking');
                     await wait(ANIM.mixMs); if (resolved) return;
+                    ballBox.classList.remove('shaking');
                     hole.classList.add('open');
                     status.textContent = '🎯 Opening the chute…';
                     await wait(ANIM.holeOpenMs); if (resolved) return;
@@ -1396,6 +1403,7 @@
                 if (!isResultsCountdownRunning) startResultsCountdown();
                 return;
             }
+            renderWinningCardBody(n, winners, winAmount);
             ballAnimationPlayedRounds.add(animKey);
             ballAnimationPlaying = true;
             window._ballAnimStartedAt = Date.now();
@@ -2250,7 +2258,13 @@
                 };
                 this.ws.onmessage = ev => {
                     let m; try { m = JSON.parse(ev.data); } catch { return; }
-                    if (m.type === 'authed')            { this.authenticated = true; this.onAuth && this.onAuth(m.uid, m.displayName); this.onConnection && this.onConnection(true); if (this.roomId) this.rawSend({ type: 'join', room: this.roomId }); }
+                    if (m.type === 'authed') {
+                        this.authenticated = true;
+                        this.onAuth && this.onAuth(m.uid, m.displayName);
+                        this.onConnection && this.onConnection(true);
+                        this.rawSend({ type: 'wallet-refresh' });
+                        if (this.roomId) this.rawSend({ type: 'join', room: this.roomId });
+                    }
                     else if (m.type === 'state')        this.onState && this.onState(m.state, m.room);
                     else if (m.type === 'pick-ok')      this.onPickOk && this.onPickOk(m.number);
                     else if (m.type === 'pick-fail')    this.onPickFail && this.onPickFail(m.number, m.reason);
@@ -2551,6 +2565,7 @@
                     walletData.play = safeNum(w.play, 0);
                     walletData.pending = safeNum(w.pending, 0);
                     walletData.refEarn = safeNum(w.refEarn, 0);
+                    walletData.updatedAt = safeNum(w.updatedAt, Date.now());
                     updateWalletUI(); updateWelcomeUI();
                     renderNumberPicker();
                 },
