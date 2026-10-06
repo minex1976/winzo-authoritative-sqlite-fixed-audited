@@ -366,7 +366,7 @@ async function transactionRequest(uid, data) {
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
 
   const clientRequestId = String(data.clientRequestId || '').slice(0, 128);
-  const requestKey = clientRequestId ? safeUid(uid) + ':' + clientRequestId : '';
+  const requestKey = clientRequestId ? safeUid(uid) + ':' + safeUid(clientRequestId) : '';
   if (requestKey) {
     const prior = await db.ref('transaction_requests/' + safeUid(uid) + '/' + safeUid(clientRequestId)).once('value');
     if (prior.exists() && prior.val()?.tx_id) {
@@ -807,11 +807,18 @@ async function saveRoom(room) { await room.persist(); room.broadcast(); }
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
+  
   try {
+    // Use a transaction to safely deduct the balance
     const result = await db.ref('users/' + uid).transaction(u => {
-      if (!u) return; // abort
+      if (!u) return u; // User doesn't exist, abort silently
+      
       const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      if (balance < amt) return; // abort — insufficient
+      
+      // If balance is insufficient, return the user unchanged (no update, no error)
+      if (balance < amt) return u; 
+      
+      // Deduct the amount
       u.play_wallet = balance - amt;
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
@@ -819,25 +826,26 @@ async function debit(uid, amount, roomId, round) {
     });
 
     const committed = !!(result && result.committed);
-    const snap = result && result.snapshot;
-    const currentPlay = snap && snap.exists() ? toFiniteNumber(snap.val()?.play_wallet, 0) : null;
-
+    
     if (committed) {
-      console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${currentPlay} room=${roomId} round=${round}`);
+      const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
+      console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${newPlay} room=${roomId} round=${round}`);
       await sendWallet(uid);
-      return { ok: true, balance: currentPlay };
+      return { ok: true, balance: newPlay };
     }
 
-    // Not committed. Figure out why so the client can show the right message.
+    // If not committed, check why (either user not found or insufficient funds)
     const refSnap = await db.ref('users/' + uid).once('value');
     if (!refSnap.exists()) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
       return { ok: false, reason: 'user-not-found' };
     }
+    
     const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
-    await sendWallet(uid); // resync client with actual balance
+    await sendWallet(uid); // Resync client with actual balance
     return { ok: false, reason: 'insufficient', balance: live };
+    
   } catch (e) {
     console.error(`[DEBIT] uid=${uid} amount=${amt} ERROR`, e);
     return { ok: false, reason: 'debit-error' };
