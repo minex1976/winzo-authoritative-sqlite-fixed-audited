@@ -130,6 +130,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     play_wallet: bot ? BOT_START_WALLET : 30,
     pending_withdrawal: 0,
     referral_earnings: 0,
+    wallet_updated_at: t,
     referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
     created_at: t,
     updated_at: t
@@ -170,14 +171,19 @@ async function resolveTelegramUser(user, referredBy = null) {
 // object so the values it returns are always the freshest ones on the server.
 async function walletFor(username) {
   const clean = safeUid(username);
-  if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0 };
+  if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
   const snap = await db.ref('users/' + clean).once('value');
+  if (!snap.exists()) {
+    console.warn(`[WALLET] user-not-found uid=${clean}`);
+    return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
+  }
   const u = snap.val() || {};
   return {
-    main: toFiniteNumber(u.main_wallet, 0),
-    play: toFiniteNumber(u.play_wallet, 0),
-    pending: toFiniteNumber(u.pending_withdrawal, 0),
-    refEarn: toFiniteNumber(u.referral_earnings, 0),
+    main: toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0),
+    play: toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0),
+    pending: toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0),
+    refEarn: toFiniteNumber(u.referral_earnings ?? u.referralEarnings ?? 0, 0),
+    updatedAt: toFiniteNumber(u.wallet_updated_at ?? u.updated_at, 0)
   };
 }
 
@@ -243,7 +249,7 @@ async function transactionRequest(uid, data) {
     if (type === 'withdraw') {
       await db.ref('users/' + uid).transaction(u => {
         if (!u) return;
-        const available = toFiniteNumber(u.main_wallet, 0) - toFiniteNumber(u.pending_withdrawal, 0);
+        const available = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) - toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
         if (available < amount) return;
         u.pending_withdrawal = toFiniteNumber(u.pending_withdrawal, 0) + amount;
         u.updated_at = now();
@@ -273,6 +279,7 @@ async function transactionRequest(uid, data) {
         if (!u) return u;
         u.pending_withdrawal = Math.max(0, toFiniteNumber(u.pending_withdrawal, 0) - amount);
         u.updated_at = now();
+        u.wallet_updated_at = u.updated_at;
         return u;
       }).catch(() => {});
     }
@@ -318,20 +325,16 @@ async function adminDecision(id, decision, reason = '') {
     const txAmount = toFiniteNumber(tx.amount, 0);
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
 
-    let success = false;
-    let newPlay = null;
-    let newMain = null;
-
-    await db.ref('users/' + tx.username).transaction(u => {
+    const result = await db.ref('users/' + tx.username).transaction(u => {
       if (!u) return;
-      const play = toFiniteNumber(u.play_wallet, 0);
-      const main = toFiniteNumber(u.main_wallet, 0);
-      const pending = toFiniteNumber(u.pending_withdrawal, 0);
+      const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
+      const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+      const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
 
-      if (tx.type === 'deposit' && decision === 'approved') {
+      if (tx.type === 'deposit') {
+        if (decision !== 'approved') return u;
         u.play_wallet = play + txAmount;
-      }
-      if (tx.type === 'withdraw') {
+      } else if (tx.type === 'withdraw') {
         if (decision === 'approved') {
           if (pending < txAmount || main < txAmount) return;
           u.main_wallet = main - txAmount;
@@ -339,15 +342,22 @@ async function adminDecision(id, decision, reason = '') {
         } else {
           u.pending_withdrawal = Math.max(0, pending - txAmount);
         }
+      } else {
+        return;
       }
       u.updated_at = now();
-      success = true;
-      newPlay = toFiniteNumber(u.play_wallet, 0);
-      newMain = toFiniteNumber(u.main_wallet, 0);
+      u.wallet_updated_at = u.updated_at;
       return u;
     });
 
-    if (!success) return { ok: false, reason: 'reserved-balance-changed' };
+    // Firebase may call a transaction handler speculatively. Only committed=true
+    // proves that the wallet write reached the database.
+    if (!result || !result.committed || !result.snapshot?.exists()) {
+      return { ok: false, reason: 'wallet-write-not-committed' };
+    }
+    const updatedUser = result.snapshot.val() || {};
+    const newPlay = toFiniteNumber(updatedUser.play_wallet, 0);
+    const newMain = toFiniteNumber(updatedUser.main_wallet, 0);
 
     await txRef.update({
       status: decision,
@@ -380,7 +390,7 @@ async function claimPayout(uid, amount, roomId, round, kind) {
   let success = false;
   await db.ref('users/' + uid).transaction(u => {
     if (!u) return;
-    u.main_wallet = toFiniteNumber(u.main_wallet, 0) + amount;
+    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
     u.updated_at = now();
     success = true;
     return u;
@@ -403,7 +413,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   let success = false;
   await db.ref('users/' + ref).transaction(u => {
     if (!u) return;
-    u.main_wallet = toFiniteNumber(u.main_wallet, 0) + amount;
+    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
     u.referral_earnings = toFiniteNumber(u.referral_earnings, 0) + amount;
     u.updated_at = now();
     success = true;
@@ -529,6 +539,7 @@ async function debit(uid, amount, roomId, round) {
       if (balance < amt) return; // abort — insufficient
       u.play_wallet = balance - amt;
       u.updated_at = now();
+      u.wallet_updated_at = u.updated_at;
       return u;
     });
 
@@ -565,7 +576,7 @@ async function refundWager(uid, amount, roomId, round) {
     let committed = false;
     const result = await db.ref('users/' + uid).transaction(u => {
       if (!u) return;
-      u.play_wallet = toFiniteNumber(u.play_wallet, 0) + amt;
+      u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
       committed = true;
       return u;
@@ -739,34 +750,26 @@ function scheduleBots(room) {
   const names = [...roster];
   if (!names.length) return;
 
-  const remaining = new Map();
-  names.forEach(n => remaining.set(n, 1 + Math.floor(Math.random() * MAX_PICKS)));
-
+  // Every bot gets exactly MAX_PICKS selections.
   const order = [];
-  for (;;) {
-    const pass = names.filter(n => (remaining.get(n) || 0) > 0);
-    if (!pass.length) break;
+  for (let pickNo = 0; pickNo < MAX_PICKS; pickNo++) {
+    const pass = [...names];
     for (let i = pass.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pass[i], pass[j]] = [pass[j], pass[i]];
     }
-    for (const n of pass) {
-      order.push(n);
-      remaining.set(n, remaining.get(n) - 1);
-    }
+    for (const name of pass) order.push(name);
   }
-  if (!order.length) return;
 
-  const START_DELAY_MS   = 1500;
-  const SAFETY_BUFFER_MS = 2500;
-  const MIN_GAP_MS       = 300;
-
+  // At most 6 bots => 18 picks. This completes in about 6 seconds,
+  // comfortably before the 30-second selection deadline.
+  const START_DELAY_MS = 350;
+  const BOT_PICK_GAP_MS = 300;
   let index = 0;
 
   const runNextPick = async () => {
-    if (room.phase !== 'selection') return;
-    if (index >= order.length) return;
-    if (now() > room.endsAt - SAFETY_BUFFER_MS) return;
+    if (room.phase !== 'selection' || index >= order.length) return;
+    if (now() >= room.endsAt - 1000) return;
 
     const displayName = order[index++];
     const uid = botUid(displayName);
@@ -788,32 +791,32 @@ function scheduleBots(room) {
 
         if (p.picks.length >= MAX_PICKS) return;
 
-        const free = [];
-        for (let n = 1; n <= 200; n++) if (!room.taken.has(n)) free.push(n);
-        if (!free.length) return;
+        let num = null;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const candidate = 1 + Math.floor(Math.random() * 200);
+          if (!room.taken.has(candidate) && !p.picks.includes(candidate)) {
+            num = candidate;
+            break;
+          }
+        }
+        if (num == null) {
+          for (let candidate = 1; candidate <= 200; candidate++) {
+            if (!room.taken.has(candidate)) { num = candidate; break; }
+          }
+        }
+        if (num == null) return;
 
-        const num = free[Math.floor(Math.random() * free.length)];
         room.taken.set(num, uid);
         p.picks.push(num);
         room.dirty = true;
-
-        await room.persist();
         room.broadcast();
       });
     } catch (err) {
       console.error('[BOT-PICK]', err);
     }
 
-    if (room.phase !== 'selection') return;
-    if (index >= order.length) return;
-
-    const remainingPicks = order.length - index;
-    const timeLeftMs = Math.max(0, room.endsAt - now() - SAFETY_BUFFER_MS);
-    const rawGap = Math.floor(timeLeftMs / Math.max(1, remainingPicks));
-    const jitter = 0.85 + Math.random() * 0.30;
-    const gap = Math.max(MIN_GAP_MS, Math.floor(rawGap * jitter));
-
-    const t = setTimeout(runNextPick, gap);
+    if (room.phase !== 'selection' || index >= order.length) return;
+    const t = setTimeout(runNextPick, BOT_PICK_GAP_MS);
     room.botTimers.push(t);
   };
 
@@ -981,9 +984,9 @@ async function handle(ws, m) {
     let success = false;
     await db.ref('users/' + ws.uid).transaction(u => {
       if (!u) return u;
-      const main = toFiniteNumber(u.main_wallet, 0);
-      const pending = toFiniteNumber(u.pending_withdrawal, 0);
-      const play = toFiniteNumber(u.play_wallet, 0);
+      const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+      const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+      const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       if (main - pending < amount) return;
       u.main_wallet = main - amount;
       u.play_wallet = play + amount;
