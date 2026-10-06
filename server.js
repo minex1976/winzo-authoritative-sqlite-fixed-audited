@@ -145,22 +145,55 @@ async function resolveTelegramUser(user, referredBy = null) {
   if (!Number.isSafeInteger(telegramId) || telegramId <= 0) return null;
 
   const mapRef = db.ref('telegram_users/' + telegramId);
+  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || `tg_${telegramId}`;
+
+  // 1) Prefer the existing Telegram -> user mapping, but resolve it against
+  // legacy Firebase user keys before creating anything new.
   const mapped = await mapRef.once('value');
   if (mapped.exists() && mapped.val()?.uid) {
-    const uid = safeUid(mapped.val().uid);
-    const existing = await ensureUser(uid, referredBy, false, {
-      telegram_id: telegramId,
-      display_name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || uid
-    });
-    return existing ? { uid, user: existing } : null;
+    const mappedUid = safeUid(mapped.val().uid);
+    const found = await findUserRefForWallet(mappedUid, telegramId);
+    if (found) {
+      await found.ref.update({
+        telegram_id: telegramId,
+        display_name: displayName,
+        updated_at: now()
+      });
+      if (found.uid !== mappedUid) {
+        await mapRef.update({ uid: found.uid, username: found.uid, updated_at: now() });
+      }
+      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
+    }
   }
 
+  // 2) Try the Telegram username and telegram_id against existing records.
   const username = safeUser(user.username || '');
-  let uid = username;
-  if (!uid) uid = `tg_${telegramId}`;
+  if (username) {
+    const found = await findUserRefForWallet(username, telegramId);
+    if (found) {
+      await found.ref.update({
+        telegram_id: telegramId,
+        display_name: displayName,
+        updated_at: now()
+      });
+      await mapRef.set({ uid: found.uid, username: found.uid, updated_at: now() });
+      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
+    }
+  } else {
+    const found = await findUserRefForWallet(`tg_${telegramId}`, telegramId);
+    if (found) {
+      await found.ref.update({
+        telegram_id: telegramId,
+        display_name: displayName,
+        updated_at: now()
+      });
+      await mapRef.set({ uid: found.uid, username: found.uid, updated_at: now() });
+      return { uid: found.uid, user: { ...found.data, telegram_id: telegramId, display_name: displayName } };
+    }
+  }
 
-  const existing = await db.ref('users/' + uid).once('value');
-  const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ') || username || uid;
+  // 3) No existing account matched: create one canonical record.
+  const uid = username || `tg_${telegramId}`;
   const record = await ensureUser(uid, referredBy, false, { telegram_id: telegramId, display_name: displayName });
   if (!record) return null;
   await mapRef.set({ uid, username: uid, updated_at: now() });
@@ -172,12 +205,17 @@ async function resolveTelegramUser(user, referredBy = null) {
 async function walletFor(username) {
   const clean = safeUid(username);
   if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
-  const snap = await db.ref('users/' + clean).once('value');
-  if (!snap.exists()) {
+
+  // Do not assume the authenticated uid is always the Firebase node key.
+  // Older accounts can have a different key while storing the same username
+  // or Telegram id inside the record.
+  const found = await findUserRefForWallet(clean);
+  if (!found) {
     console.warn(`[WALLET] user-not-found uid=${clean}`);
     return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
   }
-  const u = snap.val() || {};
+
+  const u = found.data || {};
   return {
     main: toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0),
     play: toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0),
@@ -310,25 +348,49 @@ async function adminListTransactions() {
   return txs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
-async function findUserRefForWallet(username) {
+async function findUserRefForWallet(username, telegramId = null) {
   const clean = safeUid(username);
-  if (!clean) return null;
+  if (!clean && !telegramId) return null;
 
-  // First try the canonical Firebase key used by the current auth system.
-  const directRef = db.ref('users/' + clean);
-  const directSnap = await directRef.once('value');
-  if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
+  // 1) Canonical Firebase key.
+  if (clean) {
+    const directRef = db.ref('users/' + clean);
+    const directSnap = await directRef.once('value');
+    if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
 
-  // Compatibility for older accounts where the Firebase key and the stored
-  // username were different (for example legacy Telegram/OIDC accounts).
-  const byUsername = await db.ref('users').orderByChild('username').equalTo(String(username)).once('value');
-  let found = null;
-  byUsername.forEach(child => {
-    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
-  });
-  if (found) {
-    console.warn(`[WALLET] legacy user-key resolved username=${username} uid=${found.uid}`);
-    return found;
+    // 2) Legacy record whose stored username differs from its Firebase key.
+    const candidates = [...new Set([String(username || ''), clean].filter(Boolean))];
+    for (const candidate of candidates) {
+      const byUsername = await db.ref('users').orderByChild('username').equalTo(candidate).once('value');
+      let found = null;
+      byUsername.forEach(child => {
+        if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+      });
+      if (found) {
+        console.warn(`[WALLET] legacy user-key resolved username=${candidate} uid=${found.uid}`);
+        return found;
+      }
+    }
+  }
+
+  // 3) Telegram id fallback. This is important for older accounts whose
+  // Firebase node key changed but telegram_id stayed the same.
+  let tid = telegramId != null ? Number(telegramId) : null;
+  if (!Number.isSafeInteger(tid) || tid <= 0) {
+    const m = String(username || '').match(/^tg_(\d+)$/);
+    if (m) tid = Number(m[1]);
+    else if (/^\d+$/.test(String(username || ''))) tid = Number(username);
+  }
+  if (Number.isSafeInteger(tid) && tid > 0) {
+    const byTelegram = await db.ref('users').orderByChild('telegram_id').equalTo(tid).once('value');
+    let found = null;
+    byTelegram.forEach(child => {
+      if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+    });
+    if (found) {
+      console.warn(`[WALLET] telegram-id resolved telegram_id=${tid} uid=${found.uid}`);
+      return found;
+    }
   }
 
   return null;
@@ -586,9 +648,15 @@ async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
   try {
-    const result = await db.ref('users/' + uid).transaction(u => {
+    const userInfo = await findUserRefForWallet(uid);
+    if (!userInfo) {
+      console.warn(`[DEBIT] uid=${uid} → user-not-found`);
+      return { ok: false, reason: 'user-not-found' };
+    }
+
+    const result = await userInfo.ref.transaction(u => {
       if (!u) return; // abort
-      const balance = toFiniteNumber(u.play_wallet, 0);
+      const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       if (balance < amt) return; // abort — insufficient
       u.play_wallet = balance - amt;
       u.updated_at = now();
@@ -607,12 +675,14 @@ async function debit(uid, amount, roomId, round) {
     }
 
     // Not committed. Figure out why so the client can show the right message.
-    const refSnap = await db.ref('users/' + uid).once('value');
-    if (!refSnap.exists()) {
+    const userInfo2 = await findUserRefForWallet(uid);
+    if (!userInfo2) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
       return { ok: false, reason: 'user-not-found' };
     }
-    const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
+    const refSnap = await userInfo2.ref.once('value');
+    const refData = refSnap.val() || {};
+    const live = toFiniteNumber(refData.play_wallet ?? refData.playWallet ?? refData.play_balance ?? refData.playBalance ?? 0, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
     await sendWallet(uid); // resync client with actual balance
     return { ok: false, reason: 'insufficient', balance: live };
