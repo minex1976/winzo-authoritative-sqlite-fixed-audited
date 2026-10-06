@@ -310,29 +310,80 @@ async function adminListTransactions() {
   return txs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
+async function findUserRefForWallet(username) {
+  const clean = safeUid(username);
+  if (!clean) return null;
+
+  // First try the canonical Firebase key used by the current auth system.
+  const directRef = db.ref('users/' + clean);
+  const directSnap = await directRef.once('value');
+  if (directSnap.exists()) return { ref: directRef, uid: clean, data: directSnap.val() || {} };
+
+  // Compatibility for older accounts where the Firebase key and the stored
+  // username were different (for example legacy Telegram/OIDC accounts).
+  const byUsername = await db.ref('users').orderByChild('username').equalTo(String(username)).once('value');
+  let found = null;
+  byUsername.forEach(child => {
+    if (!found) found = { ref: child.ref, uid: child.key, data: child.val() || {} };
+  });
+  if (found) {
+    console.warn(`[WALLET] legacy user-key resolved username=${username} uid=${found.uid}`);
+    return found;
+  }
+
+  return null;
+}
+
 async function adminDecision(id, decision, reason = '') {
   decision = String(decision || '').toLowerCase();
   if (decision === 'approve') decision = 'approved';
   if (decision === 'reject') decision = 'rejected';
   if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
+
   try {
     const txRef = db.ref('transactions/' + id);
     const txSnap = await txRef.once('value');
     if (!txSnap.exists()) return { ok: false, reason: 'not-found' };
-    const tx = txSnap.val();
+
+    const tx = txSnap.val() || {};
     if (tx.status !== 'pending') return { ok: false, reason: 'already-decided' };
 
     const txAmount = toFiniteNumber(tx.amount, 0);
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
 
-    const result = await db.ref('users/' + tx.username).transaction(u => {
+    // A rejected deposit does not touch the wallet.
+    if (tx.type === 'deposit' && decision === 'rejected') {
+      await txRef.update({
+        status: 'rejected',
+        reason: String(reason || '').slice(0, 256),
+        wallet_applied: 0,
+        updated_at: now()
+      });
+      const updatedTx = { ...tx, status: 'rejected', reason, id };
+      await sendWallet(tx.username);
+      await notifyTransaction(tx.username, updatedTx);
+      console.log(`[ADMIN] rejected deposit id=${id} user=${tx.username} amount=${txAmount}`);
+      return { ok: true, tx: updatedTx };
+    }
+
+    const userInfo = await findUserRefForWallet(tx.username);
+    if (!userInfo) {
+      console.error(`[ADMIN] wallet user not found for transaction id=${id} username=${tx.username}`);
+      return { ok: false, reason: 'wallet-user-not-found' };
+    }
+
+    const userRef = userInfo.ref;
+    const userUid = userInfo.uid;
+
+    const result = await userRef.transaction(u => {
       if (!u) return;
+
       const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
       const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
 
       if (tx.type === 'deposit') {
-        if (decision !== 'approved') return u;
+        if (decision !== 'approved') return;
         u.play_wallet = play + txAmount;
       } else if (tx.type === 'withdraw') {
         if (decision === 'approved') {
@@ -345,35 +396,37 @@ async function adminDecision(id, decision, reason = '') {
       } else {
         return;
       }
+
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
       return u;
     });
 
-    // Firebase may call a transaction handler speculatively. Only committed=true
-    // proves that the wallet write reached the database.
     if (!result || !result.committed || !result.snapshot?.exists()) {
+      console.error(`[ADMIN] wallet transaction did not commit id=${id} username=${tx.username} uid=${userUid} type=${tx.type} decision=${decision}`);
       return { ok: false, reason: 'wallet-write-not-committed' };
     }
+
     const updatedUser = result.snapshot.val() || {};
-    const newPlay = toFiniteNumber(updatedUser.play_wallet, 0);
-    const newMain = toFiniteNumber(updatedUser.main_wallet, 0);
+    const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? updatedUser.play_balance ?? updatedUser.playBalance ?? 0, 0);
+    const newMain = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? updatedUser.main_balance ?? updatedUser.mainBalance ?? 0, 0);
 
     await txRef.update({
       status: decision,
       reason: String(reason || '').slice(0, 256),
       wallet_applied: decision === 'rejected' ? 0 : 1,
+      wallet_uid: userUid,
       updated_at: now()
     });
 
     const updatedTx = { ...tx, status: decision, reason, id };
-    console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} amount=${txAmount} → play=${newPlay} main=${newMain}`);
-    await sendWallet(tx.username);
-    await notifyTransaction(tx.username, updatedTx);
+    console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} walletUid=${userUid} amount=${txAmount} → play=${newPlay} main=${newMain}`);
+    await sendWallet(userUid);
+    await notifyTransaction(userUid, updatedTx);
     return { ok: true, tx: updatedTx };
   } catch (e) {
     console.error('[ADMIN] decision failed', e);
-    return { ok: false, reason: e.message };
+    return { ok: false, reason: e.message || 'admin-decision-failed' };
   }
 }
 
