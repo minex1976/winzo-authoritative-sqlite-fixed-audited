@@ -146,9 +146,8 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     telegram_id: extra.telegram_id != null ? Number(extra.telegram_id) : null,
     telegram_username: extra.telegram_username || null,
 
-    // FIX: honour balances supplied by the caller (used during the
-    // username → tg_<id> migration). Without this, the migration silently
-    // reset every wallet to 0 / 30 and then deleted the real record.
+    // Honour balances supplied by the caller (used during the username → tg_<id>
+    // migration). Without this, the migration silently reset every wallet.
     main_wallet:        extra.main_wallet        != null ? toFiniteNumber(extra.main_wallet, 0)        : 0,
     play_wallet:        extra.play_wallet        != null ? toFiniteNumber(extra.play_wallet, bot ? BOT_START_WALLET : 30) : (bot ? BOT_START_WALLET : 30),
     pending_withdrawal: extra.pending_withdrawal != null ? toFiniteNumber(extra.pending_withdrawal, 0) : 0,
@@ -211,7 +210,7 @@ async function resolveTelegramUser(user, referredBy = null) {
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
     || telegramUsername
     || `tg_${telegramId}`;
-    
+
   // ALWAYS use the immutable Telegram ID as the primary key
   const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
@@ -251,27 +250,27 @@ async function resolveTelegramUser(user, referredBy = null) {
 
     // If the legacy record doesn't use the tg_ prefix, migrate it now
     if (found.uid !== canonicalUid) {
-        console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
-        const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
-            telegram_id: telegramId,
-            display_name: displayName,
-            telegram_username: telegramUsername || null,
-            // Copy over existing balances — ensureUser now honours these.
-            main_wallet: found.data.main_wallet ?? found.data.mainWallet ?? found.data.main_balance ?? found.data.mainBalance ?? 0,
-            play_wallet: found.data.play_wallet ?? found.data.playWallet ?? found.data.play_balance ?? found.data.playBalance ?? 0,
-            pending_withdrawal: found.data.pending_withdrawal ?? found.data.pendingWithdrawal ?? 0,
-            referral_earnings: found.data.referral_earnings ?? found.data.referralEarnings ?? 0
-        });
-        // Remove the old record to prevent future conflicts
-        await db.ref('users/' + found.uid).remove();
-        found = { uid: canonicalUid, data: migratedUser };
+      console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
+      const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
+        telegram_id: telegramId,
+        display_name: displayName,
+        telegram_username: telegramUsername || null,
+        // Copy over existing balances — ensureUser now honours these.
+        main_wallet:        found.data.main_wallet        ?? found.data.mainWallet        ?? found.data.main_balance ?? found.data.mainBalance ?? 0,
+        play_wallet:        found.data.play_wallet        ?? found.data.playWallet        ?? found.data.play_balance ?? found.data.playBalance ?? 0,
+        pending_withdrawal: found.data.pending_withdrawal ?? found.data.pendingWithdrawal ?? 0,
+        referral_earnings:  found.data.referral_earnings  ?? found.data.referralEarnings  ?? 0
+      });
+      // Remove the old record to prevent future conflicts
+      await db.ref('users/' + found.uid).remove();
+      found = { uid: canonicalUid, data: migratedUser };
     } else {
-        const updated = await ensureUser(found.uid, referredBy, false, {
-            telegram_id: telegramId,
-            display_name: displayName,
-            telegram_username: telegramUsername || null
-        });
-        found.data = updated;
+      const updated = await ensureUser(found.uid, referredBy, false, {
+        telegram_id: telegramId,
+        display_name: displayName,
+        telegram_username: telegramUsername || null
+      });
+      found.data = updated;
     }
 
     await mapRef.set({
@@ -291,7 +290,7 @@ async function resolveTelegramUser(user, referredBy = null) {
     telegram_username: telegramUsername || null
   });
   if (!created) return null;
-  
+
   await mapRef.set({
     uid: canonicalUid,
     username: created.username || canonicalUid,
@@ -545,8 +544,7 @@ async function adminDecision(id, decision, reason = '') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
-    // Deposit rejection never changes a wallet. Resolve the real wallet UID
-    // first so legacy transactions cannot notify a stale username account.
+    // --- Deposit rejection: never touch the wallet, just mark the tx ---
     if (tx.type === 'deposit' && decision === 'rejected') {
       const userInfo = await findUserRefForWallet({
         uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
@@ -569,6 +567,7 @@ async function adminDecision(id, decision, reason = '') {
       return { ok: true, tx: updatedTx };
     }
 
+    // --- Resolve the wallet identity ---
     const userInfo = await findUserRefForWallet({
       uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
       telegram_username: tx.telegram_username, username: tx.username
@@ -577,28 +576,32 @@ async function adminDecision(id, decision, reason = '') {
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
-    // The ledger marker lives inside the same Firebase user transaction as the
-    // balance mutation. Therefore a retried admin click can never credit/debit
-    // the wallet twice, even if the server crashes before updating /transactions.
-    const result = await userRef.transaction(u => {
-      if (!u) return;
-      const ledger = u.wallet_ledger && u.wallet_ledger[id];
-      if (ledger) return u; // already applied by an earlier attempt
+    // Track why the transaction callback might abort, so the admin sees
+    // something actionable instead of a generic "wallet-write-not-committed".
+    let abortReason = 'callback-not-run';
 
-      const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+    const result = await userRef.transaction(u => {
+      if (!u) { abortReason = 'user-record-missing'; return; }
+
+      const ledger = (u.wallet_ledger && typeof u.wallet_ledger === 'object')
+        ? u.wallet_ledger[id] : null;
+      if (ledger) { abortReason = 'already-in-ledger'; return u; }
+
+      const play    = toFiniteNumber(u.play_wallet        ?? u.playWallet        ?? u.play_balance  ?? u.playBalance  ?? 0, 0);
+      const main    = toFiniteNumber(u.main_wallet        ?? u.mainWallet        ?? u.main_balance  ?? u.mainBalance  ?? 0, 0);
       const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
 
       if (tx.type === 'deposit') {
-        if (decision !== 'approved') return;
+        if (decision !== 'approved') { abortReason = 'deposit-not-approved'; return; }
         u.play_wallet = play + txAmount;
       } else if (tx.type === 'withdraw') {
         if (decision === 'approved') {
-          if (pending < txAmount || main < txAmount) return;
-          u.main_wallet = main - txAmount;
+          if (pending < txAmount) { abortReason = `pending-too-low (pending=${pending} need=${txAmount})`; return; }
+          if (main    < txAmount) { abortReason = `main-too-low (main=${main} need=${txAmount})`;       return; }
+          u.main_wallet        = main - txAmount;
           u.pending_withdrawal = pending - txAmount;
         } else {
-          if (pending < txAmount) return;
+          if (pending < txAmount) { abortReason = `pending-too-low (pending=${pending} need=${txAmount})`; return; }
           u.pending_withdrawal = pending - txAmount;
         }
       }
@@ -612,35 +615,44 @@ async function adminDecision(id, decision, reason = '') {
       };
       u.wallet_updated_at = now();
       u.updated_at = u.wallet_updated_at;
+      abortReason = 'ok';
       return u;
     });
 
-    let updatedUser = result?.snapshot?.exists() ? (result.snapshot.val() || {}) : null;
-    if (!result?.committed || !updatedUser) {
-      const recovery = await userRef.once('value');
-      updatedUser = recovery.exists() ? (recovery.val() || {}) : null;
-      const rec = updatedUser || {};
-      const pending = toFiniteNumber(rec.pending_withdrawal ?? rec.pendingWithdrawal ?? 0, 0);
-      const main = toFiniteNumber(rec.main_wallet ?? rec.mainWallet ?? 0, 0);
-      console.warn(
-        `[ADMIN] transaction aborted id=${id} type=${tx.type} decision=${decision} ` +
-        `need=${txAmount} pending=${pending} main=${main} uid=${userUid}`
-      );
+    // Always re-read the record fresh — never trust result.snapshot.val().
+    // Some Admin SDK versions return a stale/null snapshot even when the
+    // write committed.
+    let updatedUser = null;
+    let ledgerEntry = null;
+    for (let attempt = 0; attempt < 3 && !ledgerEntry; attempt++) {
+      const freshSnap = await userRef.once('value');
+      updatedUser = freshSnap.exists() ? (freshSnap.val() || {}) : null;
+      ledgerEntry = (updatedUser && updatedUser.wallet_ledger && typeof updatedUser.wallet_ledger === 'object')
+        ? updatedUser.wallet_ledger[id]
+        : null;
+      if (!ledgerEntry && attempt < 2) await new Promise(r => setTimeout(r, 120));
     }
-    if (!updatedUser) return { ok: false, reason: 'wallet-user-not-found' };
 
-    const ledgerEntry = updatedUser.wallet_ledger?.[id];
-    if (!ledgerEntry) {
-      // Aborted by one of the guard checks inside the transaction.
-      if (tx.type === 'withdraw') {
-        const pending = toFiniteNumber(updatedUser.pending_withdrawal ?? updatedUser.pendingWithdrawal ?? 0, 0);
-        const main = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? 0, 0);
-        if (pending < txAmount) return { ok: false, reason: `insufficient-pending (pending=${pending} need=${txAmount})` };
-        if (main < txAmount)    return { ok: false, reason: `insufficient-main (main=${main} need=${txAmount})` };
-      }
-      return { ok: false, reason: 'wallet-write-not-committed' };
+    if (!updatedUser) {
+      console.error(`[ADMIN] user vanished after transaction uid=${userUid} id=${id}`);
+      return { ok: false, reason: 'wallet-user-not-found' };
     }
-    if (String(ledgerEntry.decision) !== decision) return { ok: false, reason: 'already-decided' };
+
+    if (!ledgerEntry) {
+      console.error(
+        `[ADMIN] ledger missing uid=${userUid} id=${id} ` +
+        `committed=${!!result?.committed} abortReason="${abortReason}" ` +
+        `type=${tx.type} decision=${decision} amount=${txAmount} ` +
+        `play=${updatedUser.play_wallet ?? updatedUser.playWallet} ` +
+        `main=${updatedUser.main_wallet ?? updatedUser.mainWallet} ` +
+        `pending=${updatedUser.pending_withdrawal ?? updatedUser.pendingWithdrawal}`
+      );
+      return { ok: false, reason: `wallet-write-not-committed (${abortReason})` };
+    }
+
+    if (String(ledgerEntry.decision) !== decision) {
+      return { ok: false, reason: 'already-decided' };
+    }
 
     const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? 0, 0);
     const newMain = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? 0, 0);
@@ -693,17 +705,12 @@ async function claimPayout(uid, amount, roomId, round, kind) {
       return u;
     });
 
-    // FIX: trust the SDK's committed flag, not a local boolean that could
-    // be stale after a retry / abort.
     if (!result?.committed) {
       console.warn(`[PAYOUT] uid=${uid} amount=${amt} room=${roomId} round=${round} kind=${kind} NOT committed`);
       return false;
     }
 
     await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now() });
-
-    // FIX: tell the connected clients the wallet changed. Without this the
-    // win was written to Firebase but never appeared in the UI.
     await sendWallet(uid);
 
     const newMain = toFiniteNumber(result.snapshot.val()?.main_wallet, 0);
@@ -742,7 +749,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
     }
 
     await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
-    await sendWallet(ref); // FIX: refresh the referrer's client too.
+    await sendWallet(ref);
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
     return true;
   } catch (e) {
@@ -856,18 +863,12 @@ async function saveRoom(room) { await room.persist(); room.broadcast(); }
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
-  
+
   try {
-    // Use a transaction to safely deduct the balance
     const result = await db.ref('users/' + uid).transaction(u => {
-      if (!u) return u; // User doesn't exist, abort silently
-      
+      if (!u) return u;
       const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      
-      // If balance is insufficient, return the user unchanged (no update, no error)
-      if (balance < amt) return u; 
-      
-      // Deduct the amount
+      if (balance < amt) return u;
       u.play_wallet = balance - amt;
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
@@ -875,7 +876,7 @@ async function debit(uid, amount, roomId, round) {
     });
 
     const committed = !!(result && result.committed);
-    
+
     if (committed) {
       const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
       console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${newPlay} room=${roomId} round=${round}`);
@@ -883,18 +884,17 @@ async function debit(uid, amount, roomId, round) {
       return { ok: true, balance: newPlay };
     }
 
-    // If not committed, check why (either user not found or insufficient funds)
     const refSnap = await db.ref('users/' + uid).once('value');
     if (!refSnap.exists()) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
       return { ok: false, reason: 'user-not-found' };
     }
-    
+
     const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
-    await sendWallet(uid); // Resync client with actual balance
+    await sendWallet(uid);
     return { ok: false, reason: 'insufficient', balance: live };
-    
+
   } catch (e) {
     console.error(`[DEBIT] uid=${uid} amount=${amt} ERROR`, e);
     return { ok: false, reason: 'debit-error' };
@@ -909,6 +909,7 @@ async function refundWager(uid, amount, roomId, round) {
       if (!u) return;
       u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
+      u.wallet_updated_at = u.updated_at;
       return u;
     });
     const ok = !!(result && result.committed);
@@ -1096,8 +1097,6 @@ function scheduleBots(room) {
     for (const name of pass) order.push(name);
   }
 
-  // At most 6 bots => 18 picks. This completes in about 6 seconds,
-  // comfortably before the 30-second selection deadline.
   const START_DELAY_MS = 350;
   const BOT_PICK_GAP_MS = 300;
   let index = 0;
@@ -1176,7 +1175,6 @@ const conns = new Map();
 const wss = new WebSocketServer({ noServer: true });
 
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-function sendRoomState(room) { if (room) room.broadcast(); }
 
 wss.on('connection', (ws) => {
   ws.isAlive = true;
@@ -1302,8 +1300,6 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    // Always push the fresh wallet after a pick attempt. If the pick failed
-    // because of a stale balance, this resyncs the client.
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     if (room.dirty) await saveRoom(room);
     return;
@@ -1374,6 +1370,7 @@ app.get('/health', async (_, res) => {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
 });
+
 app.get('/identity/:telegramId', async (req, res) => {
   const suppliedKey = String(req.get('x-admin-key') || '');
   if (!ADMIN_KEY || !constantTimeEqual(suppliedKey, ADMIN_KEY)) return res.status(403).json({ ok: false, error: 'forbidden' });
@@ -1392,6 +1389,77 @@ app.get('/identity/:telegramId', async (req, res) => {
     });
   } catch (e) {
     res.status(503).json({ ok: false, error: e.message || 'identity-check-failed' });
+  }
+});
+
+// Diagnostic: dump a user record exactly as stored in Firebase.
+app.get('/user/:uid', async (req, res) => {
+  const suppliedKey = String(req.get('x-admin-key') || '');
+  if (!ADMIN_KEY || !constantTimeEqual(suppliedKey, ADMIN_KEY)) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const uid = String(req.params.uid || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 64);
+  if (!uid) return res.status(400).json({ ok: false, error: 'bad-uid' });
+  try {
+    const snap = await db.ref('users/' + uid).once('value');
+    if (!snap.exists()) return res.status(404).json({ ok: false, error: 'not-found' });
+    const u = snap.val() || {};
+    res.json({
+      ok: true,
+      uid,
+      username: u.username || null,
+      telegram_id: u.telegram_id ?? null,
+      telegram_username: u.telegram_username ?? null,
+      display_name: u.display_name ?? null,
+      play_wallet: toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0),
+      main_wallet: toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0),
+      pending_withdrawal: toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0),
+      referral_earnings: toFiniteNumber(u.referral_earnings ?? u.referralEarnings ?? 0, 0),
+      referred_by: u.referred_by ?? null,
+      wallet_updated_at: u.wallet_updated_at ?? null,
+      wallet_ledger: u.wallet_ledger || {},
+      raw_keys: Object.keys(u).sort()
+    });
+  } catch (e) {
+    res.status(503).json({ ok: false, error: e.message || 'user-dump-failed' });
+  }
+});
+
+// Diagnostic: inspect a transaction and how it resolves to a wallet.
+app.get('/tx/:id', async (req, res) => {
+  const suppliedKey = String(req.get('x-admin-key') || '');
+  if (!ADMIN_KEY || !constantTimeEqual(suppliedKey, ADMIN_KEY)) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const id = String(req.params.id || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 128);
+  if (!id) return res.status(400).json({ ok: false, error: 'bad-id' });
+  try {
+    const txSnap = await db.ref('transactions/' + id).once('value');
+    if (!txSnap.exists()) return res.status(404).json({ ok: false, error: 'not-found' });
+    const tx = txSnap.val() || {};
+    const userInfo = await findUserRefForWallet({
+      uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
+      telegram_username: tx.telegram_username, username: tx.username
+    });
+    res.json({
+      ok: true,
+      transaction: {
+        id, type: tx.type, amount: tx.amount, status: tx.status,
+        username: tx.username, wallet_uid: tx.wallet_uid,
+        telegram_id: tx.telegram_id, wallet_applied: tx.wallet_applied
+      },
+      resolved: userInfo ? {
+        uid: userInfo.uid,
+        username: userInfo.data.username,
+        telegram_id: userInfo.data.telegram_id,
+        play_wallet: userInfo.data.play_wallet ?? userInfo.data.playWallet ?? 0,
+        main_wallet: userInfo.data.main_wallet ?? userInfo.data.mainWallet ?? 0,
+        pending_withdrawal: userInfo.data.pending_withdrawal ?? userInfo.data.pendingWithdrawal ?? 0,
+        has_ledger_entry: !!(userInfo.data.wallet_ledger && userInfo.data.wallet_ledger[id])
+      } : null
+    });
+  } catch (e) {
+    res.status(503).json({ ok: false, error: e.message || 'inspect-failed' });
   }
 });
 
