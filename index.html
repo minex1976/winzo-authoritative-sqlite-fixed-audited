@@ -1511,6 +1511,9 @@
         function walletDiagnostics() {
             return {
                 uid: currentUser,
+                displayName: currentDisplayName,
+                telegramId: telegramUser?.id || null,
+                telegramUsername: telegramUser?.username || null,
                 main: safeNum(walletData.main),
                 play: safeNum(walletData.play),
                 pending: safeNum(walletData.pending),
@@ -1519,6 +1522,7 @@
                 updatedAt: walletData.updatedAt || 0
             };
         }
+        window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
         window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
 
         // ============================================================
@@ -2566,6 +2570,7 @@
                 onAuth: (uid, displayName) => {
                     currentUser = uid;
                     currentDisplayName = displayName || currentDisplayName || telegramDetectedDisplayName || telegramDetectedUsername || uid;
+                    console.info('[WINZO AUTH]', { uid, displayName: currentDisplayName, telegramId: telegramUser?.id || null, telegramUsername: telegramUser?.username || null });
                     DB.setCurrentUser(uid);
                     updateWalletUI(); updateWelcomeUI();
                 },
