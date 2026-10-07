@@ -114,8 +114,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     const current = snapshot.val() || {};
     const patch = {};
 
-    // Migrate all legacy wallet field names to the canonical schema without
-    // resetting an existing balance. This is important for older accounts.
     const main = toFiniteNumber(current.main_wallet ?? current.mainWallet ?? current.main_balance ?? current.mainBalance ?? 0, 0);
     const play = toFiniteNumber(current.play_wallet ?? current.playWallet ?? current.play_balance ?? current.playBalance ?? (bot ? BOT_START_WALLET : 0), 0);
     const pending = toFiniteNumber(current.pending_withdrawal ?? current.pendingWithdrawal ?? 0, 0);
@@ -188,15 +186,6 @@ async function findUserByStoredUsername(username) {
   return found;
 }
 
-/*
- * Telegram identity is immutable by telegram_id. Telegram usernames are NOT
- * immutable and must never be used as the wallet identity.
- *
- * Existing installations may have wallets under username keys, so this
- * resolver deliberately preserves an existing wallet instead of creating a
- * second account when the user changes username or when the old schema was
- * keyed by username.
- */
 async function resolveTelegramUser(user, referredBy = null) {
   if (!user?.id) return null;
   const telegramId = Number(user.id);
@@ -207,11 +196,9 @@ async function resolveTelegramUser(user, referredBy = null) {
     || telegramUsername
     || `tg_${telegramId}`;
     
-  // ALWAYS use the immutable Telegram ID as the primary key
   const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
 
-  // 1. Check the explicit Telegram mapping first
   const mappedSnap = await mapRef.once('value');
   if (mappedSnap.exists() && mappedSnap.val()?.uid) {
     const mappedUid = safeUid(mappedSnap.val().uid);
@@ -228,15 +215,12 @@ async function resolveTelegramUser(user, referredBy = null) {
     console.warn(`[IDENTITY] stale/conflicting telegram_users/${telegramId}; repairing mapping`);
   }
 
-  // 2. Check if the canonical tg_<id> record already exists
   let found = await readUserByUid(canonicalUid);
 
-  // 3. If it doesn't exist, check if there is a legacy record with this telegram_id
   if (!found) {
     found = await findUserByTelegramId(telegramId);
   }
 
-  // 4. If a record was found (either canonical or legacy with telegram_id), use it
   if (found) {
     const existingTelegramId = found.data.telegram_id != null ? Number(found.data.telegram_id) : null;
     if (existingTelegramId && existingTelegramId !== telegramId) {
@@ -244,20 +228,17 @@ async function resolveTelegramUser(user, referredBy = null) {
       return null;
     }
 
-    // If the legacy record doesn't use the tg_ prefix, migrate it now
     if (found.uid !== canonicalUid) {
         console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
         const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
             telegram_id: telegramId,
             display_name: displayName,
             telegram_username: telegramUsername || null,
-            // Copy over existing balances
             main_wallet: found.data.main_wallet,
             play_wallet: found.data.play_wallet,
             pending_withdrawal: found.data.pending_withdrawal,
             referral_earnings: found.data.referral_earnings
         });
-        // Remove the old record to prevent future conflicts
         await db.ref('users/' + found.uid).remove();
         found = { uid: canonicalUid, data: migratedUser };
     } else {
@@ -279,7 +260,6 @@ async function resolveTelegramUser(user, referredBy = null) {
     return { uid: found.uid, user: found.data, telegramId, telegramUsername };
   }
 
-  // 5. Brand-new user. Force the tg_<id> key.
   const created = await ensureUser(canonicalUid, referredBy, false, {
     telegram_id: telegramId,
     display_name: displayName,
@@ -297,8 +277,6 @@ async function resolveTelegramUser(user, referredBy = null) {
   return { uid: canonicalUid, user: created, telegramId, telegramUsername };
 }
 
-// Reads the live wallet straight from the DB. This bypasses any intermediate
-// object so the values it returns are always the freshest ones on the server.
 async function walletFor(username) {
   const clean = safeUid(username);
   if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
@@ -492,8 +470,6 @@ async function findUserRefForWallet(identity = {}) {
   const telegramId = Number(tx.telegram_id || 0);
   const username = safeUser(tx.telegram_username || tx.username || raw);
 
-  // 1. A transaction created by the current server stores wallet_uid. This is
-  //    the strongest reference because it is the actual Firebase user key.
   if (walletUid) {
     const direct = await readUserByUid(walletUid);
     if (direct) {
@@ -501,7 +477,6 @@ async function findUserRefForWallet(identity = {}) {
     }
   }
 
-  // 2. Immutable Telegram ID is stronger than a mutable username.
   if (telegramId > 0) {
     const byTelegram = await findUserByTelegramId(telegramId);
     if (byTelegram) return byTelegram;
@@ -509,7 +484,6 @@ async function findUserRefForWallet(identity = {}) {
     if (canonical) return canonical;
   }
 
-  // 3. Legacy transaction records used username as the wallet reference.
   if (username) {
     const byKey = await readUserByUid(username);
     if (byKey) return byKey;
@@ -536,13 +510,10 @@ async function adminDecision(id, decision, reason = '') {
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
     if (!['deposit', 'withdraw'].includes(tx.type)) return { ok: false, reason: 'bad-type' };
 
-    // If this transaction was already finalized, never touch the wallet again.
     if (tx.status !== 'pending' && tx.status !== 'processing') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
-    // Deposit rejection never changes a wallet. Resolve the real wallet UID
-    // first so legacy transactions cannot notify a stale username account.
     if (tx.type === 'deposit' && decision === 'rejected') {
       const userInfo = await findUserRefForWallet({
         uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
@@ -573,13 +544,10 @@ async function adminDecision(id, decision, reason = '') {
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
-    // The ledger marker lives inside the same Firebase user transaction as the
-    // balance mutation. Therefore a retried admin click can never credit/debit
-    // the wallet twice, even if the server crashes before updating /transactions.
     const result = await userRef.transaction(u => {
       if (!u) return;
       const ledger = u.wallet_ledger && u.wallet_ledger[id];
-      if (ledger) return u; // already applied by an earlier attempt
+      if (ledger) return u;
 
       const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
@@ -802,23 +770,15 @@ async function loadRooms() {
 
 async function saveRoom(room) { await room.persist(); room.broadcast(); }
 
-// Debit the play wallet. Returns a rich object so callers can distinguish
-// "user has no money" from "user record missing" from "db error".
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
   
   try {
-    // Use a transaction to safely deduct the balance
     const result = await db.ref('users/' + uid).transaction(u => {
-      if (!u) return u; // User doesn't exist, abort silently
-      
+      if (!u) return u;
       const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      
-      // If balance is insufficient, return the user unchanged (no update, no error)
-      if (balance < amt) return u; 
-      
-      // Deduct the amount
+      if (balance < amt) return u;
       u.play_wallet = balance - amt;
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
@@ -834,7 +794,6 @@ async function debit(uid, amount, roomId, round) {
       return { ok: true, balance: newPlay };
     }
 
-    // If not committed, check why (either user not found or insufficient funds)
     const refSnap = await db.ref('users/' + uid).once('value');
     if (!refSnap.exists()) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
@@ -843,7 +802,7 @@ async function debit(uid, amount, roomId, round) {
     
     const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
-    await sendWallet(uid); // Resync client with actual balance
+    await sendWallet(uid);
     return { ok: false, reason: 'insufficient', balance: live };
     
   } catch (e) {
@@ -861,6 +820,7 @@ async function refundWager(uid, amount, roomId, round) {
       if (!u) return;
       u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
+      u.wallet_updated_at = u.updated_at;
       committed = true;
       return u;
     });
@@ -932,8 +892,6 @@ async function toSpinning(room) {
   let winners = [];
   let prizePool = 0;
 
-  // --- MODIFIED: Allow bots to win ---
-  // Combine humans and bots into one pool to select the winning number
   const allPlayers = [...humans, ...bots];
   const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
   
@@ -942,7 +900,6 @@ async function toSpinning(room) {
   winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
   winners = allPlayers.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
 
-  // Prize pool includes all picks (humans + bots)
   const totalPicksInRoom = allPlayers.reduce((s, p) => s + p.picks.length, 0);
   prizePool = Math.floor(totalPicksInRoom * room.bet * PAYOUT_RATE);
 
@@ -958,12 +915,8 @@ async function toSpinning(room) {
     for (const uid of winners) {
       if (share <= 0) break;
       
-      // REMOVED: The line that skipped bots. Now bots get paid too.
-      // if (room.players.get(uid)?.isBot) continue;
-      
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
       
-      // Only send notifications to human players. Bots don't need notifications.
       if (!room.players.get(uid)?.isBot) {
           await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
           const uSnap = await db.ref('users/' + uid).once('value');
@@ -1039,7 +992,6 @@ function scheduleBots(room) {
   const names = [...roster];
   if (!names.length) return;
 
-  // Every bot gets exactly MAX_PICKS selections.
   const order = [];
   for (let pickNo = 0; pickNo < MAX_PICKS; pickNo++) {
     const pass = [...names];
@@ -1050,8 +1002,6 @@ function scheduleBots(room) {
     for (const name of pass) order.push(name);
   }
 
-  // At most 6 bots => 18 picks. This completes in about 6 seconds,
-  // comfortably before the 30-second selection deadline.
   const START_DELAY_MS = 350;
   const BOT_PICK_GAP_MS = 300;
   let index = 0;
@@ -1113,18 +1063,24 @@ function scheduleBots(room) {
   room.botTimers.push(first);
 }
 
+// --- Main Game Loop (Optimized for 0.1 CPU) ---
 setInterval(async () => {
   for (const room of Object.values(rooms)) {
     await room.mutex.run(async () => {
       const t = now();
+      
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
       else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
-      if (room.dirty) await room.persist();
-      room.broadcast();
+      
+      if (room.dirty) {
+        await room.persist();
+        room.broadcast();
+        room.dirty = false;
+      }
     });
   }
-}, 500);
+}, 1000);
 
 const conns = new Map();
 const wss = new WebSocketServer({ noServer: true });
@@ -1256,18 +1212,28 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    // Always push the fresh wallet after a pick attempt. If the pick failed
-    // because of a stale balance, this resyncs the client.
+    
+    if (r.ok && room.dirty) {
+      await room.persist();
+      room.broadcast();
+      room.dirty = false;
+    }
+    
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
-    if (room.dirty) await saveRoom(room);
     return;
   }
   if (m.type === 'unpick') {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
+    
+    if (r.ok && room.dirty) {
+      await room.persist();
+      room.broadcast();
+      room.dirty = false;
+    }
+    
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
-    if (room.dirty) await saveRoom(room);
     return;
   }
   if (m.type === 'transfer') {
