@@ -932,26 +932,19 @@ async function toSpinning(room) {
   let winners = [];
   let prizePool = 0;
 
-  if (humans.length) {
-    const humanNums = [...new Set(humans.flatMap(p => p.picks))];
-    if (!humanNums.length) return resetRound(room, 'no-human-picks');
-    winningNumber = humanNums[Math.floor(Math.random() * humanNums.length)];
-    winners = humans.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
-    
-    // --- MODIFIED: Prize Pool Calculation ---
-    // Instead of only counting human picks, we now count ALL picks in the room (humans + bots)
-    // to determine the total prize pool. This fulfills the requirement that the 
-    // total betting amount includes bots' picks.
-    const totalPicksInRoom = allWithPicks.reduce((s, p) => s + p.picks.length, 0);
-    prizePool = Math.floor(totalPicksInRoom * room.bet * PAYOUT_RATE);
-    
-  } else {
-    const botNums = [...new Set(bots.flatMap(p => p.picks))];
-    if (!botNums.length) return resetRound(room, 'no-picks');
-    winningNumber = botNums[Math.floor(Math.random() * botNums.length)];
-    winners = bots.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
-    prizePool = 0;
-  }
+  // --- MODIFIED: Allow bots to win ---
+  // Combine humans and bots into one pool to select the winning number
+  const allPlayers = [...humans, ...bots];
+  const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
+  
+  if (!allNums.length) return resetRound(room, 'no-picks');
+  
+  winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
+  winners = allPlayers.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
+
+  // Prize pool includes all picks (humans + bots)
+  const totalPicksInRoom = allPlayers.reduce((s, p) => s + p.picks.length, 0);
+  prizePool = Math.floor(totalPicksInRoom * room.bet * PAYOUT_RATE);
 
   room.winningNumber = winningNumber;
   room.winners = winners;
@@ -964,12 +957,19 @@ async function toSpinning(room) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
       if (share <= 0) break;
-      if (room.players.get(uid)?.isBot) continue;
+      
+      // REMOVED: The line that skipped bots. Now bots get paid too.
+      // if (room.players.get(uid)?.isBot) continue;
+      
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
-      const uSnap = await db.ref('users/' + uid).once('value');
-      const ref = uSnap.val()?.referred_by;
-      if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+      
+      // Only send notifications to human players. Bots don't need notifications.
+      if (!room.players.get(uid)?.isBot) {
+          await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
+          const uSnap = await db.ref('users/' + uid).once('value');
+          const ref = uSnap.val()?.referred_by;
+          if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+      }
     }
   }
 
@@ -980,7 +980,7 @@ async function toSpinning(room) {
     winAmount: (winners.length && prizePool > 0) ? Math.floor(prizePool / winners.length) : 0,
     setAt: now()
   };
-  console.log(`[${room.id}] r${room.round} → spin num=${winningNumber} winners=${room.lastResult.winners.join(',') || '—'} pool=${prizePool}${humans.length ? '' : ' (bots only)'}`);
+  console.log(`[${room.id}] r${room.round} → spin num=${winningNumber} winners=${room.lastResult.winners.join(',') || '—'} pool=${prizePool}`);
 }
 
 async function toResults(room) {
