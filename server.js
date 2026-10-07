@@ -38,13 +38,13 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWE
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 
 const SELECTION_SECONDS = 30;
-const SPINNING_SECONDS = 2;
-const RESULTS_SECONDS = 6;
+const SPINNING_SECONDS = 3;
+const RESULTS_SECONDS = 7;
 const MAX_PICKS = 3;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 3;
+const BOT_MIN = 4;
 const BOT_MAX = 6;
 
 const BOT_NAMES = [
