@@ -315,7 +315,7 @@
             </div>
         </div>
         <div id="gameScreen">
-            <div class="title">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆 · <small id="modeLabel">15 Birr</small></div>
+            <div class="title">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆<small id="modeLabel">15 Birr</small></div>
             <div class="bet-switcher">
                 <button class="bet-btn switch-room-btn" id="switchRoomBtn"> Switch Room</button>
             </div>
@@ -512,8 +512,6 @@
         //  PRODUCTION FLAG
         // ============================================================
         const DEV_MODE = false;
-        // IMPORTANT: this must be the Render deployment running the Firebase-backed
-        // server.js. Do not point the game at an older SQLite wallet service.
         window.WINZO_CONFIG = window.WINZO_CONFIG || {
             WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.onrender.com/'
         };
@@ -545,7 +543,6 @@
         let currentDisplayName = null;
         let pendingReferralCode = null;
 
-        // Always returns a finite number, never NaN.
         function safeNum(value, fallback = 0) {
             const n = Number(value);
             return Number.isFinite(n) ? n : fallback;
@@ -793,7 +790,7 @@
             usernameInput.onkeydown = function(e) { e.preventDefault(); return false; };
         }
 
-        const APP_VERSION = '11.3';
+        const APP_VERSION = '11.4';
         const DB = {
             getCurrentUser() { return localStorage.getItem('bingo_current_user') || null; },
             setCurrentUser(u) { if (u) localStorage.setItem('bingo_current_user', u); else localStorage.removeItem('bingo_current_user'); },
@@ -1005,7 +1002,7 @@
         }
         function setConnectionStatus(online, message) {
             const cls = online ? 'online' : 'offline';
-            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : '⚡ Offline'; authStatus.className = 'connection-status ' + cls; }
+            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : ''; authStatus.className = 'connection-status ' + cls; }
             if (statusDot) statusDot.className = 'status-dot ' + cls;
             if (message) updateStatus(message);
         }
@@ -1522,7 +1519,6 @@
                 updatedAt: walletData.updatedAt || 0
             };
         }
-        window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
         window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
 
         // ============================================================
@@ -2173,8 +2169,6 @@
                 const remaining = myPicks.filter(n => n !== num);
                 syncLocalPlayerPicks(remaining, engineState.roundNumber, remaining.length > 0);
             }
-            // Always resync the wallet after a failed pick. If our cached balance
-            // was stale (e.g. right after a deposit), this brings it back in sync.
             if (client) client.walletRefresh();
             renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
             const play = safeNum(walletData.play);
@@ -2194,6 +2188,13 @@
             };
             updateStatus(msgs[reason] || `⚠️ ${reason}`);
         }
+
+        // ============================================================
+        //  NUMBER PICKER TOUCH HANDLING
+        //  Swipe detection so scrolling doesn't accidentally pick.
+        //  A pick only fires when the finger taps and lifts quickly
+        //  without moving. Long presses and swipes are ignored.
+        // ============================================================
         if (numPicker) {
             const handleNumberPick = function(e) {
                 const btn = e.target.closest('.num-btn[data-num]');
@@ -2226,13 +2227,65 @@
                 renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
                 if (client) client.pick(num);
             };
-            numPicker.addEventListener('pointerdown', function(e) {
-                if (e.pointerType === 'mouse') return;
+
+            // ---- Tap detection state ----
+            let touchStartX = 0, touchStartY = 0, touchStartTime = 0, touchMoved = false;
+            let activeTouchTarget = null;
+            const SWIPE_THRESHOLD = 12;     // pixels — finger must move more than this to be a swipe
+            const TAP_MAX_DURATION = 400;   // ms — a tap must be shorter than this
+
+            numPicker.addEventListener('touchstart', function(e) {
+                if (e.touches.length !== 1) return;
+                const touch = e.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                touchStartTime = Date.now();
+                touchMoved = false;
+                activeTouchTarget = e.target.closest('.num-btn[data-num]') || null;
+            }, { passive: true });
+
+            numPicker.addEventListener('touchmove', function(e) {
+                if (e.touches.length !== 1) return;
+                const touch = e.touches[0];
+                const dx = Math.abs(touch.clientX - touchStartX);
+                const dy = Math.abs(touch.clientY - touchStartY);
+                // If the finger moved more than the threshold, mark as swipe
+                if (dx > SWIPE_THRESHOLD || dy > SWIPE_THRESHOLD) {
+                    touchMoved = true;
+                }
+            }, { passive: true });
+
+            numPicker.addEventListener('touchend', function(e) {
+                const duration = Date.now() - touchStartTime;
+                // Only treat as a tap if the finger didn't move AND the touch was quick
+                if (touchMoved || duration > TAP_MAX_DURATION) {
+                    touchMoved = false; activeTouchTarget = null;
+                    return;
+                }
+                // Re-resolve the button from the touchend position, so the tap
+                // fires even if the finger drifted slightly within the button.
+                const touch = e.changedTouches[0];
+                const target = document.elementFromPoint(touch.clientX, touch.clientY);
+                const btn = target ? target.closest('.num-btn[data-num]') : activeTouchTarget;
+                activeTouchTarget = null;
+                touchMoved = false;
+                if (!btn) return;
                 e.preventDefault();
-                handleNumberPick(e);
+                handleNumberPick({ target: btn });
             }, { passive: false });
+
+            numPicker.addEventListener('touchcancel', function() {
+                touchMoved = false;
+                activeTouchTarget = null;
+            }, { passive: true });
+
+            // Desktop / mouse support. Touch devices use the touch handlers above.
             numPicker.addEventListener('click', function(e) {
-                if (e.detail === 0) handleNumberPick(e);
+                if (e.pointerType === 'touch') return;
+                // If the event was already handled by touchend, skip
+                if (e._winzoHandled) return;
+                e._winzoHandled = true;
+                handleNumberPick(e);
             });
         }
 
@@ -2347,7 +2400,7 @@
             if (!currentRoom || !currentUser) return;
             isGameInitialized = true;
             if (client) client.join(currentRoom);
-            setConnectionStatus(!!isNetworkConnected, (isNetworkConnected ? '🔑 Connected to ' : '⚡ Connecting to ') + currentBet + ' Birr room');
+            setConnectionStatus(!!isNetworkConnected, (isNetworkConnected ? 'Connected to ' : 'Connecting to ') + currentBet + ' Birr room');
             startResilienceEngine();
             setTimeout(() => {
                 if (generation === roomConnectionGeneration) renderNumberPicker();
@@ -2579,15 +2632,13 @@
                     syncGameState(state); markSyncReceived();
                 },
                 onConnection: (online) => {
-                    setConnectionStatus(online, online ? '🔑 Firebase wallet server connected' : '⚡ Reconnecting…');
+                    setConnectionStatus(online, online ? 'Firebase wallet server connected' : '⚡ Reconnecting…');
                     isNetworkConnected = !!online;
                     renderNumberPicker();
                 },
                 onPickOk: handlePickOk,
                 onPickFail: handlePickFail,
                 onWallet: (w) => {
-                    // Always run every incoming value through safeNum so a stray
-                    // "30abc" or null can never poison the local wallet cache.
                     walletData.main = safeNum(w.main, 0);
                     walletData.play = safeNum(w.play, 0);
                     walletData.pending = safeNum(w.pending, 0);
@@ -2603,7 +2654,6 @@
                     const approved = m.status === 'approved';
                     transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
                     transactionStatus.className = 'status-text ' + (approved ? 'approved' : 'rejected');
-                    // Immediately pull a fresh wallet so the user can pick right away.
                     if (client) client.walletRefresh();
                     setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
                 },
