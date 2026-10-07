@@ -110,7 +110,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   if (snapshot.exists()) {
     const current = snapshot.val() || {};
     const patch = {};
-
     const main = toFiniteNumber(current.main_wallet ?? current.mainWallet ?? current.main_balance ?? current.mainBalance ?? 0, 0);
     const play = toFiniteNumber(current.play_wallet ?? current.playWallet ?? current.play_balance ?? current.playBalance ?? (bot ? BOT_START_WALLET : 0), 0);
     const pending = toFiniteNumber(current.pending_withdrawal ?? current.pendingWithdrawal ?? 0, 0);
@@ -119,7 +118,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     if (current.play_wallet == null) patch.play_wallet = play;
     if (current.pending_withdrawal == null) patch.pending_withdrawal = pending;
     if (current.referral_earnings == null) patch.referral_earnings = refEarn;
-
     if (extra.telegram_id != null && (!current.telegram_id || Number(current.telegram_id) !== Number(extra.telegram_id))) patch.telegram_id = Number(extra.telegram_id);
     if (extra.telegram_username !== undefined && String(current.telegram_username || '') !== String(extra.telegram_username || '')) patch.telegram_username = extra.telegram_username || null;
     if (extra.display_name && String(current.display_name || '') !== String(extra.display_name)) {
@@ -133,7 +131,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     }
     return { ...current, ...patch };
   }
-
   const t = now();
   const newUser = {
     username: clean,
@@ -213,10 +210,7 @@ async function resolveTelegramUser(user, referredBy = null) {
   }
 
   let found = await readUserByUid(canonicalUid);
-
-  if (!found) {
-    found = await findUserByTelegramId(telegramId);
-  }
+  if (!found) found = await findUserByTelegramId(telegramId);
 
   if (found) {
     const existingTelegramId = found.data.telegram_id != null ? Number(found.data.telegram_id) : null;
@@ -301,7 +295,6 @@ async function sendWallet(uid) {
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const payload = { type: 'notification', id, ...data, timestamp: Number(data.timestamp || now()) };
-
   await db.ref('notifications/' + id).set({
     username,
     type: data.type || 'notification',
@@ -312,7 +305,6 @@ async function addNotification(username, data) {
     timestamp: payload.timestamp,
     read: false
   });
-
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
@@ -368,11 +360,11 @@ async function transactionRequest(uid, data) {
   try {
     if (type === 'withdraw') {
       const result = await userRef.transaction(u => {
-        if (!u) return;
+        if (!u) return u;
         const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
         const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
         const available = main - pending;
-        if (available < amount) return;
+        if (available < amount) return u;
         u.pending_withdrawal = pending + amount;
         u.wallet_updated_at = now();
         u.updated_at = u.wallet_updated_at;
@@ -401,7 +393,6 @@ async function transactionRequest(uid, data) {
       image_data: imageData,
       reason: '',
       wallet_applied: 0,
-      wallet_uid: uid,
       client_request_id: clientRequestId || null,
       updated_at: now()
     });
@@ -473,26 +464,39 @@ async function findUserRefForWallet(identity = {}) {
       if (!telegramId || !direct.data.telegram_id || Number(direct.data.telegram_id) === telegramId) return direct;
     }
   }
-
   if (telegramId > 0) {
     const byTelegram = await findUserByTelegramId(telegramId);
     if (byTelegram) return byTelegram;
     const canonical = await readUserByUid(`tg_${telegramId}`);
     if (canonical) return canonical;
   }
-
   if (username) {
     const byKey = await readUserByUid(username);
     if (byKey) return byKey;
     const byUsername = await findUserByStoredUsername(username);
     if (byUsername) return byUsername;
   }
-
   return null;
 }
 
+/**
+ * Admin decision — ROBUST version.
+ *
+ * Strategy:
+ *  1. Read the tx.
+ *  2. If already finalized → return 'already-decided'.
+ *  3. Deposit rejection = only update tx status (no wallet change).
+ *  4. For everything else:
+ *     a. Resolve the correct wallet UID.
+ *     b. Read fresh balance snapshot.
+ *     c. If ledger already has this tx ID → treat as success (idempotent).
+ *     d. Pre-check balance preconditions and return SPECIFIC error reasons.
+ *     e. Apply the change via an atomic transaction.
+ *     f. Verify the ledger exists after write; if not, return a precise reason.
+ *     g. Update the tx record to the final status.
+ */
 async function adminDecision(id, decision, reason = '') {
-  decision = String(decision || '').toLowerCase();
+  decision = String(decision || '').trim().toLowerCase();
   if (decision === 'approve') decision = 'approved';
   if (decision === 'reject') decision = 'rejected';
   if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
@@ -507,18 +511,21 @@ async function adminDecision(id, decision, reason = '') {
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
     if (!['deposit', 'withdraw'].includes(tx.type)) return { ok: false, reason: 'bad-type' };
 
+    // Already finalized? Never touch the wallet again.
     if (tx.status !== 'pending' && tx.status !== 'processing') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
+    // ---- Deposit rejection: no wallet change ----
     if (tx.type === 'deposit' && decision === 'rejected') {
       const userInfo = await findUserRefForWallet({
         uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
         telegram_username: tx.telegram_username, username: tx.username
       });
       if (!userInfo) return { ok: false, reason: 'wallet-user-not-found' };
+
       const claim = await txRef.transaction(current => {
-        if (!current || current.status !== 'pending') return;
+        if (!current || current.status !== 'pending') return current;
         current.status = 'rejected';
         current.reason = String(reason || '').slice(0, 256);
         current.wallet_applied = 0;
@@ -526,13 +533,23 @@ async function adminDecision(id, decision, reason = '') {
         current.updated_at = now();
         return current;
       });
-      if (!claim?.committed) return { ok: false, reason: 'already-decided' };
+      if (!claim?.committed) {
+        // Either already decided or race. Treat as success if the status matches.
+        const fresh = await txRef.once('value');
+        const f = fresh.val() || {};
+        if (f.status === 'rejected') {
+          const updatedTx = { ...tx, status: 'rejected', wallet_applied: 0, wallet_uid: userInfo.uid };
+          return { ok: true, tx: updatedTx };
+        }
+        return { ok: false, reason: 'already-decided' };
+      }
       const updatedTx = { ...tx, status: 'rejected', reason: String(reason || '').slice(0, 256), wallet_applied: 0, wallet_uid: userInfo.uid };
       await sendWallet(userInfo.uid);
       await notifyTransaction(userInfo.uid, updatedTx);
       return { ok: true, tx: updatedTx };
     }
 
+    // ---- All other cases: resolve user & apply wallet change ----
     const userInfo = await findUserRefForWallet({
       uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
       telegram_username: tx.telegram_username, username: tx.username
@@ -541,27 +558,68 @@ async function adminDecision(id, decision, reason = '') {
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
+    // Read current state to check preconditions & idempotency
+    const freshSnap = await userRef.once('value');
+    if (!freshSnap.exists()) return { ok: false, reason: 'wallet-user-not-found' };
+    const fresh = freshSnap.val() || {};
+
+    // Idempotency: if the ledger already has this tx, treat as success.
+    const existingLedger = fresh.wallet_ledger && fresh.wallet_ledger[id];
+    if (existingLedger) {
+      if (String(existingLedger.decision) !== decision) {
+        return { ok: false, reason: 'conflicting-decision (already ' + existingLedger.decision + ')' };
+      }
+      await txRef.update({
+        status: decision,
+        reason: String(reason || '').slice(0, 256),
+        wallet_applied: 1,
+        wallet_uid: userUid,
+        updated_at: now()
+      });
+      const updatedTx = { ...tx, status: decision, wallet_applied: 1, wallet_uid: userUid, reason: String(reason || '').slice(0, 256) };
+      return { ok: true, tx: updatedTx };
+    }
+
+    const main = toFiniteNumber(fresh.main_wallet ?? fresh.mainWallet ?? 0, 0);
+    const pending = toFiniteNumber(fresh.pending_withdrawal ?? fresh.pendingWithdrawal ?? 0, 0);
+    const play = toFiniteNumber(fresh.play_wallet ?? fresh.playWallet ?? 0, 0);
+
+    // Precondition checks with SPECIFIC error messages
+    if (tx.type === 'withdraw' && decision === 'approved') {
+      if (main < txAmount) return { ok: false, reason: 'insufficient-main (have ' + main + ', need ' + txAmount + ')' };
+      if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
+    }
+    if (tx.type === 'withdraw' && decision === 'rejected') {
+      if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
+    }
+    // deposit approved → always allowed
+
+    // Apply atomically
+    let attemptedChange = false;
     const result = await userRef.transaction(u => {
-      if (!u) return;
+      if (!u) return u;
+      // Idempotency inside the transaction
       const ledger = u.wallet_ledger && u.wallet_ledger[id];
       if (ledger) return u;
 
-      const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
-      const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+      const main2 = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
+      const pending2 = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+      const play2 = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
 
       if (tx.type === 'deposit') {
-        if (decision !== 'approved') return;
-        u.play_wallet = play + txAmount;
+        if (decision !== 'approved') return u;
+        u.play_wallet = play2 + txAmount;
       } else if (tx.type === 'withdraw') {
         if (decision === 'approved') {
-          if (pending < txAmount || main < txAmount) return;
-          u.main_wallet = main - txAmount;
-          u.pending_withdrawal = pending - txAmount;
+          if (main2 < txAmount || pending2 < txAmount) return u;
+          u.main_wallet = main2 - txAmount;
+          u.pending_withdrawal = pending2 - txAmount;
         } else {
-          if (pending < txAmount) return;
-          u.pending_withdrawal = pending - txAmount;
+          if (pending2 < txAmount) return u;
+          u.pending_withdrawal = pending2 - txAmount;
         }
+      } else {
+        return u;
       }
 
       if (!u.wallet_ledger || typeof u.wallet_ledger !== 'object') u.wallet_ledger = {};
@@ -573,22 +631,42 @@ async function adminDecision(id, decision, reason = '') {
       };
       u.wallet_updated_at = now();
       u.updated_at = u.wallet_updated_at;
+      attemptedChange = true;
       return u;
     });
 
-    let updatedUser = result?.snapshot?.exists() ? (result.snapshot.val() || {}) : null;
-    if (!result?.committed || !updatedUser) {
+    // Recover the freshest state regardless of committed flag
+    let updatedUser = null;
+    if (result && result.snapshot && result.snapshot.exists()) {
+      updatedUser = result.snapshot.val() || {};
+    } else {
       const recovery = await userRef.once('value');
       updatedUser = recovery.exists() ? (recovery.val() || {}) : null;
     }
-    if (!updatedUser) return { ok: false, reason: 'wallet-write-not-committed' };
+    if (!updatedUser) return { ok: false, reason: 'user-not-found-after-write' };
 
-    const ledgerEntry = updatedUser.wallet_ledger?.[id];
-    if (!ledgerEntry) return { ok: false, reason: 'wallet-write-not-committed' };
-    if (String(ledgerEntry.decision) !== decision) return { ok: false, reason: 'already-decided' };
+    const ledgerEntry = updatedUser.wallet_ledger && updatedUser.wallet_ledger[id];
+    if (!ledgerEntry) {
+      // Transaction did NOT apply. Figure out why so we can return a precise reason.
+      const u = updatedUser;
+      const main3 = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? 0, 0);
+      const pending3 = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
+      if (tx.type === 'withdraw' && decision === 'approved') {
+        if (main3 < txAmount) return { ok: false, reason: 'insufficient-main (have ' + main3 + ', need ' + txAmount + ')' };
+        if (pending3 < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending3 + ', need ' + txAmount + ')' };
+      }
+      if (tx.type === 'withdraw' && decision === 'rejected') {
+        if (pending3 < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending3 + ', need ' + txAmount + ')' };
+      }
+      return { ok: false, reason: 'wallet-write-not-committed' };
+    }
+    if (String(ledgerEntry.decision) !== decision) {
+      return { ok: false, reason: 'conflicting-decision (already ' + ledgerEntry.decision + ')' };
+    }
 
     const newPlay = toFiniteNumber(updatedUser.play_wallet ?? updatedUser.playWallet ?? 0, 0);
     const newMain = toFiniteNumber(updatedUser.main_wallet ?? updatedUser.mainWallet ?? 0, 0);
+    const newPending = toFiniteNumber(updatedUser.pending_withdrawal ?? updatedUser.pendingWithdrawal ?? 0, 0);
 
     await txRef.update({
       status: decision,
@@ -605,7 +683,7 @@ async function adminDecision(id, decision, reason = '') {
       wallet_applied: 1,
       wallet_uid: userUid
     };
-    console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} walletUid=${userUid} amount=${txAmount} → play=${newPlay} main=${newMain}`);
+    console.log(`[ADMIN] ${decision} ${tx.type} id=${id} user=${tx.username} walletUid=${userUid} amount=${txAmount} → play=${newPlay} main=${newMain} pending=${newPending}`);
     await sendWallet(userUid);
     await notifyTransaction(userUid, updatedTx);
     return { ok: true, tx: updatedTx };
@@ -627,7 +705,7 @@ async function claimPayout(uid, amount, roomId, round, kind) {
 
   let success = false;
   await db.ref('users/' + uid).transaction(u => {
-    if (!u) return;
+    if (!u) return u;
     u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
     u.wallet_updated_at = now();
     u.updated_at = u.wallet_updated_at;
@@ -651,7 +729,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   await ensureUser(ref);
   let success = false;
   await db.ref('users/' + ref).transaction(u => {
-    if (!u) return;
+    if (!u) return u;
     u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
     u.referral_earnings = toFiniteNumber(u.referral_earnings, 0) + amount;
     u.wallet_updated_at = now();
@@ -730,7 +808,6 @@ class Room {
       picks: [...p.picks], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid
     };
     const taken = Object.fromEntries(this.taken.entries());
-
     await db.ref('rooms/' + this.id).set({
       bet: this.bet, phase: this.phase, round: this.round, ends_at: this.endsAt,
       winning_number: this.winningNumber, winners_json: JSON.stringify(this.winners),
@@ -770,7 +847,6 @@ async function saveRoom(room) { await room.persist(); room.broadcast(); }
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
-  
   try {
     const result = await db.ref('users/' + uid).transaction(u => {
       if (!u) return u;
@@ -781,27 +857,22 @@ async function debit(uid, amount, roomId, round) {
       u.wallet_updated_at = u.updated_at;
       return u;
     });
-
     const committed = !!(result && result.committed);
-    
     if (committed) {
       const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
       console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${newPlay} room=${roomId} round=${round}`);
       await sendWallet(uid);
       return { ok: true, balance: newPlay };
     }
-
     const refSnap = await db.ref('users/' + uid).once('value');
     if (!refSnap.exists()) {
       console.warn(`[DEBIT] uid=${uid} → user-not-found`);
       return { ok: false, reason: 'user-not-found' };
     }
-    
     const live = toFiniteNumber(refSnap.val()?.play_wallet, 0);
     console.log(`[DEBIT] uid=${uid} amount=${amt} committed=false livePlay=${live} → insufficient`);
     await sendWallet(uid);
     return { ok: false, reason: 'insufficient', balance: live };
-    
   } catch (e) {
     console.error(`[DEBIT] uid=${uid} amount=${amt} ERROR`, e);
     return { ok: false, reason: 'debit-error' };
@@ -814,7 +885,7 @@ async function refundWager(uid, amount, roomId, round) {
   try {
     let committed = false;
     const result = await db.ref('users/' + uid).transaction(u => {
-      if (!u) return;
+      if (!u) return u;
       u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
@@ -877,12 +948,10 @@ async function refundDisconnectedPlayer(room, p) {
 
 async function toSpinning(room) {
   if (room.phase !== 'selection') return;
-
   const allWithPicks = [...room.players.values()]
     .filter(p => p.picks.length > 0 && (p.isBot || p.active));
   const humans = allWithPicks.filter(p => !p.isBot);
   const bots = allWithPicks.filter(p => p.isBot);
-
   if (!allWithPicks.length) return resetRound(room, 'no-picks');
 
   let winningNumber = null;
@@ -891,7 +960,6 @@ async function toSpinning(room) {
 
   const allPlayers = [...humans, ...bots];
   const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
-  
   if (!allNums.length) return resetRound(room, 'no-picks');
   
   winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
@@ -911,9 +979,7 @@ async function toSpinning(room) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
       if (share <= 0) break;
-      
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      
       if (!room.players.get(uid)?.isBot) {
           await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
           const uSnap = await db.ref('users/' + uid).once('value');
@@ -966,7 +1032,6 @@ function currentBotRoster(room) {
 function normalizeRoundBots(room) {
   const roster = new Set(currentBotRoster(room));
   const activeBotUids = new Set([...roster].map(botUid));
-
   for (const [uid, p] of room.players) {
     if (!p.isBot) continue;
     if (!activeBotUids.has(uid)) {
@@ -984,7 +1049,6 @@ function normalizeRoundBots(room) {
 function scheduleBots(room) {
   clearBotTimers(room);
   if (room.phase !== 'selection') return;
-
   const roster = normalizeRoundBots(room);
   const names = [...roster];
   if (!names.length) return;
@@ -1006,15 +1070,12 @@ function scheduleBots(room) {
   const runNextPick = async () => {
     if (room.phase !== 'selection' || index >= order.length) return;
     if (now() >= room.endsAt - 1000) return;
-
     const displayName = order[index++];
     const uid = botUid(displayName);
-
     try {
       await room.mutex.run(async () => {
         if (room.phase !== 'selection') return;
         await ensureUser(uid, null, true);
-
         let p = room.players.get(uid);
         if (!p) {
           p = { uid, picks: [], isBot: true, active: true, displayName };
@@ -1024,9 +1085,7 @@ function scheduleBots(room) {
           p.isBot = true;
           p.displayName = displayName;
         }
-
         if (p.picks.length >= MAX_PICKS) return;
-
         let num = null;
         for (let attempt = 0; attempt < 12; attempt++) {
           const candidate = 1 + Math.floor(Math.random() * 200);
@@ -1041,7 +1100,6 @@ function scheduleBots(room) {
           }
         }
         if (num == null) return;
-
         room.taken.set(num, uid);
         p.picks.push(num);
         room.dirty = true;
@@ -1050,7 +1108,6 @@ function scheduleBots(room) {
     } catch (err) {
       console.error('[BOT-PICK]', err);
     }
-
     if (room.phase !== 'selection' || index >= order.length) return;
     const t = setTimeout(runNextPick, BOT_PICK_GAP_MS);
     room.botTimers.push(t);
@@ -1095,18 +1152,15 @@ wss.on('connection', (ws) => {
   ws.on('close', async () => {
     clearTimeout(ws.authTimer);
     if (!ws.uid) return;
-
     const set = conns.get(ws.uid);
     if (set) {
       set.delete(ws);
       if (set.size) return;
       conns.delete(ws.uid);
     }
-
     if (ws.roomId) {
       const room = rooms[ws.roomId];
       if (!room) return;
-
       await room.mutex.run(async () => {
         const p = room.players.get(ws.uid);
         if (!p || p.isBot) return;
@@ -1206,13 +1260,11 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    
     if (r.ok && room.dirty) {
       await room.persist();
       room.broadcast();
       room.dirty = false;
     }
-    
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1220,13 +1272,11 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
-    
     if (r.ok && room.dirty) {
       await room.persist();
       room.broadcast();
       room.dirty = false;
     }
-    
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1239,7 +1289,7 @@ async function handle(ws, m) {
       const main = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0);
       const pending = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
       const play = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
-      if (main - pending < amount) return;
+      if (main - pending < amount) return u;
       u.main_wallet = main - amount;
       u.play_wallet = play + amount;
       u.updated_at = now();
@@ -1273,7 +1323,6 @@ setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.termin
 
 const app = express();
 
-// --- CORS Middleware for Admin Panel ---
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key');
@@ -1282,7 +1331,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Admin HTTP Endpoints ---
 function isAdmin(req) {
   const suppliedKey = String(req.get('x-admin-key') || '');
   return ADMIN_KEY && constantTimeEqual(suppliedKey, ADMIN_KEY);
@@ -1318,14 +1366,12 @@ app.get('/admin/repair-tx-ids', async (req, res) => {
     const snap = await db.ref('transactions').orderByChild('status').equalTo('pending').once('value');
     const repaired = [];
     const skipped = [];
-    
     const promises = [];
     snap.forEach(child => {
       const tx = child.val();
       const id = child.key;
       const telegramId = Number(tx.telegram_id || 0);
       const username = safeUser(tx.telegram_username || tx.username || '');
-      
       if (telegramId > 0 || username) {
         promises.push((async () => {
           const userInfo = await findUserRefForWallet({
@@ -1343,7 +1389,6 @@ app.get('/admin/repair-tx-ids', async (req, res) => {
         skipped.push(id);
       }
     });
-    
     await Promise.all(promises);
     res.json({ ok: true, repaired, skipped });
   } catch (e) {
@@ -1355,9 +1400,7 @@ app.get('/admin/diagnose', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
   try {
     const txs = await adminListTransactions();
-    const diagnostics = txs.map(tx => {
-      return { ...tx, resolved_uid: tx.walletUid };
-    });
+    const diagnostics = txs.map(tx => ({ ...tx, resolved_uid: tx.walletUid }));
     res.json({ ok: true, transactions: diagnostics });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1379,6 +1422,7 @@ app.get('/health', async (_, res) => {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
 });
+
 app.get('/identity/:telegramId', async (req, res) => {
   const suppliedKey = String(req.get('x-admin-key') || '');
   if (!ADMIN_KEY || !constantTimeEqual(suppliedKey, ADMIN_KEY)) return res.status(403).json({ ok: false, error: 'forbidden' });
@@ -1442,7 +1486,6 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 loadRooms().then(() => {
   server.listen(PORT, '0.0.0.0', () => console.log(`Winzo Realtime Database server listening on :${PORT}`));
-
   for (const room of Object.values(rooms)) {
     if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
     if (room.phase === 'selection') normalizeRoundBots(room);
