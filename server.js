@@ -38,13 +38,13 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWE
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 
 const SELECTION_SECONDS = 30;
-const SPINNING_SECONDS = 3;
-const RESULTS_SECONDS = 7;
+const SPINNING_SECONDS = 2;
+const RESULTS_SECONDS = 6;
 const MAX_PICKS = 3;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 4;
+const BOT_MIN = 3;
 const BOT_MAX = 6;
 
 const BOT_NAMES = [
@@ -932,8 +932,7 @@ async function toSpinning(room) {
   let winners = [];
   let prizePool = 0;
 
-  // --- MODIFIED: Allow bots to win ---
-  // Combine humans and bots into one pool to select the winning number
+  // Allow both humans and bots to win
   const allPlayers = [...humans, ...bots];
   const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
   
@@ -957,9 +956,6 @@ async function toSpinning(room) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
       if (share <= 0) break;
-      
-      // REMOVED: The line that skipped bots. Now bots get paid too.
-      // if (room.players.get(uid)?.isBot) continue;
       
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
       
@@ -1113,18 +1109,26 @@ function scheduleBots(room) {
   room.botTimers.push(first);
 }
 
+// --- Main Game Loop (Optimized for 0.1 CPU) ---
 setInterval(async () => {
   for (const room of Object.values(rooms)) {
     await room.mutex.run(async () => {
       const t = now();
+      
+      // Handle phase transitions (these are important, keep them fast)
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
       else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
-      if (room.dirty) await room.persist();
-      room.broadcast();
+      
+      // ONLY persist and broadcast if the room state actually changed
+      if (room.dirty) {
+        await room.persist();
+        room.broadcast();
+        room.dirty = false;  // Reset the flag so we don't broadcast again
+      }
     });
   }
-}, 500);
+}, 1000); // 1-second interval (halved from 500ms to reduce CPU load)
 
 const conns = new Map();
 const wss = new WebSocketServer({ noServer: true });
@@ -1256,18 +1260,31 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    // Always push the fresh wallet after a pick attempt. If the pick failed
-    // because of a stale balance, this resyncs the client.
+    
+    // Event-driven broadcast: immediately notify all players if the pick was successful
+    if (r.ok && room.dirty) {
+      await room.persist();
+      room.broadcast();
+      room.dirty = false;
+    }
+    
+    // Always push the fresh wallet after a pick attempt
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
-    if (room.dirty) await saveRoom(room);
     return;
   }
   if (m.type === 'unpick') {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
+    
+    // Event-driven broadcast for unpick
+    if (r.ok && room.dirty) {
+      await room.persist();
+      room.broadcast();
+      room.dirty = false;
+    }
+    
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
-    if (room.dirty) await saveRoom(room);
     return;
   }
   if (m.type === 'transfer') {
