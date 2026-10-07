@@ -60,7 +60,6 @@ const BOT_NAMES = [
   'Mihret','Million','Molla','Mulatu','Negasi','Nigussie','Petros','Robel','Sisay','Tekle'
 ];
 
-// Robust numeric coercion — always returns a finite number, never NaN.
 function toFiniteNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -102,8 +101,6 @@ function constantTimeEqual(a, b) {
   const bb = Buffer.from(String(b || ''));
   return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
 }
-
-// --- Realtime Database Helpers ---
 
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
@@ -1063,16 +1060,13 @@ function scheduleBots(room) {
   room.botTimers.push(first);
 }
 
-// --- Main Game Loop (Optimized for 0.1 CPU) ---
 setInterval(async () => {
   for (const room of Object.values(rooms)) {
     await room.mutex.run(async () => {
       const t = now();
-      
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
       else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
-      
       if (room.dirty) {
         await room.persist();
         room.broadcast();
@@ -1278,6 +1272,98 @@ async function handle(ws, m) {
 setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 25000);
 
 const app = express();
+
+// --- CORS Middleware for Admin Panel ---
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// --- Admin HTTP Endpoints ---
+function isAdmin(req) {
+  const suppliedKey = String(req.get('x-admin-key') || '');
+  return ADMIN_KEY && constantTimeEqual(suppliedKey, ADMIN_KEY);
+}
+
+app.get('/admin/pending', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const txs = await adminListTransactions();
+    res.json({ ok: true, transactions: txs });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/decision', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const id = String(req.query.id || '');
+  const decision = String(req.query.decision || '');
+  if (!id || !decision) return res.status(400).json({ ok: false, error: 'missing-params' });
+  try {
+    const result = await adminDecision(id, decision, 'Processed via HTTP admin panel');
+    if (!result.ok) return res.status(400).json({ ok: false, error: result.reason });
+    res.json({ ok: true, transaction: result.tx });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/repair-tx-ids', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const snap = await db.ref('transactions').orderByChild('status').equalTo('pending').once('value');
+    const repaired = [];
+    const skipped = [];
+    
+    const promises = [];
+    snap.forEach(child => {
+      const tx = child.val();
+      const id = child.key;
+      const telegramId = Number(tx.telegram_id || 0);
+      const username = safeUser(tx.telegram_username || tx.username || '');
+      
+      if (telegramId > 0 || username) {
+        promises.push((async () => {
+          const userInfo = await findUserRefForWallet({
+            uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: telegramId,
+            telegram_username: username, username: tx.username
+          });
+          if (userInfo && userInfo.uid !== tx.wallet_uid) {
+            await db.ref('transactions/' + id).update({ wallet_uid: userInfo.uid, updated_at: now() });
+            repaired.push({ id, old: tx.wallet_uid, new: userInfo.uid });
+          } else {
+            skipped.push(id);
+          }
+        })());
+      } else {
+        skipped.push(id);
+      }
+    });
+    
+    await Promise.all(promises);
+    res.json({ ok: true, repaired, skipped });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/diagnose', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const txs = await adminListTransactions();
+    const diagnostics = txs.map(tx => {
+      return { ...tx, resolved_uid: tx.walletUid };
+    });
+    res.json({ ok: true, transactions: diagnostics });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/health', async (_, res) => {
   const roomInfo = {};
   for (const room of Object.values(rooms)) {
