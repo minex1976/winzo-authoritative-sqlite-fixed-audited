@@ -212,7 +212,6 @@
         .winning-card-sparkles span:nth-child(6) { top: 52%; right: 7%; animation-delay: 1.4s; }
         @keyframes sparkleTwinkle { 0%, 100% { opacity: 0.15; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1.5); } }
         .winning-card-title { position: relative; z-index: 4; color: #cbb8e6; font-size: 0.68rem; font-weight: 800; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 10px; }
-        /* Removed .winning-card-round styles as the element is removed */
         .winning-number-big { position: relative; z-index: 4; font-size: 6.2rem; font-weight: 900; line-height: 1; margin: 2px 0 10px; letter-spacing: 3px; background: linear-gradient(180deg, #fff8d6 0%, #ffcc44 42%, #f5a623 72%, #b87a15 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; filter: drop-shadow(0 0 34px rgba(255, 204, 68, 0.75)) drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55)); animation: numberPop 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
         @keyframes numberPop { 0% { transform: scale(0.25) rotate(-10deg); opacity: 0; } 55% { transform: scale(1.18) rotate(4deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
         .winning-card-divider { position: relative; z-index: 4; width: 62%; height: 1px; margin: 6px auto 10px; background: linear-gradient(90deg, transparent, rgba(255, 204, 68, 0.6), transparent); }
@@ -227,12 +226,13 @@
         @media (max-width: 430px) { #usernameWalletItem { display: none !important; } }
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
         
-        /* --- New Spinning Wheel Animation Styles --- */
+        /* --- Spinning Wheel Animation Styles --- */
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
         .wheel-container { position: relative; width: 320px; height: 320px; border-radius: 50%; border: 12px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
-        .wheel { width: 100%; height: 100%; transition: transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99); transform: rotate(0deg); transform-origin: center center; }
+        .wheel { width: 100%; height: 100%; transform-origin: center center; will-change: transform; }
+        .wheel.spinning { transition: transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
         .wheel-pointer { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 30px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
         .wheel-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; background: #6a3a9a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem; font-weight: 900; border: 4px solid #f0e6ff; box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5; }
         .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
@@ -375,7 +375,6 @@
             <div class="winning-number-card">
                 <div class="winning-card-sparkles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="winning-card-title">🎯 Winning Number</div>
-                <!-- Removed winning-card-round (Winner Name announcement) -->
                 <div class="winning-number-big" id="winningNumberBig">--</div>
                 <div class="winning-card-divider"></div>
                 <div class="winning-card-amount" id="winningCardAmount">
@@ -483,7 +482,7 @@
     </div>
     <canvas id="fireworksCanvas"></canvas>
     
-    <!-- New Spinning Wheel Animation Overlay -->
+    <!-- Spinning Wheel Animation Overlay -->
     <div id="wheelAnimOverlay" class="wheel-anim-overlay">
       <div class="wheel-anim-machine">
         <div class="wheel-pointer"></div>
@@ -879,7 +878,6 @@
         const gamePhaseLabel = $('gamePhaseLabel'); const totalBetDisplayEl = $('totalBetDisplay');
         const ocrProgressModal = $('ocrProgressModal'); const ocrSpinner = $('ocrSpinner');
         const ocrDoneIcon = $('ocrDoneIcon'); const ocrProgressStatus = $('ocrProgressStatus'); const ocrProgressSub = $('ocrProgressSub');
-        // Removed winningCardWinnersEl since the element is removed
         const winningCardAmountEl = $('winningCardAmount');
         const winningCardAmountValueEl = $('winningCardAmountValue');
         const broadcastModal = $('broadcastModal');
@@ -1286,23 +1284,28 @@
                 svg += `</svg>`;
                 wheelEl.innerHTML = svg;
 
-                // 4. Reset rotation and trigger reflow to restart CSS animation
-                wheelEl.style.transition = 'none';
+                // 4. Reset rotation WITHOUT transition to force a clean starting state
+                wheelEl.classList.remove('spinning');
                 wheelEl.style.transform = 'rotate(0deg)';
-                void wheelEl.offsetWidth; // Force reflow
+                // Force reflow so the browser commits the reset before we animate
+                void wheelEl.offsetWidth;
 
                 // 5. Calculate target rotation
                 const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
                 const spins = 5;
                 const targetRotation = (spins * 360) - targetSegmentCenter;
 
-                // 6. Apply rotation
+                // 6. Apply rotation with transition using requestAnimationFrame
                 statusEl.textContent = 'Spinning the wheel...';
                 overlay.classList.add('active');
-                
-                // Set transition and rotate
-                wheelEl.style.transition = 'transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99)';
-                wheelEl.style.transform = `rotate(${targetRotation}deg)`;
+
+                // Use requestAnimationFrame to ensure the browser has painted the reset frame
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        wheelEl.classList.add('spinning');
+                        wheelEl.style.transform = `rotate(${targetRotation}deg)`;
+                    });
+                });
 
                 // 7. Wait for animation to finish
                 setTimeout(() => {
@@ -1372,7 +1375,7 @@
             if (ov) ov.classList.remove('active');
             const wheelEl = document.getElementById('baWheel');
             if (wheelEl) {
-                wheelEl.style.transition = 'none';
+                wheelEl.classList.remove('spinning');
                 wheelEl.style.transform = 'rotate(0deg)';
             }
         }
@@ -2153,9 +2156,6 @@
 
         // ============================================================
         //  NUMBER PICKER TOUCH HANDLING
-        //  Swipe detection so scrolling doesn't accidentally pick.
-        //  A pick only fires when the finger taps and lifts quickly
-        //  without moving. Long presses and swipes are ignored.
         // ============================================================
         if (numPicker) {
             const handleNumberPick = function(e) {
@@ -2190,11 +2190,10 @@
                 if (client) client.pick(num);
             };
 
-            // ---- Tap detection state ----
             let touchStartX = 0, touchStartY = 0, touchStartTime = 0, touchMoved = false;
             let activeTouchTarget = null;
-            const SWIPE_THRESHOLD = 12;     // pixels — finger must move more than this to be a swipe
-            const TAP_MAX_DURATION = 400;   // ms — a tap must be shorter than this
+            const SWIPE_THRESHOLD = 12;
+            const TAP_MAX_DURATION = 400;
 
             numPicker.addEventListener('touchstart', function(e) {
                 if (e.touches.length !== 1) return;
@@ -2211,7 +2210,6 @@
                 const touch = e.touches[0];
                 const dx = Math.abs(touch.clientX - touchStartX);
                 const dy = Math.abs(touch.clientY - touchStartY);
-                // If the finger moved more than the threshold, mark as swipe
                 if (dx > SWIPE_THRESHOLD || dy > SWIPE_THRESHOLD) {
                     touchMoved = true;
                 }
@@ -2219,13 +2217,10 @@
 
             numPicker.addEventListener('touchend', function(e) {
                 const duration = Date.now() - touchStartTime;
-                // Only treat as a tap if the finger didn't move AND the touch was quick
                 if (touchMoved || duration > TAP_MAX_DURATION) {
                     touchMoved = false; activeTouchTarget = null;
                     return;
                 }
-                // Re-resolve the button from the touchend position, so the tap
-                // fires even if the finger drifted slightly within the button.
                 const touch = e.changedTouches[0];
                 const target = document.elementFromPoint(touch.clientX, touch.clientY);
                 const btn = target ? target.closest('.num-btn[data-num]') : activeTouchTarget;
@@ -2241,10 +2236,8 @@
                 activeTouchTarget = null;
             }, { passive: true });
 
-            // Desktop / mouse support. Touch devices use the touch handlers above.
             numPicker.addEventListener('click', function(e) {
                 if (e.pointerType === 'touch') return;
-                // If the event was already handled by touchend, skip
                 if (e._winzoHandled) return;
                 e._winzoHandled = true;
                 handleNumberPick(e);
