@@ -212,8 +212,7 @@
         .winning-card-sparkles span:nth-child(6) { top: 52%; right: 7%; animation-delay: 1.4s; }
         @keyframes sparkleTwinkle { 0%, 100% { opacity: 0.15; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1.5); } }
         .winning-card-title { position: relative; z-index: 4; color: #cbb8e6; font-size: 0.68rem; font-weight: 800; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 10px; }
-        .winning-card-round { position: relative; z-index: 4; display: inline-block; max-width: 92%; background: linear-gradient(135deg, rgba(255, 204, 68, 0.24), rgba(245, 166, 35, 0.12)); border: 1px solid rgba(255, 204, 68, 0.45); color: #ffd866; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.5px; line-height: 1.35; padding: 5px 16px; border-radius: 22px; margin-bottom: 12px; word-break: break-word; overflow-wrap: anywhere; text-transform: none; }
-        .winning-card-round.no-winner { color: #b8a0d0; border-color: rgba(184, 160, 208, 0.35); background: linear-gradient(135deg, rgba(120, 80, 200, 0.18), rgba(120, 80, 200, 0.06)); }
+        /* Removed .winning-card-round styles as the element is removed */
         .winning-number-big { position: relative; z-index: 4; font-size: 6.2rem; font-weight: 900; line-height: 1; margin: 2px 0 10px; letter-spacing: 3px; background: linear-gradient(180deg, #fff8d6 0%, #ffcc44 42%, #f5a623 72%, #b87a15 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; filter: drop-shadow(0 0 34px rgba(255, 204, 68, 0.75)) drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55)); animation: numberPop 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
         @keyframes numberPop { 0% { transform: scale(0.25) rotate(-10deg); opacity: 0; } 55% { transform: scale(1.18) rotate(4deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
         .winning-card-divider { position: relative; z-index: 4; width: 62%; height: 1px; margin: 6px auto 10px; background: linear-gradient(90deg, transparent, rgba(255, 204, 68, 0.6), transparent); }
@@ -227,31 +226,18 @@
         @media (max-width:380px) { .winning-number-big { font-size: 4.6rem; } .winning-number-card { padding: 20px 16px 18px; border-radius: 24px; } }
         @media (max-width: 430px) { #usernameWalletItem { display: none !important; } }
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
-        .ball-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
-        .ball-anim-overlay.active { display: flex; }
-        .ball-anim-machine { position: relative; width: min(460px, 100%); height: min(640px, 94vh); border-radius: 34px; padding: 14px; background: radial-gradient(circle at 50% 0%, rgba(255,204,68,.13), transparent 34%), linear-gradient(145deg, #17122d, #101d34 58%, #0b1323); border: 1px solid rgba(255,204,68,.30); box-shadow: 0 28px 80px rgba(0,0,0,.82), inset 0 1px 0 rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 10px; }
-        .ball-anim-machine::before { content: "WINZO  •  LUCKY DRAW"; position: absolute; top: 8px; left: 0; right: 0; text-align: center; color: rgba(255,216,102,.55); font-size: 10px; font-weight: 900; letter-spacing: 3px; pointer-events: none; z-index: 10; }
-        .ball-anim-glass { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 8px; border-radius: 48% 48% 25px 25px / 38px 38px 25px 25px; background: radial-gradient(ellipse at 50% 8%, rgba(255,255,255,.72), rgba(230,244,255,.18) 28%, rgba(85,142,184,.12) 62%, rgba(7,20,38,.62) 100%), linear-gradient(180deg, rgba(205,236,255,.32), rgba(20,48,72,.55)); border: 3px solid rgba(190,232,255,.72); overflow: hidden; box-shadow: inset 0 0 35px rgba(115,205,255,.16), inset 0 -18px 28px rgba(0,0,0,.30), 0 8px 28px rgba(0,0,0,.45), 0 0 26px rgba(120,210,255,.10); backdrop-filter: blur(2px); }
-        .ball-anim-glass::before { content: "LUCKY DRAW"; position: absolute; top: 13px; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 900; letter-spacing: 4px; color: #d9f3ff; opacity: .40; pointer-events: none; z-index: 0; }
-        .ball-anim-glass::after { content: ""; position: absolute; left: 5%; right: 5%; bottom: 3px; height: 20px; background: radial-gradient(ellipse at 50% 100%, rgba(100,180,230,.30) 0%, rgba(70,90,115,0) 72%); border-radius: 50%; pointer-events: none; z-index: 1; }
-        #baBalls { position: absolute; inset: 0; z-index: 2; transform-origin: 50% 65%; }
-        .ba-ball { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; line-height: 1; text-align: center; padding: 2px; overflow: hidden; -webkit-backface-visibility: hidden; backface-visibility: hidden; border: 1px solid rgba(255,255,255,.48); }
-        .ba-ball::after { content: ""; position: absolute; width: 38%; height: 24%; left: 20%; top: 11%; border-radius: 50%; background: rgba(255,255,255,.70); filter: blur(2px); transform: rotate(-28deg); pointer-events: none; }
-        .ba-ball.ba-white { background: radial-gradient(circle at 34% 30%, #ffffff 0%, #e8f4ff 42%, #8da7ba 100%); color: #101820; box-shadow: inset -4px -5px 7px rgba(0,0,0,.18), inset 3px 3px 5px rgba(255,255,255,.80), 0 4px 10px rgba(0,0,0,.35); }
-        .ba-ball.ba-yellow { background: radial-gradient(circle at 34% 28%, #fffde8 0%, #ffe66b 36%, #f4a900 70%, #9a5600 100%); color: #3d2c00; word-break: break-word; box-shadow: inset -4px -5px 7px rgba(0,0,0,.20), inset 3px 3px 5px rgba(255,255,255,.75), 0 4px 10px rgba(0,0,0,.35); }
-        .ba-ball.ba-bounce { -webkit-animation: baBounce var(--dur, 1.45s) cubic-bezier(.22,.72,.28,1) var(--delay, 0s) infinite; animation: baBounce var(--dur, 1.45s) cubic-bezier(.22,.72,.28,1) var(--delay, 0s) infinite; }
-        #baBalls.shaking { animation: baMachineShake .16s ease-in-out infinite alternate; }
-        @keyframes baMachineShake { 0% { transform: translate3d(-3px,1px,0) rotate(-.7deg); } 100% { transform: translate3d(3px,-1px,0) rotate(.7deg); } }
-        @-webkit-keyframes baBounce { 0%,100% { -webkit-transform: translate3d(0,0,0) rotate(0deg) scale(1); transform: translate3d(0,0,0) rotate(0deg) scale(1); } 32% { -webkit-transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); } 50% { -webkit-transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); } 68% { -webkit-transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); } }
-        @keyframes baBounce { 0%,100% { transform: translate3d(0,0,0) rotate(0deg) scale(1); } 32% { transform: translate3d(var(--dx,3px),var(--jump,-18px),0) rotate(150deg) scale(1.03); } 50% { transform: translate3d(calc(var(--dx,3px) * -1),calc(var(--jump,-18px) * .45),0) rotate(250deg) scale(.98); } 68% { transform: translate3d(var(--dx,3px),2px,0) rotate(340deg) scale(1.01); } }
-        .ba-hole { position: absolute; left: 50%; bottom: -3px; width: 76px; height: 38px; transform: translateX(-50%); border-radius: 76px 76px 0 0; background: #05040a; box-shadow: 0 -2px 0 2px rgba(130,150,175,.5), inset 0 6px 10px rgba(0,0,0,.9); z-index: 5; overflow: hidden; }
-        .ba-hole-lid { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; border-radius: 76px 76px 0 0; background: linear-gradient(#e6edf4, #a9b7c6); transition: transform .5s cubic-bezier(.55,0,.75,.35), opacity .45s ease; }
-        .ba-hole.open .ba-hole-lid { transform: translateY(115%); opacity: 0; }
-        .ba-drop { z-index: 60; box-shadow: inset -2px -3px 4px rgba(0,0,0,.15), 0 4px 10px rgba(0,0,0,.55) !important; will-change: transform; }
-        .ba-tray { flex: 0 0 auto; height: 70px; border-radius: 18px; background: linear-gradient(#0d1220, #1a2436); border: 1px solid rgba(180,120,255,.22); box-shadow: inset 0 4px 10px rgba(0,0,0,.6); position: relative; z-index: 3; }
-        .ball-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; padding: 2px 0; }
-        .ba-winner-glow { box-shadow: 0 0 0 3px #fff, 0 0 22px 6px #ffcc44 !important; animation: baWinnerPulse .9s ease-in-out infinite alternate !important; }
-        @keyframes baWinnerPulse { 0% { filter: brightness(1); } 100% { filter: brightness(1.35); } }
+        
+        /* --- New Spinning Wheel Animation Styles --- */
+        .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+        .wheel-anim-overlay.active { display: flex; }
+        .wheel-anim-machine { position: relative; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        .wheel-container { position: relative; width: 320px; height: 320px; border-radius: 50%; border: 12px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
+        .wheel { width: 100%; height: 100%; transition: transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99); transform: rotate(0deg); transform-origin: center center; }
+        .wheel-pointer { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 30px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
+        .wheel-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; background: #6a3a9a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem; font-weight: 900; border: 4px solid #f0e6ff; box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5; }
+        .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
+        .wheel-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; }
+
         .guide-help-btn { position: absolute; top: 10px; right: 12px; background: rgba(255, 204, 68, 0.15); border: 1px solid rgba(255, 204, 68, 0.45); color: #ffcc44; font-size: 0.68rem; font-weight: 800; padding: 4px 12px; border-radius: 20px; cursor: pointer; letter-spacing: 0.4px; z-index: 5; font-family: inherit; }
         .guide-help-btn:active { transform: translateY(1px); }
         .guide-overlay { display: none; position: fixed; inset: 0; z-index: 2100; pointer-events: none; }
@@ -389,7 +375,7 @@
             <div class="winning-number-card">
                 <div class="winning-card-sparkles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
                 <div class="winning-card-title">🎯 Winning Number</div>
-                <div class="winning-card-round" id="winningCardWinners">Waiting for result…</div>
+                <!-- Removed winning-card-round (Winner Name announcement) -->
                 <div class="winning-number-big" id="winningNumberBig">--</div>
                 <div class="winning-card-divider"></div>
                 <div class="winning-card-amount" id="winningCardAmount">
@@ -496,14 +482,17 @@
         </div>
     </div>
     <canvas id="fireworksCanvas"></canvas>
-    <div id="ballAnimOverlay" class="ball-anim-overlay">
-      <div class="ball-anim-machine">
-        <div class="ball-anim-glass" id="baGlass">
-          <div id="baBalls"></div>
-          <div class="ba-hole" id="baHole"><div class="ba-hole-lid" id="baHoleLid"></div></div>
+    
+    <!-- New Spinning Wheel Animation Overlay -->
+    <div id="wheelAnimOverlay" class="wheel-anim-overlay">
+      <div class="wheel-anim-machine">
+        <div class="wheel-pointer"></div>
+        <div class="wheel-container">
+            <div class="wheel" id="baWheel"></div>
+            <div class="wheel-center">W</div>
         </div>
-        <div class="ba-tray" id="baTray"></div>
-        <div id="baStatus" class="ball-anim-status">Ready.</div>
+        <div class="wheel-stand"></div>
+        <div id="baStatus" class="wheel-anim-status">Ready.</div>
       </div>
     </div>
 
@@ -890,7 +879,7 @@
         const gamePhaseLabel = $('gamePhaseLabel'); const totalBetDisplayEl = $('totalBetDisplay');
         const ocrProgressModal = $('ocrProgressModal'); const ocrSpinner = $('ocrSpinner');
         const ocrDoneIcon = $('ocrDoneIcon'); const ocrProgressStatus = $('ocrProgressStatus'); const ocrProgressSub = $('ocrProgressSub');
-        const winningCardWinnersEl = $('winningCardWinners');
+        // Removed winningCardWinnersEl since the element is removed
         const winningCardAmountEl = $('winningCardAmount');
         const winningCardAmountValueEl = $('winningCardAmountValue');
         const broadcastModal = $('broadcastModal');
@@ -1189,15 +1178,8 @@
         }
 
         // ============================================================
-        //  WINNING CARD
+        //  WINNING CARD & WHEEL ANIMATION
         // ============================================================
-        function formatWinnerNames(winners) {
-            const list = Array.isArray(winners) ? winners.filter(Boolean).map(w => String(w).trim()).filter(Boolean) : [];
-            if (!list.length) return '😔 No Winner';
-            if (list.length === 1) return '🏆 ' + list[0];
-            if (list.length <= 3) return '🏆 ' + list.join(' · ');
-            return '🏆 ' + list.slice(0, 3).join(' · ') + `  +${list.length - 3} more`;
-        }
         function clearCardFetchRetry() {
             if (cardFetchRetryTimer) { clearTimeout(cardFetchRetryTimer); cardFetchRetryTimer = null; }
             cardFetchRetryCount = 0;
@@ -1208,17 +1190,11 @@
             return Promise.resolve(data);
         }
         function setCardLoadingState() {
-            if (winningCardWinnersEl) { winningCardWinnersEl.textContent = '⏳ Fetching result…'; winningCardWinnersEl.classList.remove('no-winner'); }
             const numEl = document.getElementById('winningNumberBig');
             if (numEl) numEl.textContent = '--';
             if (winningCardAmountEl) winningCardAmountEl.classList.remove('show');
         }
-        function renderWinningCardBody(number, winners, winAmount) {
-            if (winningCardWinnersEl) {
-                const hasWinner = winners.filter(Boolean).length > 0;
-                winningCardWinnersEl.textContent = formatWinnerNames(winners);
-                winningCardWinnersEl.classList.toggle('no-winner', !hasWinner);
-            }
+        function renderWinningCardBody(number, winAmount) {
             const numEl = document.getElementById('winningNumberBig');
             if (numEl) {
                 numEl.textContent = String(number);
@@ -1235,152 +1211,107 @@
                 } else winningCardAmountEl.classList.remove('show');
             }
         }
-        const BALL_ANIM_LOW_END = (navigator.hardwareConcurrency || 4) <= 4
-            || (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 2)
-            || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-        const ballAnimationPlayedRounds = new Set();
-        let ballAnimationPlaying = false;
 
-        function playBallAnimation(winners, winningNumber, round) {
+        let wheelAnimationPlayedRounds = new Set();
+        let wheelAnimationPlaying = false;
+
+        function playWheelAnimation(winners, winningNumber, round) {
             return new Promise(resolve => {
-                const overlay = document.getElementById('ballAnimOverlay');
-                if (!overlay) { resolve(); return; }
-                const machine = overlay.querySelector('.ball-anim-machine');
-                const glass = document.getElementById('baGlass');
-                const ballBox = document.getElementById('baBalls');
-                const hole = document.getElementById('baHole');
-                const tray = document.getElementById('baTray');
-                const status = document.getElementById('baStatus');
-                if (!machine || !glass || !ballBox || !hole || !tray || !status) { resolve(); return; }
-                const ANIM = { mixMs: BALL_ANIM_LOW_END ? 1400 : 2200, holeOpenMs: BALL_ANIM_LOW_END ? 300 : 420, dropMs: BALL_ANIM_LOW_END ? 440 : 560, gapBeforeWinner: 240, gapBetweenWinners: 200, finalHoldMs: 700 };
-                let resolved = false;
-                const timers = [];
-                const wait = ms => new Promise(r => { const t = setTimeout(r, ms); timers.push(t); });
-                const cleanup = () => { timers.forEach(t => clearTimeout(t)); timers.length = 0; };
-                const finish = () => {
-                    if (resolved) return;
-                    resolved = true; clearTimeout(safetyTimer); cleanup();
-                    overlay.classList.remove('active');
-                    machine.querySelectorAll('.ba-drop').forEach(el => el.remove());
-                    ballBox.classList.remove('shaking');
-                    ballBox.innerHTML = '';
-                    resolve();
-                };
-                const safetyTimer = setTimeout(finish, 15000);
-                const players = engineState.players || {};
-                const allPicks = []; const playerNames = [];
-                Object.keys(players).forEach(uid => {
-                    const p = players[uid];
-                    if (!p || !p.name) return;
-                    if (p.round != null && Number(p.round) !== Number(round)) return;
-                    const picks = getPlayerPicks(p);
-                    if (!picks.length) return;
-                    const displayName = String(p.name || uid);
-                    picks.forEach(n => allPicks.push({ number: Number(n), owner: displayName }));
-                    playerNames.push(displayName);
+                const overlay = document.getElementById('wheelAnimOverlay');
+                const wheelEl = document.getElementById('baWheel');
+                const statusEl = document.getElementById('baStatus');
+                if (!overlay || !wheelEl || !statusEl) { resolve(); return; }
+
+                // 1. Gather all unique picked numbers from players
+                const allPicks = new Set();
+                Object.values(engineState.players).forEach(p => {
+                    if (p && p.picks) p.picks.forEach(n => allPicks.add(n));
                 });
-                if (!allPicks.length && engineState.allTakenNumbers && engineState.allTakenNumbers.size) {
-                    engineState.allTakenNumbers.forEach(n => allPicks.push({ number: Number(n), owner: null }));
+                const uniqueNumbers = Array.from(allPicks);
+                
+                // Ensure the winning number is included
+                if (!uniqueNumbers.includes(winningNumber)) {
+                    uniqueNumbers.push(winningNumber);
                 }
-                if (!allPicks.length && !playerNames.length) { finish(); return; }
-                machine.querySelectorAll('.ba-drop').forEach(el => el.remove());
-                ballBox.innerHTML = ''; hole.classList.remove('open');
-                overlay.classList.add('active');
-                void overlay.offsetWidth;
-                const glassW = glass.clientWidth || 360;
-                const glassH = glass.clientHeight || 460;
-                const pool = [];
-                allPicks.forEach(p => pool.push({ kind: 'number', text: String(p.number), num: p.number, owner: p.owner }));
-                playerNames.forEach(n => pool.push({ kind: 'name', text: n, num: null, owner: n }));
-                let ballSize = Math.sqrt((glassW * glassH * 0.70) / Math.max(1, pool.length));
-                ballSize = Math.max(16, Math.min(56, ballSize));
-                const spacingX = ballSize * 0.86, spacingY = ballSize * 0.84;
-                const cols = Math.max(3, Math.floor((glassW - 8) / spacingX));
-                const floorY = glassH - 6;
-                const rowWidth = cols * spacingX;
-                const rowStartX = (glassW - rowWidth) / 2 + spacingX / 2;
-                const balls = [];
-                pool.forEach((item, i) => {
-                    const col = i % cols, row = Math.floor(i / cols);
-                    let x = rowStartX + col * spacingX + (Math.random() - 0.5) * spacingX * 0.30;
-                    let y = floorY - ballSize - row * spacingY + (Math.random() - 0.5) * spacingY * 0.18;
-                    x = Math.max(2, Math.min(glassW - ballSize - 2, x));
-                    y = Math.max(26, Math.min(glassH - ballSize - 2, y));
-                    const el = document.createElement('div');
-                    el.className = 'ba-ball ' + (item.kind === 'number' ? 'ba-white' : 'ba-yellow') + ' ba-bounce';
-                    el.textContent = item.text;
-                    el.style.width = ballSize + 'px'; el.style.height = ballSize + 'px';
-                    const fs = item.kind === 'number' ? ballSize * 0.38 : Math.max(6, Math.min(ballSize * 0.30, (ballSize * 1.9) / Math.max(4, item.text.length)));
-                    el.style.fontSize = fs + 'px';
-                    el.style.left = x.toFixed(1) + 'px'; el.style.top = y.toFixed(1) + 'px';
-                    el.style.zIndex = String(1 + Math.floor(Math.random() * 4));
-                    el.style.setProperty('--delay', (Math.random() * 1.5).toFixed(2) + 's');
-                    el.style.setProperty('--dur', (0.85 + Math.random() * 0.75).toFixed(2) + 's');
-                    el.style.setProperty('--dx', ((Math.random() - 0.5) * 10).toFixed(1) + 'px');
-                    el.style.setProperty('--jump', (-(10 + Math.random() * 20)).toFixed(0) + 'px');
-                    ballBox.appendChild(el);
-                    balls.push({ el, kind: item.kind, num: item.num, owner: item.owner, text: item.text });
-                });
-                const machineRect = machine.getBoundingClientRect();
-                const trayRect = tray.getBoundingClientRect();
-                const holeRect = hole.getBoundingClientRect();
-                const holeX = holeRect.left - machineRect.left + holeRect.width / 2;
-                const holeY = holeRect.top - machineRect.top + holeRect.height / 2;
-                const winnerList = Array.isArray(winners) ? winners.filter(Boolean) : [];
-                const trayCount = 1 + winnerList.length;
-                const trayGap = 12;
-                const trayBallSize = Math.min(ballSize, Math.max(24, (trayRect.width - 24 - (trayCount - 1) * trayGap) / trayCount));
-                const trayTotalW = trayCount * trayBallSize + (trayCount - 1) * trayGap;
-                const trayStartX = (trayRect.left - machineRect.left) + (trayRect.width - trayTotalW) / 2 + trayBallSize / 2;
-                const trayCenterY = trayRect.top - machineRect.top + trayRect.height / 2;
-                const traySlotX = i => trayStartX + i * (trayBallSize + trayGap);
-                async function dropOneOut(ball, slotIndex) {
-                    if (ball.el && ball.el.parentNode) ball.el.parentNode.removeChild(ball.el);
-                    const el = document.createElement('div');
-                    el.className = 'ba-ball ba-drop ' + (ball.kind === 'number' ? 'ba-white' : 'ba-yellow');
-                    el.textContent = ball.text;
-                    el.style.width = trayBallSize + 'px'; el.style.height = trayBallSize + 'px';
-                    el.style.fontSize = (ball.kind === 'number' ? trayBallSize * 0.38 : Math.max(7, Math.min(trayBallSize * 0.30, (trayBallSize * 1.9) / Math.max(4, ball.text.length)))) + 'px';
-                    el.style.left = '0px'; el.style.top = '0px';
-                    el.style.transform = `translate3d(${(holeX - trayBallSize/2).toFixed(1)}px, ${(holeY - trayBallSize/2).toFixed(1)}px, 0) rotate(0deg)`;
-                    machine.appendChild(el);
-                    void el.offsetWidth;
-                    el.style.transition = `transform ${(ANIM.dropMs / 1000).toFixed(2)}s cubic-bezier(.42,.03,.84,.46)`;
-                    el.style.transform = `translate3d(${(traySlotX(slotIndex) - trayBallSize/2).toFixed(1)}px, ${(trayCenterY - trayBallSize/2).toFixed(1)}px, 0) rotate(${(180 + Math.random() * 180).toFixed(0)}deg)`;
-                    await wait(ANIM.dropMs + 60);
-                    el.style.transition = '';
-                    return el;
+
+                // 2. Determine segment count and layout
+                const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
+                const anglePerSegment = 360 / segmentCount;
+                
+                // Fill the wheel array with numbers, repeating if necessary
+                const numbersForWheel = [];
+                for (let i = 0; i < segmentCount; i++) {
+                    numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
                 }
-                (async () => {
-                    status.textContent = '🎲 Mixing the balls…';
-                    ballBox.classList.add('shaking');
-                    await wait(ANIM.mixMs); if (resolved) return;
-                    ballBox.classList.remove('shaking');
-                    hole.classList.add('open');
-                    status.textContent = '🎯 Opening the chute…';
-                    await wait(ANIM.holeOpenMs); if (resolved) return;
-                    const numberBall = balls.find(b => b.kind === 'number' && Number(b.num) === Number(winningNumber)) || balls.find(b => b.kind === 'number');
-                    if (numberBall) {
-                        status.textContent = '🔢 Number ' + numberBall.text + ' is coming out…';
-                        const numEl = await dropOneOut(numberBall, 0);
-                        numEl.classList.add('ba-winner-glow');
+
+                // Find the index of the winning number in the wheel
+                let winningIndex = numbersForWheel.indexOf(winningNumber);
+                if (winningIndex === -1) winningIndex = 0; // fallback
+
+                // 3. Generate SVG for the wheel
+                const size = 300;
+                const center = size / 2;
+                const radius = center;
+                let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
+                
+                for (let i = 0; i < segmentCount; i++) {
+                    const startAngle = i * anglePerSegment;
+                    const endAngle = (i + 1) * anglePerSegment;
+                    const midAngle = startAngle + anglePerSegment / 2;
+
+                    // Convert angles to radians for coordinates
+                    const startRad = (startAngle - 90) * Math.PI / 180;
+                    const endRad = (endAngle - 90) * Math.PI / 180;
+                    const midRad = (midAngle - 90) * Math.PI / 180;
+
+                    const x1 = center + radius * Math.cos(startRad);
+                    const y1 = center + radius * Math.sin(startRad);
+                    const x2 = center + radius * Math.cos(endRad);
+                    const y2 = center + radius * Math.sin(endRad);
+                    const textX = center + (radius * 0.65) * Math.cos(midRad);
+                    const textY = center + (radius * 0.65) * Math.sin(midRad);
+
+                    // Alternate red and white colors
+                    const color = i % 2 === 0 ? '#e62020' : '#ffffff';
+                    const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
+
+                    svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
+                    
+                    const numText = numbersForWheel[i];
+                    if (numText !== '') {
+                        const fontSize = Math.max(10, Math.min(18, 300 / segmentCount));
+                        svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${fontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${midAngle}, ${textX}, ${textY})">${numText}</text>`;
                     }
-                    await wait(ANIM.gapBeforeWinner); if (resolved) return;
-                    if (winnerList.length) {
-                        for (let i = 0; i < winnerList.length; i++) {
-                            const name = winnerList[i];
-                            const nameBall = balls.find(b => b.kind === 'name' && b.owner === name);
-                            if (!nameBall) continue;
-                            status.textContent = '🏆 ' + name + ' wins!';
-                            const el = await dropOneOut(nameBall, i + 1);
-                            el.classList.add('ba-winner-glow');
-                            await wait(ANIM.gapBetweenWinners); if (resolved) return;
-                        }
-                        status.textContent = '🏆 ' + winnerList.join(' · ');
-                    } else status.textContent = '😔 No winner this round.';
-                    await wait(ANIM.finalHoldMs);
-                    finish();
-                })().catch(() => finish());
+                }
+                svg += `</svg>`;
+                wheelEl.innerHTML = svg;
+
+                // 4. Reset rotation and trigger reflow to restart CSS animation
+                wheelEl.style.transition = 'none';
+                wheelEl.style.transform = 'rotate(0deg)';
+                void wheelEl.offsetWidth; // Force reflow
+
+                // 5. Calculate target rotation
+                const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
+                const spins = 5;
+                const targetRotation = (spins * 360) - targetSegmentCenter;
+
+                // 6. Apply rotation
+                statusEl.textContent = 'Spinning the wheel...';
+                overlay.classList.add('active');
+                
+                // Set transition and rotate
+                wheelEl.style.transition = 'transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99)';
+                wheelEl.style.transform = `rotate(${targetRotation}deg)`;
+
+                // 7. Wait for animation to finish
+                setTimeout(() => {
+                    statusEl.textContent = '🎯 Winning number: ' + winningNumber;
+                    setTimeout(() => {
+                        overlay.classList.remove('active');
+                        resolve();
+                    }, 1500);
+                }, 5000);
             });
         }
 
@@ -1388,42 +1319,64 @@
             const r = Number(round), n = Number(number);
             if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 200) return;
             if (!Array.isArray(winners)) return;
-            if (ballAnimationPlaying) {
-                const started = window._ballAnimStartedAt || 0;
+            
+            // Handle animation overlap
+            if (wheelAnimationPlaying) {
+                const started = window._wheelAnimStartedAt || 0;
                 if (!started || (Date.now() - started) > 12000) {
-                    ballAnimationPlaying = false; window._ballAnimStartedAt = null;
-                    const ov = document.getElementById('ballAnimOverlay');
+                    wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+                    const ov = document.getElementById('wheelAnimOverlay');
                     if (ov) ov.classList.remove('active');
                 }
             }
+            
             const animKey = currentRoom + '_' + r;
-            if (ballAnimationPlayedRounds.has(animKey) || ballAnimationPlaying) {
-                renderWinningCardBody(n, winners, winAmount);
+            if (wheelAnimationPlayedRounds.has(animKey) || wheelAnimationPlaying) {
+                // If already played or currently playing, just show the card directly
+                renderWinningCardBody(n, winAmount);
                 if (winnersModal) winnersModal.classList.add('active');
                 if (!isResultsCountdownRunning) startResultsCountdown();
                 return;
             }
-            renderWinningCardBody(n, winners, winAmount);
-            ballAnimationPlayedRounds.add(animKey);
-            ballAnimationPlaying = true;
-            window._ballAnimStartedAt = Date.now();
+            
+            // Start animation
+            renderWinningCardBody(n, winAmount);
+            wheelAnimationPlayedRounds.add(animKey);
+            wheelAnimationPlaying = true;
+            window._wheelAnimStartedAt = Date.now();
             if (timerDisplay) timerDisplay.textContent = String(DEFAULT_RESULTS_SECONDS);
-            playBallAnimation(winners, n, r).then(() => {
-                ballAnimationPlaying = false; window._ballAnimStartedAt = null;
+            
+            playWheelAnimation(winners, n, r).then(() => {
+                wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
                 if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== r) return;
-                renderWinningCardBody(n, winners, winAmount);
+                
+                // Show the final winning card
+                renderWinningCardBody(n, winAmount);
                 if (winnersModal) winnersModal.classList.add('active');
                 if (winners.filter(Boolean).length) startFireworks();
                 if (!isResultsCountdownRunning) startResultsCountdown();
-            }).catch(() => { ballAnimationPlaying = false; window._ballAnimStartedAt = null; });
+            }).catch(() => { 
+                wheelAnimationPlaying = false; window._wheelAnimStartedAt = null; 
+            });
         }
+        
         function resetWinningNumberCard() {
             displayedCardRound = null; clearCardFetchRetry();
             const numEl = document.getElementById('winningNumberBig');
             if (numEl) numEl.textContent = '--';
-            if (winningCardWinnersEl) { winningCardWinnersEl.textContent = 'Waiting for result…'; winningCardWinnersEl.classList.remove('no-winner'); }
             if (winningCardAmountEl) winningCardAmountEl.classList.remove('show');
+            
+            // Reset wheel animation state
+            wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+            const ov = document.getElementById('wheelAnimOverlay');
+            if (ov) ov.classList.remove('active');
+            const wheelEl = document.getElementById('baWheel');
+            if (wheelEl) {
+                wheelEl.style.transition = 'none';
+                wheelEl.style.transform = 'rotate(0deg)';
+            }
         }
+        
         function tryFetchAndShowCard(round) {
             if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== Number(round)) { clearCardFetchRetry(); return; }
             fetchLastResultFromServer(round).then(data => {
@@ -1441,15 +1394,16 @@
                 clearCardFetchRetry();
             });
         }
+        
         function applyCardState() {
             const phase = engineState.gamePhase;
             const round = Number(engineState.roundNumber);
             if (phase !== 'results') {
                 if (winnersModal) winnersModal.classList.remove('active');
                 displayedCardRound = null; clearCardFetchRetry();
-                if (ballAnimationPlaying) {
-                    ballAnimationPlaying = false; window._ballAnimStartedAt = null;
-                    const ov = document.getElementById('ballAnimOverlay');
+                if (wheelAnimationPlaying) {
+                    wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+                    const ov = document.getElementById('wheelAnimOverlay');
                     if (ov) ov.classList.remove('active');
                 }
                 return;
@@ -1469,6 +1423,7 @@
             }
             setCardLoadingState();
         }
+        
         function handleAuthoritativeResult(r) {
             if (!r || r.round == null || r.winningNumber == null) return;
             const incoming = Number(r.round);
@@ -1478,6 +1433,7 @@
             lastResultData = r;
             if (incoming === current) applyCardState();
         }
+        
         function attachLastResultListener() {}
         function detachLastResultListener() {}
 
@@ -1540,7 +1496,13 @@
             let status = data.status;
             let isTxResult = data.type === 'transaction_result' || status === 'approved' || status === 'rejected';
             if (isTxResult) enqueueTransactionPopup(Object.assign({}, data, { status: status || 'approved' }), key || data.txId || ('tx_' + Date.now()));
-            else if (data.message) showToast(data.message, 'info');
+            else if (data.message) {
+                // Filter out the winner announcement toast as requested
+                if (data.type === 'notification' && String(data.message).includes('You won')) {
+                    return; // Do nothing, skip showing the toast
+                }
+                showToast(data.message, 'info');
+            }
         }
         function enqueueBroadcastPopup(data, key) {
             broadcastPopupQueue.push({ data, key });
@@ -1936,7 +1898,7 @@
                 playerNames: [], prizePool: 0, winnersModalShown: false
             };
             lastRoomSnapshotRaw = null; displayedCardRound = null; lastResultData = null;
-            ballAnimationPlayedRounds.clear(); ballAnimationPlaying = false; window._ballAnimStartedAt = null;
+            wheelAnimationPlayedRounds.clear(); wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
             gamePausedBySticky = false; activeStickyBroadcast = null;
             closeMoreDropdown(); hideWaitingModal();
             if (welcomeToast) welcomeToast.classList.remove('active');
@@ -1967,7 +1929,7 @@
             clearCardFetchRetry();
             if (winnersModal) winnersModal.classList.remove('active');
             resetWinningNumberCard();
-            ballAnimationPlayedRounds.clear(); ballAnimationPlaying = false; window._ballAnimStartedAt = null;
+            wheelAnimationPlayedRounds.clear(); wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
         }
         function selectBet(amount) {
             if (!currentUser) return;
