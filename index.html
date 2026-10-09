@@ -565,38 +565,47 @@
             generatedEffectNodes.clear();
         }
         function initAudio() { if (!audioInitialized) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); audioInitialized = true; } catch (e) {} } return audioCtx; }
+        // Mobile browsers may block HTMLAudioElement playback until a user gesture.
+        // Unlock both embedded spoken announcements during the first real interaction.
+        function unlockEmbeddedSpeechAudio() {
+            const ctx = initAudio();
+            if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+            ['getReadyToWinAudio', 'winnerAnnouncementAudio'].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el || el.dataset.winzoAudioUnlocked === '1' || el.dataset.winzoUnlocking === '1') return;
+                el.dataset.winzoUnlocking = '1';
+                const wasMuted = el.muted;
+                el.muted = true;
+                try {
+                    const p = el.play();
+                    if (p && typeof p.then === 'function') {
+                        p.then(() => {
+                            try { el.pause(); el.currentTime = 0; } catch (_) {}
+                            el.muted = wasMuted;
+                            el.dataset.winzoAudioUnlocked = '1';
+                            delete el.dataset.winzoUnlocking;
+                        }).catch(() => {
+                            el.muted = wasMuted;
+                            delete el.dataset.winzoUnlocking;
+                        });
+                    } else {
+                        try { el.pause(); el.currentTime = 0; } catch (_) {}
+                        el.muted = wasMuted;
+                        el.dataset.winzoAudioUnlocked = '1';
+                        delete el.dataset.winzoUnlocking;
+                    }
+                } catch (_) {
+                    el.muted = wasMuted;
+                    delete el.dataset.winzoUnlocking;
+                }
+            });
+        }
         ['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => {
-            document.addEventListener(ev, function resumeOnce() {
-                const ctx = initAudio();
-                if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
-                document.removeEventListener(ev, resumeOnce);
-            }, { once: false, passive: true });
+            document.addEventListener(ev, unlockEmbeddedSpeechAudio, { passive: true, capture: true });
         });
-        function playTone(freq, duration, type = 'sine', volume = 0.30, delay = 0) {
-            const ctx = initAudio(); if (!ctx) return;
-            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-            try {
-                const osc = ctx.createOscillator(); const gain = ctx.createGain();
-                osc.type = type;
-                osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
-                gain.gain.setValueAtTime(0, ctx.currentTime + delay);
-                gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + delay + 0.02);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + duration);
-                osc.connect(gain); gain.connect(ctx.destination);
-                generatedEffectNodes.add(osc); generatedEffectNodes.add(gain);
-                osc.onended = () => { generatedEffectNodes.delete(osc); generatedEffectNodes.delete(gain); try { osc.disconnect(); gain.disconnect(); } catch (e) {} };
-                osc.start(ctx.currentTime + delay); osc.stop(ctx.currentTime + delay + duration);
-            } catch (e) {}
-        }
-        function playWinningAudio() {
-            [523.25, 659.25, 783.99, 1046.50].forEach((f,i) => playTone(f, [0.20,0.20,0.25,0.35][i], 'sine', 0.28, i*0.16));
-            playTone(1318.51, 0.20, 'sine', 0.10, 0.55);
-            playTone(1567.98, 0.15, 'sine', 0.07, 0.70);
-        }
-        function playNoWinnerAudio() {
-            [783.99, 659.25, 523.25].forEach((f,i) => playTone(f, [0.22,0.22,0.28][i], 'sine', 0.22, i*0.20));
-            playTone(392.00, 0.25, 'sine', 0.08, 0.50);
-        }
+        function playTone(freq, duration, type = 'sine', volume = 0.30, delay = 0) { /* Disabled: spoken announcements only. */ }
+        function playWinningAudio() { /* Disabled: only the two spoken announcements are used. */ }
+        function playNoWinnerAudio() { /* Disabled: only the two spoken announcements are used. */ }
 
 
         // --- Realistic wheel-spinning sound, synchronized to the wheel's 5-second motion ---
@@ -669,11 +678,13 @@
         // Winner announcement starts only when the final winner card becomes visible.
         // The audio is embedded from the user's base64.txt and plays once per room/round.
         const winnerAudioPlayedRounds = new Set();
+        const winnerAudioStartingRounds = new Set();
+        const winnerAudioRetryRounds = new Set();
         let winnerAudioPlayPromise = Promise.resolve();
         function playEmbeddedWinnerAnnouncement(round) {
             const key = currentRoom + '_' + Number(round);
-            if (winnerAudioPlayedRounds.has(key)) return;
-            winnerAudioPlayedRounds.add(key);
+            if (winnerAudioPlayedRounds.has(key) || winnerAudioStartingRounds.has(key)) return;
+            winnerAudioStartingRounds.add(key);
             const audio = document.getElementById('winnerAnnouncementAudio');
             // Give the spoken winner announcement exclusive audio priority.
             // Stop any lingering ready announcement, wheel noise, or scheduled Web Audio tones first.
@@ -681,23 +692,43 @@
             stopGeneratedEffects();
             const readyAudio = document.getElementById('getReadyToWinAudio');
             if (readyAudio) { readyAudio.onended = null; try { readyAudio.pause(); readyAudio.currentTime = 0; } catch (e) {} }
-            if (!audio) { playWinningAudio(); return; }
+            if (!audio) { winnerAudioStartingRounds.delete(key); playWinningAudio(); return; }
             try {
                 audio.onended = null;
                 audio.pause();
                 audio.currentTime = 0;
                 audio.volume = 1;
+                audio.muted = false;
                 // The chime is intentionally sequenced after the spoken announcement, never over it.
-                audio.onended = () => { audio.onended = null; playWinningAudio(); };
-                winnerAudioPlayPromise = audio.play().catch(err => {
+                audio.onended = () => {
                     audio.onended = null;
-                    console.warn('[WINZO AUDIO] Winner audio playback was blocked by browser policy:', err);
+                    winnerAudioPlayedRounds.add(key);
+                    winnerAudioStartingRounds.delete(key);
                     playWinningAudio();
+                };
+                winnerAudioPlayPromise = audio.play().then(() => {
+                    // Playback has started; onended marks the round complete.
+                }).catch(err => {
+                    audio.onended = null;
+                    winnerAudioStartingRounds.delete(key);
+                    console.warn('[WINZO AUDIO] Winner audio playback was blocked by browser policy:', err);
+                    if (!winnerAudioRetryRounds.has(key)) {
+                        winnerAudioRetryRounds.add(key);
+                        setTimeout(() => playEmbeddedWinnerAnnouncement(round), 350);
+                    } else {
+                        playWinningAudio();
+                    }
                 });
             } catch (err) {
                 audio.onended = null;
+                winnerAudioStartingRounds.delete(key);
                 console.warn('[WINZO AUDIO] Winner audio playback failed:', err);
-                playWinningAudio();
+                if (!winnerAudioRetryRounds.has(key)) {
+                    winnerAudioRetryRounds.add(key);
+                    setTimeout(() => playEmbeddedWinnerAnnouncement(round), 350);
+                } else {
+                    playWinningAudio();
+                }
             }
         }
 
@@ -711,7 +742,8 @@
             stopGeneratedEffects();
             const readyAudio = document.getElementById('getReadyToWinAudio');
             const winnerAudio = document.getElementById('winnerAnnouncementAudio');
-            [readyAudio, winnerAudio].forEach(a => { if (a) { a.onended = null; try { a.pause(); a.currentTime = 0; } catch (e) {} } });
+            [readyAudio, winnerAudio].forEach(a => { if (a) { a.onended = null; try { a.pause(); a.currentTime = 0; a.muted = false; } catch (e) {} } });
+            winnerAudioStartingRounds.delete(key);
             playNoWinnerAudio();
         }
 
@@ -1453,9 +1485,12 @@
                     try {
                         readyAudio.pause();
                         readyAudio.currentTime = 0;
+                        readyAudio.muted = false;
+                        readyAudio.volume = 1;
                         readyAudio.onended = beginSpin;
-                        // Safety fallback if a mobile browser misses the ended event.
-                        setTimeout(beginSpin, 3000);
+                        readyAudio.onerror = () => { console.warn('[WINZO AUDIO] Ready announcement audio could not be decoded.'); beginSpin(); };
+                        // Safety fallback only after enough time for the full announcement.
+                        setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
                         const readyPlayback = readyAudio.play();
                         if (readyPlayback && typeof readyPlayback.catch === 'function') {
                             readyPlayback.catch(err => {
