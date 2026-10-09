@@ -232,7 +232,7 @@
         .wheel-anim-machine { position: relative; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
         .wheel-container { position: relative; width: 320px; height: 320px; border-radius: 50%; border: 12px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
         .wheel { width: 100%; height: 100%; transform-origin: center center; will-change: transform; }
-        .wheel.spinning { transition: transform 5s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
+        .wheel.spinning { transition: transform 8s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
         .wheel-pointer { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 30px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
         .wheel-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; background: #6a3a9a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem; font-weight: 900; border: 4px solid #f0e6ff; box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5; }
         .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
@@ -608,11 +608,11 @@
         function playNoWinnerAudio() { /* Disabled: only the two spoken announcements are used. */ }
 
 
-        // --- Realistic wheel-spinning sound, synchronized to the wheel's 5-second motion ---
+        // --- Realistic wheel-spinning sound, synchronized to the wheel's 8-second motion ---
         let wheelSoundNodes = [];
         let wheelSoundStopTimer = null;
         let wheelSoundGeneration = 0;
-        function startWheelSpinSound(durationMs = 5000) {
+        function startWheelSpinSound(durationMs = 8000) {
             stopWheelSpinSound();
             const generation = ++wheelSoundGeneration;
             const ctx = initAudio();
@@ -1467,11 +1467,11 @@
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
                             wheelEl.classList.add('spinning');
-                            startWheelSpinSound(5000);
+                            startWheelSpinSound(8000);
                             wheelEl.style.transform = `rotate(${targetRotation}deg)`;
                         });
                     });
-                    // Start the five-second completion timer only after the wheel starts.
+                    // Start the eight-second completion timer only after the wheel starts.
                     setTimeout(() => {
                         stopWheelSpinSound();
                         statusEl.textContent = '🎯 Winning number: ' + winningNumber;
@@ -1479,7 +1479,7 @@
                             overlay.classList.remove('active');
                             resolve();
                         }, 1500);
-                    }, 5000);
+                    }, 8000);
                 };
                 if (readyAudio) {
                     try {
