@@ -38,7 +38,7 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWE
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 
 const SELECTION_SECONDS = 20;
-const SPINNING_SECONDS = 5;
+const SPINNING_SECONDS = 8;
 const RESULTS_SECONDS = 15;
 const MAX_PICKS = 3;
 const PAYOUT_RATE = 0.80;
