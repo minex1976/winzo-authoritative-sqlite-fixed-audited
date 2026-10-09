@@ -612,7 +612,7 @@
         let wheelSoundNodes = [];
         let wheelSoundStopTimer = null;
         let wheelSoundGeneration = 0;
-        function startWheelSpinSound(durationMs = 8000) {
+        function startWheelSpinSound(durationMs = 10000) {
             stopWheelSpinSound();
             const generation = ++wheelSoundGeneration;
             const ctx = initAudio();
