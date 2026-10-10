@@ -30,36 +30,12 @@ const db = admin.database();
 const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
-const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '';
-const SMS_DATABASE_PATH = String(process.env.SMS_DATABASE_PATH || 'incoming_sms').replace(/^\/+|\/+$/g, '') || 'incoming_sms';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || 'https://minex1976.github.io,https://web.telegram.org')
   .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
-
-// --- SMS verification settings ---
-// SMS_ALLOW_ANY_SENDER=true disables the sender allowlist (useful during testing).
-const SMS_ALLOW_ANY_SENDER = String(process.env.SMS_ALLOW_ANY_SENDER || '').trim().toLowerCase() === 'true';
-// Comma-separated list of allowed senders. Normalized on load.
-const ALLOWED_SMS_SENDERS = new Set(
-  String(process.env.SMS_ALLOWED_SENDERS || '127,+251127,251127')
-    .split(',')
-    .map(v => String(v).trim().replace(/[\s()-]/g, ''))
-    .filter(Boolean)
-);
-// Comma-separated list of allowed deposit recipients (name on the Telebirr SMS).
-const ALLOWED_DEPOSIT_RECIPIENTS = String(
-  process.env.SMS_ALLOWED_RECIPIENTS || 'Minyihun,Minyihun Mamo,Minyihun Mamo Gizaw'
-).split(',').map(v => v.trim()).filter(Boolean);
-
-if (SMS_ALLOW_ANY_SENDER) {
-  console.warn('[SMS-CONFIG] SMS_ALLOW_ANY_SENDER=true — sender allowlist is DISABLED (testing mode).');
-} else {
-  console.log(`[SMS-CONFIG] Allowed SMS senders: ${[...ALLOWED_SMS_SENDERS].join(', ')}`);
-}
-console.log(`[SMS-CONFIG] Allowed deposit recipients: ${ALLOWED_DEPOSIT_RECIPIENTS.join(' | ')}`);
 
 const SELECTION_SECONDS = 20;
 const SPINNING_SECONDS = 5;
@@ -213,7 +189,7 @@ async function resolveTelegramUser(user, referredBy = null) {
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
     || telegramUsername
     || `tg_${telegramId}`;
-
+    
   const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
 
@@ -281,7 +257,7 @@ async function resolveTelegramUser(user, referredBy = null) {
     telegram_username: telegramUsername || null
   });
   if (!created) return null;
-
+  
   await mapRef.set({
     uid: canonicalUid,
     username: created.username || canonicalUid,
@@ -346,16 +322,7 @@ async function notifyTransaction(username, tx) {
   });
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({
-    type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '', verificationStatus: tx.verification_status || '', verificationReason: tx.verification_reason || ''
-  }));
-}
-
-async function notifyVerificationReview(tx, reason) {
-  const uid = String(tx.wallet_uid || tx.uid || tx.username || '');
-  const set = conns.get(uid);
-  if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({
-    type: 'transaction-status', id: tx.id, status: 'pending', txType: 'deposit',
-    reason: String(reason || 'manual-review'), verificationStatus: 'manual_review', verificationReason: String(reason || 'manual-review')
+    type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || ''
   }));
 }
 
@@ -421,8 +388,6 @@ async function transactionRequest(uid, data) {
       status: 'pending',
       timestamp: now(),
       reference,
-      verification_status: type === 'deposit' ? 'waiting_for_sms' : null,
-      verification_reason: '',
       full_name: fullName,
       phone_number: phone,
       image_data: imageData,
@@ -442,11 +407,6 @@ async function transactionRequest(uid, data) {
     }
 
     await sendWallet(uid);
-
-    // Auto-verify immediately. If a matching SMS is already in Firebase, this
-    // approves within ~200ms. If not, the tx stays pending and the SMS
-    // listener (or webhook) will pick it up the moment the SMS arrives.
-    if (type === 'deposit') scheduleVerifyPendingDeposits(200);
     return { ok: true, id, clientRequestId, duplicate: false };
   } catch (e) {
     if (reservationApplied) {
@@ -485,9 +445,7 @@ async function adminListTransactions() {
       displayName: d.display_name || d.full_name || d.username,
       type: d.type, amount: d.amount, status: d.status, timestamp: d.timestamp, reference: d.reference,
       fullName: d.full_name, phoneNumber: d.phone_number, imageData: d.image_data, reason: d.reason,
-      walletApplied: Number(d.wallet_applied || 0),
-      verificationStatus: d.verification_status || null,
-      verificationReason: d.verification_reason || null
+      walletApplied: Number(d.wallet_applied || 0)
     });
   });
   return txs.sort((a, b) => b.timestamp - a.timestamp);
@@ -521,305 +479,22 @@ async function findUserRefForWallet(identity = {}) {
   return null;
 }
 
-function normalizeText(value) {
-  return String(value || '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
-}
-function normalizeSmsSender(value) {
-  return String(value || '').trim().replace(/[\s()-]/g, '');
-}
-
 /**
- * Returns true if the SMS contains a recognisable reference keyword.
- * Accepted keywords:
- *   - "REFERENCE"          (e.g. "REFERENCE NO: ABC1234567", "Reference: ABC1234567")
- *   - "transaction number is" (e.g. "Your transaction number is ABC1234567")
+ * Admin decision — ROBUST version.
+ *
+ * Strategy:
+ *  1. Read the tx.
+ *  2. If already finalized → return 'already-decided'.
+ *  3. Deposit rejection = only update tx status (no wallet change).
+ *  4. For everything else:
+ *     a. Resolve the correct wallet UID.
+ *     b. Read fresh balance snapshot.
+ *     c. If ledger already has this tx ID → treat as success (idempotent).
+ *     d. Pre-check balance preconditions and return SPECIFIC error reasons.
+ *     e. Apply the change via an atomic transaction.
+ *     f. Verify the ledger exists after write; if not, return a precise reason.
+ *     g. Update the tx record to the final status.
  */
-function hasReferenceKeyword(text) {
-  const s = String(text || '');
-  if (/\bREFERENCE\b/i.test(s)) return true;
-  if (/\btransaction\s*number\s*(?:is)?\b/i.test(s)) return true;
-  return false;
-}
-
-/**
- * Extracts a reference code from the SMS text, supporting both:
- *   - "REFERENCE NO: ABC1234567"
- *   - "Your transaction number is ABC1234567"
- */
-function extractReferenceFromSms(text) {
-  const s = String(text || '');
-  let m = s.match(/\bREFERENCE\b\s*(?:NO\.?|NUMBER|CODE|ID)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
-  if (m) return m[1].toUpperCase();
-  m = s.match(/\btransaction\s*number\s*(?:is)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
-  if (m) return m[1].toUpperCase();
-  return null;
-}
-
-function parseTelebirrSms(body) {
-  const text = String(body || '').trim();
-  if (!hasReferenceKeyword(text)) return { ok: false, reason: 'missing-reference-keyword' };
-  const ref = extractReferenceFromSms(text);
-  if (!ref) return { ok: false, reason: 'reference-not-found' };
-  const amountPatterns = [
-    /(?:amount|received|credited|transferred|paid|payment|deposit)\s*(?:of|is|was|:|=)?\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /(?:ETB|Birr|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /([\d,]+(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር)/i
-  ];
-  let amount = null;
-  for (const pattern of amountPatterns) {
-    const m = text.match(pattern);
-    if (m) { const n = Number(m[1].replace(/,/g, '')); if (Number.isFinite(n) && n > 0) { amount = n; break; } }
-  }
-  const normalized = normalizeText(text);
-  const recipient = [...ALLOWED_DEPOSIT_RECIPIENTS].sort((a, b) => b.length - a.length).find(name => {
-    const n = normalizeText(name);
-    return (` ${normalized} `).includes(` ${n} `);
-  }) || null;
-  if (!amount) return { ok: false, reason: 'amount-not-found', reference: ref, recipient };
-  if (!recipient) return { ok: false, reason: 'recipient-not-allowed', amount, reference: ref };
-  return { ok: true, amount, reference: ref, recipient };
-}
-
-function extractForwardedSms(payload) {
-  const data = payload && typeof payload === 'object' ? payload : {};
-  const nested = data.sms && typeof data.sms === 'object' ? data.sms : (data.message && typeof data.message === 'object' ? data.message : {});
-  const body = [data.message, data.body, data.text, data.smsText, data.messageBody, data.content, nested.body, nested.text, nested.message, nested.content]
-    .find(v => typeof v === 'string' && v.trim()) || '';
-  const sender = [data.sender, data.address, data.from, data.origin, data.originatingAddress, data.phoneNumber, data.phone, data.senderNumber, nested.sender, nested.address, nested.from, nested.originatingAddress]
-    .find(v => typeof v === 'string' && v.trim()) || '';
-  return { body: String(body).trim(), sender: normalizeSmsSender(sender), receivedAt: Number(data.timestamp || data.date || data.receivedAt || now()) || now() };
-}
-
-function referenceHash(reference) {
-  return crypto.createHash('sha256').update(String(reference || '').trim().toUpperCase()).digest('hex');
-}
-
-async function claimDepositReference(tx) {
-  const reference = String(tx.reference || '').trim().toUpperCase();
-  if (!reference) return { ok: false, reason: 'missing-reference' };
-  const ref = db.ref('deposit_reference_claims/' + referenceHash(reference));
-  let duplicateId = null;
-  const result = await ref.transaction(current => {
-    if (current && current.tx_id && current.tx_id !== tx.id) { duplicateId = current.tx_id; return; }
-    return { tx_id: tx.id, reference, claimed_at: current?.claimed_at || now(), updated_at: now() };
-  });
-  if (!result?.committed) {
-    const fresh = await ref.once('value');
-    const owner = fresh.val()?.tx_id || duplicateId;
-    if (owner && owner !== tx.id) return { ok: false, reason: 'duplicate-reference' };
-    return { ok: false, reason: 'reference-claim-failed' };
-  }
-  return { ok: true };
-}
-
-/**
- * Scan all pending deposits and try to auto-approve them by matching
- * a stored SMS record. Called:
- *   - On deposit request creation (to pick up a pre-existing SMS)
- *   - On SMS listener child_added (to pick up a pre-existing deposit)
- *   - On webhook delivery
- */
-async function verifyPendingDeposits() {
-  const [txSnap, smsSnap] = await Promise.all([
-    db.ref('transactions').once('value'),
-    db.ref(SMS_DATABASE_PATH).once('value')
-  ]);
-
-  const transactions = [];
-  txSnap.forEach(child => {
-    const tx = child.val() || {};
-    if (tx.type === 'deposit' && tx.status === 'pending') transactions.push({ ...tx, id: child.key });
-  });
-  transactions.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
-
-  if (!transactions.length) return;
-
-  const smsRecords = [];
-  smsSnap.forEach(child => smsRecords.push({ id: child.key, ...(child.val() || {}) }));
-
-  // Only consider SMS records that:
-  //   - have a valid reference keyword
-  //   - have a sender we accept (unless SMS_ALLOW_ANY_SENDER)
-  //   - aren't already matched to a different tx
-  //   - aren't currently being processed
-  const usableSms = [];
-  for (const sms of smsRecords) {
-    if (sms.processing === true) continue;
-    const body = String(sms.body || sms.message || sms.text || sms.smsText || sms.messageBody || '');
-    if (!body || !hasReferenceKeyword(body)) continue;
-    const sender = normalizeSmsSender(sms.sender || sms.address || sms.from || sms.origin || '');
-    const senderAllowed = SMS_ALLOW_ANY_SENDER || ALLOWED_SMS_SENDERS.has(sender);
-    usableSms.push({ ...sms, _body: body, _sender: sender, _senderAllowed: senderAllowed });
-  }
-
-  for (const tx of transactions) {
-    const wantedRef = String(tx.reference || '').trim().toUpperCase();
-
-    // Case A: deposit has no reference at all → leave for admin, but note it.
-    if (!wantedRef) {
-      if (tx.verification_status !== 'manual_review') {
-        await db.ref('transactions/' + tx.id).update({
-          verification_status: 'manual_review',
-          verification_reason: 'missing-reference',
-          verification_checked_at: now(),
-          updated_at: now()
-        });
-        await notifyVerificationReview(tx, 'missing-reference');
-      }
-      continue;
-    }
-
-    for (const sms of usableSms) {
-      if (sms.matched_tx_id && sms.matched_tx_id !== tx.id) continue;
-
-      const parsedRecord = sms.parsed && typeof sms.parsed === 'object' ? sms.parsed : null;
-      const parsed = (parsedRecord && parsedRecord.reference && parsedRecord.amount)
-        ? parsedRecord
-        : parseTelebirrSms(sms._body);
-      if (!parsed.reference || !parsed.amount) continue;
-
-      const parsedRef = String(parsed.reference || '').trim().toUpperCase();
-      if (parsedRef !== wantedRef) continue;
-
-      // ---- Reference matched. Now check everything else in order. ----
-
-      // 1. Sender check (skipped entirely when SMS_ALLOW_ANY_SENDER=true)
-      if (!sms._senderAllowed) {
-        console.warn(`[SMS-VERIFY] reference matched but sender "${sms._sender}" is not allowed. tx=${tx.id} sms=${sms.id}`);
-        await db.ref('transactions/' + tx.id).update({
-          verification_status: 'manual_review',
-          verification_reason: `sender-not-allowed (${sms._sender})`,
-          verification_checked_at: now(),
-          updated_at: now()
-        });
-        await notifyVerificationReview(tx, `sender-not-allowed (${sms._sender})`);
-        continue;
-      }
-
-      // 2. Amount check
-      if (Number(parsed.amount) !== Number(tx.amount)) {
-        console.warn(`[SMS-VERIFY] amount mismatch tx=${tx.id} expected=${tx.amount} got=${parsed.amount}`);
-        await db.ref('transactions/' + tx.id).update({
-          verification_status: 'manual_review',
-          verification_reason: `amount-mismatch (expected ${tx.amount}, got ${parsed.amount})`,
-          verification_checked_at: now(),
-          updated_at: now()
-        });
-        await notifyVerificationReview(tx, 'amount-mismatch');
-        continue;
-      }
-
-      // 3. Recipient check
-      if (!ALLOWED_DEPOSIT_RECIPIENTS.includes(parsed.recipient)) {
-        console.warn(`[SMS-VERIFY] recipient mismatch tx=${tx.id} got=${parsed.recipient}`);
-        await db.ref('transactions/' + tx.id).update({
-          verification_status: 'manual_review',
-          verification_reason: `recipient-mismatch (${parsed.recipient || 'unknown'})`,
-          verification_checked_at: now(),
-          updated_at: now()
-        });
-        await notifyVerificationReview(tx, 'recipient-mismatch');
-        continue;
-      }
-
-      // ---- Everything matches. Claim the SMS, then auto-approve. ----
-      const claimSms = await db.ref(SMS_DATABASE_PATH + '/' + sms.id).transaction(current => {
-        if (!current) return;
-        if (current.matched_tx_id && current.matched_tx_id !== tx.id) return;
-        current.matched_tx_id = tx.id;
-        current.processing = true;
-        current.processed_at = now();
-        return current;
-      });
-      if (!claimSms?.committed) continue;
-
-      await db.ref('transactions/' + tx.id).update({
-        verification_status: 'verified',
-        verification_reason: '',
-        sms_record_id: sms.id,
-        verified_at: now(),
-        updated_at: now()
-      });
-
-      console.log(`[SMS-VERIFY] ✅ auto-approving tx=${tx.id} ref=${wantedRef} amount=${tx.amount}`);
-      const approved = await adminDecision(tx.id, 'approved', 'Automatically verified against forwarded Telebirr SMS');
-
-      await db.ref(SMS_DATABASE_PATH + '/' + sms.id).update({
-        processing: false,
-        verification_result: approved.ok ? 'approved' : 'manual_review',
-        verification_reason: approved.ok ? '' : (approved.reason || 'automatic-approval-failed')
-      });
-
-      if (!approved.ok) {
-        await db.ref('transactions/' + tx.id).update({
-          status: 'pending',
-          verification_status: 'manual_review',
-          verification_reason: approved.reason || 'automatic-approval-failed',
-          updated_at: now()
-        });
-        await notifyVerificationReview(tx, approved.reason || 'automatic-approval-failed');
-      }
-      break; // move on to next tx
-    }
-  }
-}
-
-// --- Debounced verification scheduler + Firebase listener ---
-let smsVerifyTimer = null;
-let smsVerifyRunning = false;
-let smsListenerStarted = false;
-
-function scheduleVerifyPendingDeposits(delayMs = 300) {
-  if (smsVerifyTimer) clearTimeout(smsVerifyTimer);
-  smsVerifyTimer = setTimeout(async () => {
-    smsVerifyTimer = null;
-    if (smsVerifyRunning) {
-      scheduleVerifyPendingDeposits(500);
-      return;
-    }
-    smsVerifyRunning = true;
-    try {
-      await verifyPendingDeposits();
-    } catch (err) {
-      console.error('[SMS-VERIFY] scan failed', err);
-    } finally {
-      smsVerifyRunning = false;
-    }
-  }, delayMs);
-}
-
-function startSmsListener() {
-  if (smsListenerStarted) return;
-  smsListenerStarted = true;
-
-  const ref = db.ref(SMS_DATABASE_PATH);
-  ref.on('child_added', (snap) => {
-    const data = snap.val() || {};
-    const storedAt = Number(data.stored_at || data.received_at || data.timestamp || 0);
-    if (storedAt && Date.now() - storedAt > 5 * 60 * 1000) return;
-
-    const body = String(data.body || data.message || data.text || data.smsText || data.messageBody || '');
-    const sender = data.sender || data.address || data.from || '?';
-
-    if (!hasReferenceKeyword(body)) {
-      console.log(`[SMS-LISTENER] skip key=${snap.key} sender=${sender} (no reference keyword)`);
-      return;
-    }
-    console.log(`[SMS-LISTENER] new sms key=${snap.key} sender=${sender} storedAt=${storedAt}`);
-    scheduleVerifyPendingDeposits(150);
-  }, (err) => {
-    console.error('[SMS-LISTENER] subscription error', err);
-  });
-
-  console.log(`[SMS-LISTENER] listening on Firebase path "${SMS_DATABASE_PATH}"`);
-}
-
-function stopSmsListener() {
-  if (!smsListenerStarted) return;
-  try { db.ref(SMS_DATABASE_PATH).off(); } catch (_) {}
-  smsListenerStarted = false;
-}
-
 async function adminDecision(id, decision, reason = '') {
   decision = String(decision || '').trim().toLowerCase();
   if (decision === 'approve') decision = 'approved';
@@ -836,20 +511,12 @@ async function adminDecision(id, decision, reason = '') {
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
     if (!['deposit', 'withdraw'].includes(tx.type)) return { ok: false, reason: 'bad-type' };
 
+    // Already finalized? Never touch the wallet again.
     if (tx.status !== 'pending' && tx.status !== 'processing') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
-    if (tx.type === 'deposit' && decision === 'approved') {
-      const hasReference = String(tx.reference || '').trim().length > 0;
-      if (hasReference) {
-        const referenceClaim = await claimDepositReference(tx);
-        if (!referenceClaim.ok) return { ok: false, reason: referenceClaim.reason };
-      } else if (String(reason || '').startsWith('Automatically verified')) {
-        return { ok: false, reason: 'missing-reference' };
-      }
-    }
-
+    // ---- Deposit rejection: no wallet change ----
     if (tx.type === 'deposit' && decision === 'rejected') {
       const userInfo = await findUserRefForWallet({
         uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
@@ -867,6 +534,7 @@ async function adminDecision(id, decision, reason = '') {
         return current;
       });
       if (!claim?.committed) {
+        // Either already decided or race. Treat as success if the status matches.
         const fresh = await txRef.once('value');
         const f = fresh.val() || {};
         if (f.status === 'rejected') {
@@ -881,6 +549,7 @@ async function adminDecision(id, decision, reason = '') {
       return { ok: true, tx: updatedTx };
     }
 
+    // ---- All other cases: resolve user & apply wallet change ----
     const userInfo = await findUserRefForWallet({
       uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
       telegram_username: tx.telegram_username, username: tx.username
@@ -889,10 +558,12 @@ async function adminDecision(id, decision, reason = '') {
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
+    // Read current state to check preconditions & idempotency
     const freshSnap = await userRef.once('value');
     if (!freshSnap.exists()) return { ok: false, reason: 'wallet-user-not-found' };
     const fresh = freshSnap.val() || {};
 
+    // Idempotency: if the ledger already has this tx, treat as success.
     const existingLedger = fresh.wallet_ledger && fresh.wallet_ledger[id];
     if (existingLedger) {
       if (String(existingLedger.decision) !== decision) {
@@ -913,6 +584,7 @@ async function adminDecision(id, decision, reason = '') {
     const pending = toFiniteNumber(fresh.pending_withdrawal ?? fresh.pendingWithdrawal ?? 0, 0);
     const play = toFiniteNumber(fresh.play_wallet ?? fresh.playWallet ?? 0, 0);
 
+    // Precondition checks with SPECIFIC error messages
     if (tx.type === 'withdraw' && decision === 'approved') {
       if (main < txAmount) return { ok: false, reason: 'insufficient-main (have ' + main + ', need ' + txAmount + ')' };
       if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
@@ -920,10 +592,13 @@ async function adminDecision(id, decision, reason = '') {
     if (tx.type === 'withdraw' && decision === 'rejected') {
       if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
     }
+    // deposit approved → always allowed
 
+    // Apply atomically
     let attemptedChange = false;
     const result = await userRef.transaction(u => {
       if (!u) return u;
+      // Idempotency inside the transaction
       const ledger = u.wallet_ledger && u.wallet_ledger[id];
       if (ledger) return u;
 
@@ -960,6 +635,7 @@ async function adminDecision(id, decision, reason = '') {
       return u;
     });
 
+    // Recover the freshest state regardless of committed flag
     let updatedUser = null;
     if (result && result.snapshot && result.snapshot.exists()) {
       updatedUser = result.snapshot.val() || {};
@@ -971,6 +647,7 @@ async function adminDecision(id, decision, reason = '') {
 
     const ledgerEntry = updatedUser.wallet_ledger && updatedUser.wallet_ledger[id];
     if (!ledgerEntry) {
+      // Transaction did NOT apply. Figure out why so we can return a precise reason.
       const u = updatedUser;
       const main3 = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? 0, 0);
       const pending3 = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
@@ -1284,7 +961,7 @@ async function toSpinning(room) {
   const allPlayers = [...humans, ...bots];
   const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
   if (!allNums.length) return resetRound(room, 'no-picks');
-
+  
   winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
   winners = allPlayers.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
 
@@ -1645,11 +1322,10 @@ async function handle(ws, m) {
 setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 25000);
 
 const app = express();
-app.use(express.json({ limit: '256kb' }));
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Sms-Webhook-Secret');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -1659,65 +1335,6 @@ function isAdmin(req) {
   const suppliedKey = String(req.get('x-admin-key') || '');
   return ADMIN_KEY && constantTimeEqual(suppliedKey, ADMIN_KEY);
 }
-
-app.post('/webhooks/sms-forwarder', async (req, res) => {
-  if (!SMS_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'sms-webhook-not-configured' });
-  const suppliedSecret = String(req.get('x-sms-webhook-secret') || req.get('x-webhook-secret') || req.body?.secret || '');
-  if (!constantTimeEqual(suppliedSecret, SMS_WEBHOOK_SECRET)) return res.status(403).json({ ok: false, error: 'forbidden' });
-
-  try {
-    const sms = extractForwardedSms(req.body || {});
-    if (!sms.body) return res.status(400).json({ ok: false, error: 'missing-message-body' });
-
-    const senderAllowed = SMS_ALLOW_ANY_SENDER || ALLOWED_SMS_SENDERS.has(sms.sender);
-    const keywordPresent = hasReferenceKeyword(sms.body);
-    const parsed = parseTelebirrSms(sms.body);
-    const fingerprint = crypto.createHash('sha256').update(sms.sender + '\n' + sms.body.replace(/\s+/g, ' ').trim()).digest('hex');
-    const recordRef = db.ref(SMS_DATABASE_PATH + '/' + fingerprint);
-
-    // Ack the forwarder immediately so it never times out.
-    res.json({ ok: true, accepted: true, queued: true, sender: sms.sender, senderAllowed, hasReferenceKeyword: keywordPresent });
-
-    setImmediate(async () => {
-      try {
-        const existing = await recordRef.once('value');
-        if (!existing.exists()) {
-          await recordRef.set({
-            sender: sms.sender,
-            body: sms.body.slice(0, 6000),
-            received_at: sms.receivedAt,
-            stored_at: now(),
-            sender_allowed: senderAllowed,
-            has_reference_keyword: keywordPresent,
-            parsed: parsed.ok ? parsed : { ok: false, reason: parsed.reason || 'unparsed' },
-            processing: false,
-            source: 'sms-forwarder-webhook'
-          });
-        }
-
-        if (!keywordPresent) {
-          await recordRef.update({ verification_result: 'ignored', verification_reason: 'missing-reference-keyword' });
-          console.log(`[SMS-WEBHOOK] ignored (no reference keyword) sender=${sms.sender}`);
-          return;
-        }
-        if (!senderAllowed) {
-          await recordRef.update({ verification_result: 'ignored', verification_reason: 'invalid-sms-sender' });
-          console.log(`[SMS-WEBHOOK] ignored (sender ${sms.sender} not allowed)`);
-          return;
-        }
-
-        console.log(`[SMS-WEBHOOK] stored sender=${sms.sender} → running verification`);
-        await verifyPendingDeposits();
-      } catch (bgErr) {
-        console.error('[SMS-WEBHOOK] background processing failed', bgErr);
-      }
-    });
-    return;
-  } catch (e) {
-    console.error('[SMS-WEBHOOK] immediate processing failed', e);
-    return res.status(500).json({ ok: false, error: 'sms-processing-failed' });
-  }
-});
 
 app.get('/admin/pending', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
@@ -1800,7 +1417,7 @@ app.get('/health', async (_, res) => {
       db.ref('rooms').limitToFirst(1).once('value'),
       new Promise((_, reject) => setTimeout(() => reject(new Error('database-timeout')), 2500))
     ]);
-    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'firebase-realtime-database', websocket: true, uptime: process.uptime(), origins: ALLOWED_ORIGINS, rooms: roomInfo, smsListener: smsListenerStarted });
+    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'firebase-realtime-database', websocket: true, uptime: process.uptime(), origins: ALLOWED_ORIGINS, rooms: roomInfo });
   } catch (e) {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
@@ -1832,17 +1449,7 @@ app.get('/config', (_, res) => res.json({
   service: 'winzo-authoritative-server',
   database: 'firebase-realtime-database',
   walletSchema: 'users/<uid>/{main_wallet,play_wallet,pending_withdrawal,referral_earnings}',
-  websocket: true,
-  smsVerification: true,
-  smsListener: smsListenerStarted,
-  smsWebhookConfigured: Boolean(SMS_WEBHOOK_SECRET),
-  smsAllowAnySender: SMS_ALLOW_ANY_SENDER,
-  smsAllowedSenders: [...ALLOWED_SMS_SENDERS],
-  smsAllowedRecipients: ALLOWED_DEPOSIT_RECIPIENTS,
-  smsDatabasePath: SMS_DATABASE_PATH,
-  smsFirebaseUrl: `${FIREBASE_DATABASE_URL}/${SMS_DATABASE_PATH}.json`,
-  smsWebhookUrl: '/webhooks/sms-forwarder',
-  acceptedSmsKeywords: ['REFERENCE', 'transaction number is']
+  websocket: true
 }));
 
 app.get('/', (_, res) => res.type('text').send('Winzo authoritative Firebase server is running.'));
@@ -1864,7 +1471,6 @@ server.on('upgrade', (req, socket, head) => {
 
 async function gracefulShutdown(signal) {
   console.log(`[SHUTDOWN] ${signal}`);
-  stopSmsListener();
   try {
     for (const room of Object.values(rooms)) {
       await room.mutex.run(async () => { if (room.dirty) await room.persist(); });
@@ -1880,9 +1486,6 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 loadRooms().then(() => {
   server.listen(PORT, '0.0.0.0', () => console.log(`Winzo Realtime Database server listening on :${PORT}`));
-
-  startSmsListener();
-
   for (const room of Object.values(rooms)) {
     if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
     if (room.phase === 'selection') normalizeRoundBots(room);
@@ -1890,9 +1493,6 @@ loadRooms().then(() => {
     scheduleBots(room);
   }
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
-  console.log(`SMS Firebase path: ${FIREBASE_DATABASE_URL}/${SMS_DATABASE_PATH}.json`);
-  console.log(`SMS webhook: POST /webhooks/sms-forwarder (header: X-SMS-Webhook-Secret)`);
-  console.log(`SMS allow-any-sender: ${SMS_ALLOW_ANY_SENDER ? 'YES (testing mode)' : 'NO'}`);
   console.log(`Bot pool size: ${BOT_NAMES.length}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
   console.log(`Results phase length: ${RESULTS_SECONDS}s`);
