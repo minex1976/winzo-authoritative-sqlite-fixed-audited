@@ -2801,17 +2801,37 @@
                     renderNumberPicker();
                 },
                 onTransactionCreated: (m) => {
-                    transactionStatus.textContent = '⏳ Pending admin approval...';
+                    transactionStatus.textContent = '⏳ Request received. The server is checking the payment SMS. If it cannot verify it automatically, an admin will review it.';
                 },
                 onTransactionStatus: (m) => {
                     const approved = m.status === 'approved';
-                    transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
-                    transactionStatus.className = 'status-text ' + (approved ? 'approved' : 'rejected');
+                    const rejected = m.status === 'rejected';
+                    const reviewMessages = {
+                        'amount-mismatch': '⚠️ The SMS amount does not match your request. An admin will review it.',
+                        'recipient-mismatch': '⚠️ The SMS recipient could not be verified. An admin will review it.',
+                        'duplicate-reference': '⚠️ This reference was used by another request. An admin must investigate.',
+                        'missing-reference': '⚠️ A reference number is missing. An admin will review your request.',
+                        'wallet-user-not-found': '⚠️ We could not match this request to your wallet. An admin will review it.'
+                    };
+                    transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit verified and approved.') : (rejected ? '❌ Transaction rejected. ' + (m.reason || '') : (reviewMessages[m.verificationReason || m.reason] || '⏳ Your request is awaiting manual review.'));
+                    transactionStatus.className = 'status-text ' + (approved ? 'approved' : (rejected ? 'rejected' : 'pending'));
                     if (client) client.walletRefresh();
                     setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
-                onError: (m) => updateStatus('⚠️ ' + (m.message || 'server error')),
+                onError: (m) => {
+                    const messages = {
+                        'bad-type': 'This transaction type is not supported.',
+                        'bad-amount': 'Please enter a valid deposit amount.',
+                        'missing-reference': 'Enter the Telebirr reference number before submitting.',
+                        'duplicate-reference': 'This reference number has already been used. Please check it or contact an admin.',
+                        'image-too-large': 'The screenshot is too large. Please choose a smaller image.',
+                        'user-not-found': 'Your account could not be identified. Please reconnect and try again.',
+                        'transaction-failed': 'We could not save your request. Please try again or contact an admin.',
+                        'insufficient-main': 'Your available balance is too low for this withdrawal.'
+                    };
+                    updateStatus('⚠️ ' + (messages[m.message] || m.message || 'The server could not process the request. Please try again.'));
+                },
             });
             showAuthScreen();
         }
