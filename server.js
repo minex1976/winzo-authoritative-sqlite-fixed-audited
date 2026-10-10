@@ -505,11 +505,41 @@ function normalizeText(value) {
 function normalizeSmsSender(value) {
   return String(value || '').trim().replace(/[\s()-]/g, '');
 }
+
+/**
+ * Returns true if the SMS contains a recognisable reference keyword.
+ * Accepted keywords:
+ *   - REFERENCE       (e.g. "REFERENCE NO: ABC1234567", "Reference: ABC1234567")
+ *   - transaction number is  (e.g. "Your transaction number is ABC1234567")
+ */
+function hasReferenceKeyword(text) {
+  const s = String(text || '');
+  if (/\bREFERENCE\b/i.test(s)) return true;
+  if (/\btransaction\s*number\s*(?:is)?\b/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Extracts a reference code from SMS text, supporting both:
+ *   - "REFERENCE NO: ABC1234567"
+ *   - "Your transaction number is ABC1234567"
+ */
+function extractReferenceFromSms(text) {
+  const s = String(text || '');
+  // Priority 1: "REFERENCE [NO|NUMBER|CODE|ID]? [: # = -]? XXXX"
+  let m = s.match(/\bREFERENCE\b\s*(?:NO\.?|NUMBER|CODE|ID)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
+  if (m) return m[1].toUpperCase();
+  // Priority 2: "transaction number (is|:)? XXXX"
+  m = s.match(/\btransaction\s*number\s*(?:is)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
+  if (m) return m[1].toUpperCase();
+  return null;
+}
+
 function parseTelebirrSms(body) {
   const text = String(body || '').trim();
-  if (!/\bREFERENCE\b/i.test(text)) return { ok: false, reason: 'missing-reference-keyword' };
-  const refMatch = text.match(/\bREFERENCE\b\s*(?:NO\.?|NUMBER|CODE|ID)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
-  if (!refMatch) return { ok: false, reason: 'reference-not-found' };
+  if (!hasReferenceKeyword(text)) return { ok: false, reason: 'missing-reference-keyword' };
+  const ref = extractReferenceFromSms(text);
+  if (!ref) return { ok: false, reason: 'reference-not-found' };
   const amountPatterns = [
     /(?:amount|received|credited|transferred|paid|payment|deposit)\s*(?:of|is|was|:|=)?\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d{1,2})?)/i,
     /(?:ETB|Birr|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i,
@@ -525,9 +555,9 @@ function parseTelebirrSms(body) {
     const n = normalizeText(name);
     return (` ${normalized} `).includes(` ${n} `);
   }) || null;
-  if (!amount) return { ok: false, reason: 'amount-not-found', reference: refMatch[1].toUpperCase(), recipient };
-  if (!recipient) return { ok: false, reason: 'recipient-not-allowed', amount, reference: refMatch[1].toUpperCase() };
-  return { ok: true, amount, reference: refMatch[1].toUpperCase(), recipient };
+  if (!amount) return { ok: false, reason: 'amount-not-found', reference: ref, recipient };
+  if (!recipient) return { ok: false, reason: 'recipient-not-allowed', amount, reference: ref };
+  return { ok: true, amount, reference: ref, recipient };
 }
 
 function extractForwardedSms(payload) {
@@ -584,7 +614,7 @@ async function verifyPendingDeposits() {
       const parsedRecord = sms.parsed && typeof sms.parsed === 'object' ? sms.parsed : null;
       const body = String(sms.body || sms.message || sms.text || sms.smsText || sms.messageBody || '');
       const sender = normalizeSmsSender(sms.sender || sms.address || sms.from || sms.origin || '');
-      if (!body || !ALLOWED_SMS_SENDERS.has(sender) || !/\bREFERENCE\b/i.test(body)) continue;
+      if (!body || !ALLOWED_SMS_SENDERS.has(sender) || !hasReferenceKeyword(body)) continue;
       const parsed = parsedRecord?.reference && parsedRecord?.amount ? parsedRecord : parseTelebirrSms(body);
       if (!parsed.reference || !parsed.amount) continue;
       const parsedRef = String(parsed.reference || '').trim().toUpperCase();
@@ -655,7 +685,15 @@ function startSmsListener() {
     // Skip the initial replay of old records that Firebase sends on attach.
     if (storedAt && Date.now() - storedAt > 5 * 60 * 1000) return;
 
+    const body = String(data.body || data.message || data.text || data.smsText || data.messageBody || '');
     const sender = data.sender || data.address || data.from || '?';
+
+    // Only bother scanning if this SMS looks like a Telebirr reference message.
+    if (!hasReferenceKeyword(body)) {
+      console.log(`[SMS-LISTENER] skip key=${snap.key} sender=${sender} (no reference keyword)`);
+      return;
+    }
+
     console.log(`[SMS-LISTENER] new sms key=${snap.key} sender=${sender} storedAt=${storedAt}`);
     scheduleVerifyPendingDeposits(150);
   }, (err) => {
@@ -663,6 +701,7 @@ function startSmsListener() {
   });
 
   console.log(`[SMS-LISTENER] listening on Firebase path "${SMS_DATABASE_PATH}"`);
+  console.log(`[SMS-LISTENER] accepted keywords: "REFERENCE", "transaction number is"`);
 }
 
 function stopSmsListener() {
@@ -1519,7 +1558,7 @@ app.post('/webhooks/sms-forwarder', async (req, res) => {
     const sms = extractForwardedSms(req.body || {});
     if (!sms.body) return res.status(400).json({ ok: false, error: 'missing-message-body' });
     const senderAllowed = ALLOWED_SMS_SENDERS.has(sms.sender);
-    const hasReferenceKeyword = /\bREFERENCE\b/i.test(sms.body);
+    const keywordPresent = hasReferenceKeyword(sms.body);
     const parsed = parseTelebirrSms(sms.body);
     const fingerprint = crypto.createHash('sha256').update(sms.sender + '\n' + sms.body.replace(/\s+/g, ' ').trim()).digest('hex');
     const recordRef = db.ref(SMS_DATABASE_PATH + '/' + fingerprint);
@@ -1531,18 +1570,17 @@ app.post('/webhooks/sms-forwarder', async (req, res) => {
         received_at: sms.receivedAt,
         stored_at: now(),
         sender_allowed: senderAllowed,
-        has_reference_keyword: hasReferenceKeyword,
+        has_reference_keyword: keywordPresent,
         parsed: parsed.ok ? parsed : { ok: false, reason: parsed.reason || 'unparsed' },
         processing: false,
         source: 'sms-forwarder-webhook'
       });
     }
-    if (!senderAllowed || !hasReferenceKeyword) {
+    if (!senderAllowed || !keywordPresent) {
       await recordRef.update({ verification_result: 'ignored', verification_reason: !senderAllowed ? 'invalid-sms-sender' : 'missing-reference-keyword' });
       return res.status(202).json({ ok: true, accepted: true, matched: false, reason: !senderAllowed ? 'invalid-sms-sender' : 'missing-reference-keyword' });
     }
     scheduleVerifyPendingDeposits(0);
-    // Give the debounced scanner a tiny moment to run before we reply.
     await new Promise(r => setTimeout(r, 400));
     const latest = await recordRef.once('value');
     const latestValue = latest.val() || {};
@@ -1670,7 +1708,8 @@ app.get('/config', (_, res) => res.json({
   smsVerification: true,
   smsListener: smsListenerStarted,
   smsDatabasePath: SMS_DATABASE_PATH,
-  smsFirebaseUrl: `${FIREBASE_DATABASE_URL}/${SMS_DATABASE_PATH}.json`
+  smsFirebaseUrl: `${FIREBASE_DATABASE_URL}/${SMS_DATABASE_PATH}.json`,
+  acceptedSmsKeywords: ['REFERENCE', 'transaction number is']
 }));
 
 app.get('/', (_, res) => res.type('text').send('Winzo authoritative Firebase server is running.'));
