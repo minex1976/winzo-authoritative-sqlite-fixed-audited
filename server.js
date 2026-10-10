@@ -30,6 +30,8 @@ const db = admin.database();
 const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '';
+const SMS_DATABASE_PATH = String(process.env.SMS_DATABASE_PATH || 'incoming_sms').replace(/^\/+|\/+$/g, '') || 'incoming_sms';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || 'https://minex1976.github.io,https://web.telegram.org')
@@ -322,7 +324,16 @@ async function notifyTransaction(username, tx) {
   });
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({
-    type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || ''
+    type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '', verificationStatus: tx.verification_status || '', verificationReason: tx.verification_reason || ''
+  }));
+}
+
+async function notifyVerificationReview(tx, reason) {
+  const uid = String(tx.wallet_uid || tx.uid || tx.username || '');
+  const set = conns.get(uid);
+  if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({
+    type: 'transaction-status', id: tx.id, status: 'pending', txType: 'deposit',
+    reason: String(reason || 'manual-review'), verificationStatus: 'manual_review', verificationReason: String(reason || 'manual-review')
   }));
 }
 
@@ -388,6 +399,8 @@ async function transactionRequest(uid, data) {
       status: 'pending',
       timestamp: now(),
       reference,
+      verification_status: type === 'deposit' ? 'waiting_for_sms' : null,
+      verification_reason: '',
       full_name: fullName,
       phone_number: phone,
       image_data: imageData,
@@ -407,6 +420,7 @@ async function transactionRequest(uid, data) {
     }
 
     await sendWallet(uid);
+    if (type === 'deposit') verifyPendingDeposits().catch(err => console.error('[SMS-VERIFY] pending scan failed', err));
     return { ok: true, id, clientRequestId, duplicate: false };
   } catch (e) {
     if (reservationApplied) {
@@ -495,6 +509,131 @@ async function findUserRefForWallet(identity = {}) {
  *     f. Verify the ledger exists after write; if not, return a precise reason.
  *     g. Update the tx record to the final status.
  */
+const ALLOWED_DEPOSIT_RECIPIENTS = ['Minyihun', 'Minyihun Mamo', 'Minyihun Mamo Gizaw'];
+const ALLOWED_SMS_SENDERS = new Set(['127', '+251127', '251127']);
+
+function normalizeText(value) {
+  return String(value || '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+function normalizeSmsSender(value) {
+  return String(value || '').trim().replace(/[\s()-]/g, '');
+}
+function parseTelebirrSms(body) {
+  const text = String(body || '').trim();
+  if (!/\bREFERENCE\b/i.test(text)) return { ok: false, reason: 'missing-reference-keyword' };
+  const refMatch = text.match(/\bREFERENCE\b\s*(?:NO\.?|NUMBER|CODE|ID)?\s*[:#=\-]?\s*([A-Z0-9][A-Z0-9\-]{4,31})/i);
+  if (!refMatch) return { ok: false, reason: 'reference-not-found' };
+  // Prefer amounts explicitly associated with a payment/credit phrase to avoid reading digits from the reference.
+  const amountPatterns = [
+    /(?:amount|received|credited|transferred|paid|payment|deposit)\s*(?:of|is|was|:|=)?\s*(?:ETB|Birr|ብር)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /(?:ETB|Birr|ብር)\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /([\d,]+(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር)/i
+  ];
+  let amount = null;
+  for (const pattern of amountPatterns) {
+    const m = text.match(pattern);
+    if (m) { const n = Number(m[1].replace(/,/g, '')); if (Number.isFinite(n) && n > 0) { amount = n; break; } }
+  }
+  const normalized = normalizeText(text);
+  const recipient = [...ALLOWED_DEPOSIT_RECIPIENTS].sort((a, b) => b.length - a.length).find(name => {
+    const n = normalizeText(name);
+    return (` ${normalized} `).includes(` ${n} `);
+  }) || null;
+  if (!amount) return { ok: false, reason: 'amount-not-found', reference: refMatch[1].toUpperCase(), recipient };
+  if (!recipient) return { ok: false, reason: 'recipient-not-allowed', amount, reference: refMatch[1].toUpperCase() };
+  return { ok: true, amount, reference: refMatch[1].toUpperCase(), recipient };
+}
+
+function extractForwardedSms(payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const nested = data.sms && typeof data.sms === 'object' ? data.sms : (data.message && typeof data.message === 'object' ? data.message : {});
+  const body = [data.message, data.body, data.text, data.smsText, data.messageBody, data.content, nested.body, nested.text, nested.message, nested.content]
+    .find(v => typeof v === 'string' && v.trim()) || '';
+  const sender = [data.sender, data.address, data.from, data.origin, data.originatingAddress, data.phoneNumber, data.phone, data.senderNumber, nested.sender, nested.address, nested.from, nested.originatingAddress]
+    .find(v => typeof v === 'string' && v.trim()) || '';
+  return { body: String(body).trim(), sender: normalizeSmsSender(sender), receivedAt: Number(data.timestamp || data.date || data.receivedAt || now()) || now() };
+}
+
+function referenceHash(reference) {
+  return crypto.createHash('sha256').update(String(reference || '').trim().toUpperCase()).digest('hex');
+}
+
+async function claimDepositReference(tx) {
+  const reference = String(tx.reference || '').trim().toUpperCase();
+  if (!reference) return { ok: false, reason: 'missing-reference' };
+  const ref = db.ref('deposit_reference_claims/' + referenceHash(reference));
+  let duplicateId = null;
+  const result = await ref.transaction(current => {
+    if (current && current.tx_id && current.tx_id !== tx.id) { duplicateId = current.tx_id; return; }
+    return { tx_id: tx.id, reference, claimed_at: current?.claimed_at || now(), updated_at: now() };
+  });
+  if (!result?.committed) {
+    const fresh = await ref.once('value');
+    const owner = fresh.val()?.tx_id || duplicateId;
+    if (owner && owner !== tx.id) return { ok: false, reason: 'duplicate-reference' };
+    return { ok: false, reason: 'reference-claim-failed' };
+  }
+  return { ok: true };
+}
+
+async function verifyPendingDeposits() {
+  const [txSnap, smsSnap] = await Promise.all([
+    db.ref('transactions').once('value'),
+    db.ref(SMS_DATABASE_PATH).once('value')
+  ]);
+  const transactions = [];
+  txSnap.forEach(child => {
+    const tx = child.val() || {};
+    if (tx.type === 'deposit' && tx.status === 'pending' && tx.reference) transactions.push({ ...tx, id: child.key });
+  });
+  transactions.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+  const smsRecords = [];
+  smsSnap.forEach(child => smsRecords.push({ id: child.key, ...(child.val() || {}) }));
+  for (const tx of transactions) {
+    const wantedRef = String(tx.reference || '').trim().toUpperCase();
+    if (!wantedRef) continue;
+    for (const sms of smsRecords) {
+      if (sms.matched_tx_id && sms.matched_tx_id !== tx.id) continue;
+      if (sms.processing === true) continue;
+      const parsedRecord = sms.parsed && typeof sms.parsed === 'object' ? sms.parsed : null;
+      const body = String(sms.body || sms.message || sms.text || sms.smsText || sms.messageBody || '');
+      const sender = normalizeSmsSender(sms.sender || sms.address || sms.from || sms.origin || '');
+      if (!body || !ALLOWED_SMS_SENDERS.has(sender) || !/\bREFERENCE\b/i.test(body)) continue;
+      const parsed = parsedRecord?.reference && parsedRecord?.amount ? parsedRecord : parseTelebirrSms(body);
+      if (!parsed.reference || !parsed.amount) continue;
+      const parsedRef = String(parsed.reference || '').trim().toUpperCase();
+      if (parsedRef !== wantedRef) continue;
+      if (Number(parsed.amount) !== Number(tx.amount)) {
+        await db.ref('transactions/' + tx.id).update({ verification_status: 'manual_review', verification_reason: 'amount-mismatch', verification_checked_at: now(), updated_at: now() });
+        await notifyVerificationReview(tx, 'amount-mismatch');
+        continue;
+      }
+      if (!ALLOWED_DEPOSIT_RECIPIENTS.includes(parsed.recipient)) {
+        await db.ref('transactions/' + tx.id).update({ verification_status: 'manual_review', verification_reason: 'recipient-mismatch', verification_checked_at: now(), updated_at: now() });
+        await notifyVerificationReview(tx, 'recipient-mismatch');
+        continue;
+      }
+      const claimSms = await db.ref(SMS_DATABASE_PATH + '/' + sms.id).transaction(current => {
+        if (!current) return;
+        if (current.matched_tx_id && current.matched_tx_id !== tx.id) return;
+        current.matched_tx_id = tx.id;
+        current.processing = true;
+        current.processed_at = now();
+        return current;
+      });
+      if (!claimSms?.committed) continue;
+      await db.ref('transactions/' + tx.id).update({ verification_status: 'verified', verification_reason: '', sms_record_id: sms.id, verified_at: now(), updated_at: now() });
+      const approved = await adminDecision(tx.id, 'approved', 'Automatically verified against forwarded Telebirr SMS');
+      await db.ref(SMS_DATABASE_PATH + '/' + sms.id).update({ processing: false, verification_result: approved.ok ? 'approved' : 'manual_review', verification_reason: approved.ok ? '' : approved.reason || 'automatic-approval-failed' });
+      if (!approved.ok) {
+        await db.ref('transactions/' + tx.id).update({ status: 'pending', verification_status: 'manual_review', verification_reason: approved.reason || 'automatic-approval-failed', updated_at: now() });
+        await notifyVerificationReview(tx, approved.reason || 'automatic-approval-failed');
+      }
+      break;
+    }
+  }
+}
+
 async function adminDecision(id, decision, reason = '') {
   decision = String(decision || '').trim().toLowerCase();
   if (decision === 'approve') decision = 'approved';
@@ -514,6 +653,17 @@ async function adminDecision(id, decision, reason = '') {
     // Already finalized? Never touch the wallet again.
     if (tx.status !== 'pending' && tx.status !== 'processing') {
       return { ok: false, reason: 'already-decided', tx };
+    }
+
+    // Every deposit approval, automatic or manual, must own the reference first.
+    if (tx.type === 'deposit' && decision === 'approved') {
+      const hasReference = String(tx.reference || '').trim().length > 0;
+      if (hasReference) {
+        const referenceClaim = await claimDepositReference(tx);
+        if (!referenceClaim.ok) return { ok: false, reason: referenceClaim.reason };
+      } else if (String(reason || '').startsWith('Automatically verified')) {
+        return { ok: false, reason: 'missing-reference' };
+      }
     }
 
     // ---- Deposit rejection: no wallet change ----
@@ -1322,6 +1472,7 @@ async function handle(ws, m) {
 setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 25000);
 
 const app = express();
+app.use(express.json({ limit: '256kb' }));
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -1335,6 +1486,46 @@ function isAdmin(req) {
   const suppliedKey = String(req.get('x-admin-key') || '');
   return ADMIN_KEY && constantTimeEqual(suppliedKey, ADMIN_KEY);
 }
+
+app.post('/webhooks/sms-forwarder', async (req, res) => {
+  if (!SMS_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'sms-webhook-not-configured' });
+  const suppliedSecret = String(req.get('x-sms-webhook-secret') || req.get('x-webhook-secret') || req.body?.secret || '');
+  if (!constantTimeEqual(suppliedSecret, SMS_WEBHOOK_SECRET)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const sms = extractForwardedSms(req.body || {});
+    if (!sms.body) return res.status(400).json({ ok: false, error: 'missing-message-body' });
+    const senderAllowed = ALLOWED_SMS_SENDERS.has(sms.sender);
+    const hasReferenceKeyword = /\bREFERENCE\b/i.test(sms.body);
+    const parsed = parseTelebirrSms(sms.body);
+    const fingerprint = crypto.createHash('sha256').update(sms.sender + '\n' + sms.body.replace(/\s+/g, ' ').trim()).digest('hex');
+    const recordRef = db.ref(SMS_DATABASE_PATH + '/' + fingerprint);
+    const existing = await recordRef.once('value');
+    if (!existing.exists()) {
+      await recordRef.set({
+        sender: sms.sender,
+        body: sms.body.slice(0, 6000),
+        received_at: sms.receivedAt,
+        stored_at: now(),
+        sender_allowed: senderAllowed,
+        has_reference_keyword: hasReferenceKeyword,
+        parsed: parsed.ok ? parsed : { ok: false, reason: parsed.reason || 'unparsed' },
+        processing: false,
+        source: 'sms-forwarder-webhook'
+      });
+    }
+    if (!senderAllowed || !hasReferenceKeyword) {
+      await recordRef.update({ verification_result: 'ignored', verification_reason: !senderAllowed ? 'invalid-sms-sender' : 'missing-reference-keyword' });
+      return res.status(202).json({ ok: true, accepted: true, matched: false, reason: !senderAllowed ? 'invalid-sms-sender' : 'missing-reference-keyword' });
+    }
+    await verifyPendingDeposits();
+    const latest = await recordRef.once('value');
+    const latestValue = latest.val() || {};
+    return res.json({ ok: true, accepted: true, matched: !!latestValue.matched_tx_id, transactionId: latestValue.matched_tx_id || null, result: latestValue.verification_result || 'stored_for_matching' });
+  } catch (e) {
+    console.error('[SMS-WEBHOOK] processing failed', e);
+    return res.status(500).json({ ok: false, error: 'sms-processing-failed' });
+  }
+});
 
 app.get('/admin/pending', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
@@ -1449,7 +1640,9 @@ app.get('/config', (_, res) => res.json({
   service: 'winzo-authoritative-server',
   database: 'firebase-realtime-database',
   walletSchema: 'users/<uid>/{main_wallet,play_wallet,pending_withdrawal,referral_earnings}',
-  websocket: true
+  websocket: true,
+  smsVerification: Boolean(SMS_WEBHOOK_SECRET),
+  smsDatabasePath: SMS_DATABASE_PATH
 }));
 
 app.get('/', (_, res) => res.type('text').send('Winzo authoritative Firebase server is running.'));
