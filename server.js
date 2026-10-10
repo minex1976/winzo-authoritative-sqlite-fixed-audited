@@ -510,7 +510,7 @@ async function findUserRefForWallet(identity = {}) {
  *     g. Update the tx record to the final status.
  */
 const ALLOWED_DEPOSIT_RECIPIENTS = ['Minyihun', 'Minyihun Mamo', 'Minyihun Mamo Gizaw'];
-const ALLOWED_SMS_SENDERS = new Set(['127', '+251127', 'Abukiya Abraham', '251127']);
+const ALLOWED_SMS_SENDERS = new Set(['Mekdi', '127', '+251127', 'Abukiya Abraham', '251127']);
 
 function normalizeText(value) {
   return String(value || '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
