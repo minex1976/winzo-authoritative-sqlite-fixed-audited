@@ -263,6 +263,33 @@
         .guide-dismiss-x { position: absolute; top: 6px; right: 8px; background: transparent; border: none; color: #9d8bb7; font-size: 0.9rem; cursor: pointer; padding: 2px 6px; font-family: inherit; }
         .guide-dismiss-x:active { color: #ff8a8a; }
         .dev-badge { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); background: rgba(255, 80, 80, 0.85); color: #fff; font-size: 0.55rem; font-weight: 800; letter-spacing: 1.5px; padding: 2px 10px; border-radius: 10px; z-index: 9999; pointer-events: none; box-shadow: 0 2px 10px rgba(255, 80, 80, 0.45); }
+
+        /* Transaction dialogs must remain usable during wheel and winner animations.
+           Keep these overlays above every game, wheel, announcement and toast layer. */
+        .deposit-modal,
+        .withdraw-modal,
+        .transaction-modal,
+        .modal-overlay {
+            z-index: 100000 !important;
+            isolation: isolate;
+            pointer-events: auto;
+        }
+        .deposit-modal.active,
+        .withdraw-modal.active,
+        .transaction-modal.active,
+        .modal-overlay.active {
+            display: flex !important;
+            z-index: 100000 !important;
+        }
+        .deposit-modal .modal-content,
+        .withdraw-modal .modal-content,
+        .transaction-modal .modal-content,
+        .modal-overlay .modal-content {
+            position: relative;
+            z-index: 100001;
+            background: linear-gradient(160deg, rgba(42, 26, 74, 0.99), rgba(26, 42, 74, 0.99));
+            box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85);
+        }
     </style>
 </head>
 <body>
@@ -2801,37 +2828,17 @@
                     renderNumberPicker();
                 },
                 onTransactionCreated: (m) => {
-                    transactionStatus.textContent = '⏳ Request received. The server is checking the payment SMS. If it cannot verify it automatically, an admin will review it.';
+                    transactionStatus.textContent = '⏳ Pending admin approval...';
                 },
                 onTransactionStatus: (m) => {
                     const approved = m.status === 'approved';
-                    const rejected = m.status === 'rejected';
-                    const reviewMessages = {
-                        'amount-mismatch': '⚠️ The SMS amount does not match your request. An admin will review it.',
-                        'recipient-mismatch': '⚠️ The SMS recipient could not be verified. An admin will review it.',
-                        'duplicate-reference': '⚠️ This reference was used by another request. An admin must investigate.',
-                        'missing-reference': '⚠️ A reference number is missing. An admin will review your request.',
-                        'wallet-user-not-found': '⚠️ We could not match this request to your wallet. An admin will review it.'
-                    };
-                    transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit verified and approved.') : (rejected ? '❌ Transaction rejected. ' + (m.reason || '') : (reviewMessages[m.verificationReason || m.reason] || '⏳ Your request is awaiting manual review.'));
-                    transactionStatus.className = 'status-text ' + (approved ? 'approved' : (rejected ? 'rejected' : 'pending'));
+                    transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
+                    transactionStatus.className = 'status-text ' + (approved ? 'approved' : 'rejected');
                     if (client) client.walletRefresh();
                     setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
-                onError: (m) => {
-                    const messages = {
-                        'bad-type': 'This transaction type is not supported.',
-                        'bad-amount': 'Please enter a valid deposit amount.',
-                        'missing-reference': 'Enter the Telebirr reference number before submitting.',
-                        'duplicate-reference': 'This reference number has already been used. Please check it or contact an admin.',
-                        'image-too-large': 'The screenshot is too large. Please choose a smaller image.',
-                        'user-not-found': 'Your account could not be identified. Please reconnect and try again.',
-                        'transaction-failed': 'We could not save your request. Please try again or contact an admin.',
-                        'insufficient-main': 'Your available balance is too low for this withdrawal.'
-                    };
-                    updateStatus('⚠️ ' + (messages[m.message] || m.message || 'The server could not process the request. Please try again.'));
-                },
+                onError: (m) => updateStatus('⚠️ ' + (m.message || 'server error')),
             });
             showAuthScreen();
         }
