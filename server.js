@@ -1004,7 +1004,49 @@ async function toResults(room) {
   room.phase = 'results'; room.endsAt = now() + RESULTS_SECONDS * 1000; room.dirty = true;
 }
 
+// --- Minimal historical analytics recorder (Ethiopia local date; excludes bots from human counts) ---
+function ethiopiaAnalyticsParts(timestamp = now()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Addis_Ababa',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return {
+    dateKey: `${values.year}-${values.month}-${values.day}`,
+    hour: Number(values.hour)
+  };
+}
+
+async function recordRoundAnalytics(room, reason) {
+  try {
+    const timestamp = now();
+    const { dateKey, hour } = ethiopiaAnalyticsParts(timestamp);
+    const players = [...room.players.values()];
+    const humans = players.filter(p => p && !p.isBot && (p.active || (p.picks || []).length > 0));
+    const bots = players.filter(p => p && p.isBot && (p.active || (p.picks || []).length > 0));
+    const record = {
+      room: room.id,
+      round: Number(room.round || 0),
+      timestamp,
+      dateKey,
+      hour,
+      humanPlayerCount: humans.length,
+      botPlayerCount: bots.length,
+      totalPlayerCount: humans.length + bots.length,
+      reason: String(reason || ''),
+      source: 'authoritative-server'
+    };
+    // One record per room and round; does not touch gameplay or wallet data.
+    await db.ref(`analytics/gameHistory/${dateKey}/${room.id}/${record.round}`)
+      .transaction(current => current || record);
+  } catch (error) {
+    console.error(`[ANALYTICS] failed to record ${room.id} round ${room.round}:`, error?.message || error);
+  }
+}
+
 async function resetRound(room, why) {
+  await recordRoundAnalytics(room, why);
   for (const p of room.players.values()) {
     if (p.isBot || !p.picks.length) continue;
     if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round);
