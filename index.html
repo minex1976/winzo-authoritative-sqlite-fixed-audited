@@ -1217,7 +1217,7 @@
         }
         function setConnectionStatus(online, message) {
             const cls = online ? 'online' : 'offline';
-            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : '⚡ Offline'; authStatus.className = 'connection-status ' + cls; }
+            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : ''; authStatus.className = 'connection-status ' + cls; }
             if (statusDot) statusDot.className = 'status-dot ' + cls;
             if (message) updateStatus(message);
         }
@@ -1435,7 +1435,7 @@
                     ? winners.map(w => String(w || '').trim()).filter(Boolean)
                     : [];
                 if (list.length) {
-                    const label = list.length > 1 ? '🏆 Winners' : '🏆 Winner';
+                    const label = list.length > 1 ? '🏆 Winners' : 'The Winner is:';
                     winnerNamesEl.innerHTML = label + '<br>' + list.map(n => escapeHtmlText(n)).join('<br>');
                 } else {
                     winnerNamesEl.textContent = '😔 No Winner';
