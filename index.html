@@ -290,10 +290,9 @@
             background: linear-gradient(160deg, rgba(42, 26, 74, 0.99), rgba(26, 42, 74, 0.99));
             box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85);
         }
-    
         .winning-card-winners { color:#8affb0; font-size:.82rem; font-weight:800; line-height:1.45; margin-top:8px; overflow-wrap:anywhere; }
         .winning-card-winners:empty { display:none; }
-        .winner-celebration { position:fixed; z-index:7000; top:18%; left:50%; transform:translate(-50%,-12px) scale(.92); width:max-content; max-width:90vw; padding:14px 22px; border:2px solid #8affb0; border-radius:24px; background:linear-gradient(135deg,rgba(18,80,54,.97),rgba(20,35,70,.97)); color:#fff; text-align:center; font-weight:900; font-size:1.05rem; box-shadow:0 12px 36px rgba(0,0,0,.55),0 0 30px rgba(138,255,176,.35); opacity:0; pointer-events:none; visibility:hidden; }
+        .winner-celebration { position:fixed; z-index:100002; top:18%; left:50%; transform:translate(-50%,-12px) scale(.92); width:max-content; max-width:90vw; padding:14px 22px; border:2px solid #8affb0; border-radius:24px; background:linear-gradient(135deg,rgba(18,80,54,.97),rgba(20,35,70,.97)); color:#fff; text-align:center; font-weight:900; font-size:1.05rem; box-shadow:0 12px 36px rgba(0,0,0,.55),0 0 30px rgba(138,255,176,.35); opacity:0; pointer-events:none; visibility:hidden; }
         .winner-celebration.active { visibility:visible; animation:winnerToastIn .35s ease-out forwards, winnerToastOut .35s ease-in 3.65s forwards; }
         @keyframes winnerToastIn { to { opacity:1; transform:translate(-50%,0) scale(1); } }
         @keyframes winnerToastOut { to { opacity:0; transform:translate(-50%,-14px) scale(.96); visibility:hidden; } }
@@ -1411,9 +1410,6 @@
             }
         }
 
-        let wheelAnimationPlayedRounds = new Set();
-        let wheelAnimationPlaying = false;
-
         function playWheelAnimation(winners, winningNumber, round) {
             return new Promise(resolve => {
                 const overlay = document.getElementById('wheelAnimOverlay');
@@ -1550,7 +1546,7 @@
             });
         }
 
-                const winnerCelebrationRounds = new Set();
+        const winnerCelebrationRounds = new Set();
         function showWinnerCelebration(round, winners) {
             if (!currentUser || !Array.isArray(winners)) return;
             const me = String(currentDisplayName || '').trim().toLowerCase();
@@ -1570,7 +1566,7 @@
             setTimeout(() => toast.classList.remove('active'), 4100);
         }
 
-function displayWinningNumberCard(round, number, winners, winAmount) {
+        function displayWinningNumberCard(round, number, winners, winAmount) {
             const r = Number(round), n = Number(number);
             if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 200) return;
             if (!Array.isArray(winners)) return;
@@ -1590,6 +1586,7 @@ function displayWinningNumberCard(round, number, winners, winAmount) {
                 // If already played or currently playing, just show the card directly
                 renderWinningCardBody(n, winAmount, winners);
                 if (winnersModal) winnersModal.classList.add('active');
+                showWinnerCelebration(r, winners);
                 showWinnerCelebration(r, winners);
                 if (winners.filter(Boolean).length) playEmbeddedWinnerAnnouncement(r);
                 else playNoWinnerEffectOnce(r);
@@ -1611,7 +1608,6 @@ function displayWinningNumberCard(round, number, winners, winAmount) {
                 // Show the final winning card
                 renderWinningCardBody(n, winAmount, winners);
                 if (winnersModal) winnersModal.classList.add('active');
-                showWinnerCelebration(r, winners);
                 if (winners.filter(Boolean).length) {
                     playEmbeddedWinnerAnnouncement(r);
                     startFireworks();
@@ -1624,4 +1620,1271 @@ function displayWinningNumberCard(round, number, winners, winAmount) {
             });
         }
         
+        function resetWinningNumberCard() {
+            displayedCardRound = null; clearCardFetchRetry();
+            const numEl = document.getElementById('winningNumberBig');
+            if (numEl) numEl.textContent = '--';
+            if (winningCardAmountEl) winningCardAmountEl.classList.remove('show');
+            
+            // Reset wheel animation state
+            wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+            stopWheelSpinSound();
+            const ov = document.getElementById('wheelAnimOverlay');
+            if (ov) ov.classList.remove('active');
+            const wheelEl = document.getElementById('baWheel');
+            if (wheelEl) {
+                wheelEl.classList.remove('spinning');
+                wheelEl.style.transform = 'rotate(0deg)';
+            }
+        }
         
+        function tryFetchAndShowCard(round) {
+            if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== Number(round)) { clearCardFetchRetry(); return; }
+            fetchLastResultFromServer(round).then(data => {
+                if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== Number(round)) { clearCardFetchRetry(); return; }
+                if (!data) {
+                    if (cardFetchRetryCount < 8) {
+                        cardFetchRetryCount++;
+                        cardFetchRetryTimer = setTimeout(() => { cardFetchRetryTimer = null; tryFetchAndShowCard(round); }, 300 + cardFetchRetryCount * 250);
+                    } else clearCardFetchRetry();
+                    return;
+                }
+                lastResultData = data;
+                displayedCardRound = round;
+                displayWinningNumberCard(round, Number(data.winningNumber), Array.isArray(data.winners) ? data.winners : [], Number(data.winAmount) || 0);
+                clearCardFetchRetry();
+            });
+        }
+        
+        function applyCardState() {
+            const phase = engineState.gamePhase;
+            const round = Number(engineState.roundNumber);
+            if (phase !== 'results') {
+                if (winnersModal) winnersModal.classList.remove('active');
+                displayedCardRound = null; clearCardFetchRetry();
+                if (wheelAnimationPlaying) {
+                    wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+                    stopWheelSpinSound();
+                    const ov = document.getElementById('wheelAnimOverlay');
+                    if (ov) ov.classList.remove('active');
+                }
+                return;
+            }
+            if (!isFinite(round) || round <= 0) return;
+            if (displayedCardRound === round) return;
+            if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 200) {
+                displayedCardRound = round;
+                displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
+                clearCardFetchRetry();
+                return;
+            }
+            if (lastResultData && Number(lastResultData.round) === round) {
+                setCardLoadingState();
+                displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
+                return;
+            }
+            setCardLoadingState();
+        }
+        
+        function handleAuthoritativeResult(r) {
+            if (!r || r.round == null || r.winningNumber == null) return;
+            const incoming = Number(r.round);
+            if (!isFinite(incoming) || incoming <= 0) return;
+            const current = Number(engineState.roundNumber);
+            if (incoming > current || incoming < current - 1) return;
+            lastResultData = r;
+            if (incoming === current) applyCardState();
+        }
+        
+        function attachLastResultListener() {}
+        function detachLastResultListener() {}
+
+        // ============================================================
+        //  WALLET
+        // ============================================================
+        function syncWalletFromServer() {
+            if (currentUser && client) client.walletRefresh();
+        }
+        function refreshPendingTransactionStatus() {
+            if (currentUser && client) client.walletRefresh();
+        }
+        function updateWalletUI() {
+            if (!currentUser) return;
+            if (mainWalletEl) mainWalletEl.textContent = walletData.main;
+            if (playWalletEl) playWalletEl.textContent = walletData.play;
+            if (refWalletEl) refWalletEl.textContent = walletData.refEarn || 0;
+            if (walletUsername) walletUsername.textContent = currentDisplayName || currentUser;
+            if (pendingItem && pendingAmount) {
+                if (walletData.pending > 0) { pendingItem.style.display = 'inline-flex'; pendingAmount.textContent = walletData.pending; }
+                else pendingItem.style.display = 'none';
+            }
+            if (withdrawModal && withdrawModal.classList.contains('active') && withdrawAvailableBalance) {
+                withdrawAvailableBalance.textContent = walletData.main - walletData.pending;
+            }
+        }
+        function updateWelcomeUI() { if (currentUser && welcomeBalance) welcomeBalance.textContent = walletData.play; }
+        function walletDiagnostics() {
+            return {
+                uid: currentUser,
+                displayName: currentDisplayName,
+                telegramId: telegramUser?.id || null,
+                telegramUsername: telegramUser?.username || null,
+                main: safeNum(walletData.main),
+                play: safeNum(walletData.play),
+                pending: safeNum(walletData.pending),
+                refEarn: safeNum(walletData.refEarn),
+                server: SERVER_WS_URL,
+                updatedAt: walletData.updatedAt || 0
+            };
+        }
+        window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
+
+        // ============================================================
+        //  NOTIFICATIONS
+        // ============================================================
+        let notificationSeenKeys = new Set();
+        let txPopupQueue = [], txPopupActive = false, currentPopupNotificationKey = null;
+        let broadcastPopupQueue = [], broadcastPopupActive = false, currentBroadcastNotificationKey = null;
+
+        function listenNotifications() {}
+        function handleIncomingNotificationData(data, key) {
+            if (!data) return;
+            const isSticky = (data.type === 'sticky_broadcast') || (data.sticky === true);
+            if (data.read === true && !isSticky) return;
+            if (key && notificationSeenKeys.has(key) && !isSticky) return;
+            if (key) notificationSeenKeys.add(key);
+            if (isSticky) { showStickyOverlay(data.message || '', data.broadcastId || key || ('global_' + (data.timestamp || Date.now())), Number(data.timestamp) || 0); return; }
+            if (data.type === 'broadcast') { enqueueBroadcastPopup(data, key || ('broadcast_' + Date.now())); return; }
+            let status = data.status;
+            let isTxResult = data.type === 'transaction_result' || status === 'approved' || status === 'rejected';
+            if (isTxResult) enqueueTransactionPopup(Object.assign({}, data, { status: status || 'approved' }), key || data.txId || ('tx_' + Date.now()));
+            else if (data.message) {
+                // Filter out the winner announcement toast as requested
+                if (data.type === 'notification' && String(data.message).includes('You won')) {
+                    return; // Do nothing, skip showing the toast
+                }
+                showToast(data.message, 'info');
+            }
+        }
+        function enqueueBroadcastPopup(data, key) {
+            broadcastPopupQueue.push({ data, key });
+            if (!broadcastPopupActive) showNextBroadcastPopup();
+        }
+        function showNextBroadcastPopup() {
+            if (!broadcastModal || !broadcastPopupQueue.length) { broadcastPopupActive = false; return; }
+            broadcastPopupActive = true;
+            const item = broadcastPopupQueue.shift();
+            currentBroadcastNotificationKey = item.key;
+            if (broadcastTitleEl) broadcastTitleEl.textContent = 'Message from Winzo';
+            if (broadcastMsgEl) broadcastMsgEl.textContent = item.data.message || '';
+            try { playTone(660, 0.22, 'sine', 0.20); } catch (e) {}
+            broadcastModal.classList.add('active');
+        }
+        if (broadcastOkBtn) {
+            broadcastOkBtn.onclick = function () {
+                if (broadcastModal) broadcastModal.classList.remove('active');
+                if (currentBroadcastNotificationKey && client) { client.send({ type: 'notification-read', id: currentBroadcastNotificationKey }); currentBroadcastNotificationKey = null; }
+                broadcastPopupActive = false;
+                setTimeout(showNextBroadcastPopup, 260);
+            };
+        }
+        function showStickyOverlay(message, id, ts) {
+            if (activeStickyBroadcast && activeStickyBroadcast.id === id && activeStickyBroadcast.message === message) return;
+            activeStickyBroadcast = { id, message, timestamp: ts || Date.now() };
+            gamePausedBySticky = true;
+            if (stickyMsgEl) stickyMsgEl.textContent = message || 'Service update in progress…';
+            if (stickyOverlay) stickyOverlay.classList.add('active');
+            stopTimer(); stopResultsCountdown();
+            try { stopFireworks(); } catch (e) {}
+            document.querySelectorAll('.num-btn').forEach(btn => btn.disabled = true);
+            updateStatus('⏸ Game paused by admin.');
+        }
+        function hideStickyOverlay() {
+            if (!gamePausedBySticky && !activeStickyBroadcast) {
+                if (stickyOverlay) stickyOverlay.classList.remove('active');
+                return;
+            }
+            activeStickyBroadcast = null; gamePausedBySticky = false;
+            if (stickyOverlay) stickyOverlay.classList.remove('active');
+            updateStatus('▶️ Game resumed.');
+            try { if (engineState.gamePhase === 'selection' && !isTimerRunning) startTimer(); } catch (e) {}
+            renderNumberPicker();
+        }
+        function listenStickyBroadcast() {}
+        function stopStickyBroadcastListener() { hideStickyOverlay(); }
+        function enqueueTransactionPopup(data, key) {
+            txPopupQueue.push({ data, key });
+            if (!txPopupActive) showNextTransactionPopup();
+        }
+        function showNextTransactionPopup() {
+            const modal = document.getElementById('transactionResultModal');
+            if (!modal || !txPopupQueue.length) { txPopupActive = false; return; }
+            txPopupActive = true;
+            const item = txPopupQueue.shift();
+            currentPopupNotificationKey = item.key;
+            const isApproved = item.data.status === 'approved';
+            modal.classList.remove('approved', 'rejected', 'active');
+            modal.classList.add(isApproved ? 'approved' : 'rejected');
+            const icon = document.getElementById('txResultIcon');
+            const title = document.getElementById('txResultTitle');
+            const msg = document.getElementById('txResultMessage');
+            if (icon) icon.textContent = isApproved ? '✅' : '❌';
+            if (title) title.textContent = isApproved ? 'Request Approved' : 'Request Rejected';
+            if (msg) msg.textContent = isApproved ? 'Your request is approved' : ((item.data.reason || '').trim() || 'Your request was rejected by admin.');
+            try { playTone(isApproved ? 880 : 330, 0.28, 'sine', 0.22); } catch (e) {}
+            void modal.offsetWidth; modal.classList.add('active');
+        }
+        (function bindTxResultOk(){
+            const btn = document.getElementById('txResultOkBtn');
+            if (btn) btn.onclick = function() {
+                const modal = document.getElementById('transactionResultModal');
+                if (modal) modal.classList.remove('active');
+                if (currentPopupNotificationKey && client) { client.send({ type: 'notification-read', id: currentPopupNotificationKey }); currentPopupNotificationKey = null; }
+                txPopupActive = false;
+                setTimeout(showNextTransactionPopup, 260);
+            };
+        })();
+        function clearTransactionPopups() {
+            txPopupQueue = []; txPopupActive = false; currentPopupNotificationKey = null;
+            const modal = document.getElementById('transactionResultModal');
+            if (modal) modal.classList.remove('active');
+            broadcastPopupQueue = []; broadcastPopupActive = false; currentBroadcastNotificationKey = null;
+            if (broadcastModal) broadcastModal.classList.remove('active');
+        }
+        function stopNotificationListener() { notificationSeenKeys.clear(); }
+        function showToast(message, type = 'info') {
+            if (!welcomeToast) return;
+            const iconMap = { 'info': 'ℹ️', 'success': '✅', 'warning': '⚠️', 'error': '❌' };
+            const iconEl = welcomeToast.querySelector('.icon');
+            const titleEl = welcomeToast.querySelector('h3');
+            const msgEl = welcomeToast.querySelector('p');
+            if (iconEl) iconEl.textContent = iconMap[type] || 'ℹ️';
+            if (titleEl) titleEl.textContent = type === 'info' ? 'Notification' : 'Alert';
+            if (msgEl) msgEl.textContent = String(message).replace(/<[^>]*>/g, '');
+            welcomeToast.classList.add('active');
+            clearTimeout(welcomeToast._hideTimer);
+            welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 5000);
+        }
+
+        // ============================================================
+        //  DEPOSIT / WITHDRAW
+        // ============================================================
+        function openDepositModal() {
+            if (depositPlayBalance) depositPlayBalance.textContent = walletData.play;
+            if (depositError) depositError.textContent = '';
+            if (depositAmount) depositAmount.value = '';
+            if (depositReference) depositReference.value = '';
+            if (depositImage) depositImage.value = '';
+            if (ocrStatus) ocrStatus.textContent = '';
+            if (depositPasteText) depositPasteText.value = '';
+            if (textExtractStatus) { textExtractStatus.textContent = ''; textExtractStatus.style.color = '#ffd866'; }
+            if (depositModal) depositModal.classList.add('active');
+            closeMoreDropdown();
+            if (!Guide.hasSeen('deposit')) setTimeout(() => Guide.start(getDepositGuideSteps(), 'deposit'), 380);
+        }
+        function depositToPlay(amount, reference, imageFile) {
+            if (!currentUser) return false;
+            if (amount <= 0) { if (depositError) depositError.textContent = 'Please enter a valid amount.'; return false; }
+            if (!reference && !imageFile) { if (depositError) depositError.textContent = 'Please provide a reference number or upload a screenshot.'; return false; }
+            if (depositError) depositError.textContent = '';
+            if (depositModal) depositModal.classList.remove('active');
+            return requestTransaction('deposit', amount, reference || '', imageFile || null);
+        }
+        function withdrawRequest(amount, name, phone) {
+            if (!currentUser) return false;
+            amount = Number(amount);
+            name = safeProductionName(name);
+            phone = safeProductionName(phone);
+            if (!Number.isFinite(amount) || amount <= 0 || !name || !phone) {
+                if (withdrawError) withdrawError.textContent = 'Please fill in all fields.';
+                return false;
+            }
+            if (safeNum(walletData.main) < amount) {
+                if (withdrawError) withdrawError.textContent = 'Insufficient main balance.';
+                return false;
+            }
+            if (withdrawError) withdrawError.textContent = '';
+            if (withdrawModal) withdrawModal.classList.remove('active');
+            return requestTransaction('withdraw', amount, '', null, { name, phone });
+        }
+        function transferToPlay(amount) {
+            if (!currentUser) return false;
+            amount = Number(amount);
+            if (!amount || amount <= 0) { alert('Enter a valid amount.'); return false; }
+            if (safeNum(walletData.main) - safeNum(walletData.pending) < amount) {
+                alert('Insufficient available main balance.');
+                return false;
+            }
+            if (client) client.transfer(amount);
+            return true;
+        }
+
+        // ---- OCR ----
+        let ocrBusy = false; let lastOCRResult = { reference: null, amount: null };
+        async function extractReferenceFromImage(file) {
+            if (!file) { if (ocrStatus) ocrStatus.textContent = '⚠️ No image selected.'; return null; }
+            if (ocrBusy) return lastOCRResult;
+            ocrBusy = true;
+            if (ocrProgressModal) ocrProgressModal.classList.add('active');
+            if (ocrSpinner) ocrSpinner.style.display = 'block';
+            if (ocrDoneIcon) ocrDoneIcon.classList.remove('show');
+            if (ocrProgressStatus) ocrProgressStatus.textContent = 'Preparing image...';
+            if (ocrProgressSub) ocrProgressSub.textContent = 'Running OCR passes.';
+            const objectUrls = [];
+            try {
+                const imageUrl = URL.createObjectURL(file); objectUrls.push(imageUrl);
+                const img = await new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = reject; im.src = imageUrl; });
+                const scale = 2;
+                const w = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+                const h = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+                const c = document.createElement('canvas'); c.width = w; c.height = h;
+                const ictx = c.getContext('2d', { willReadFrequently: true });
+                ictx.drawImage(img, 0, 0, w, h);
+                const result = await Tesseract.recognize(c.toDataURL('image/png'), 'eng', { logger: m => { if (m.status === 'recognizing text' && ocrProgressSub) ocrProgressSub.textContent = `OCR: ${Math.round(m.progress * 100)}%`; } });
+                const text = result.data.text || '';
+                const seen = new Set(); const refCandidates = [];
+                const tokens = text.replace(/[\u2010-\u2015]/g, '-').replace(/[\r\n]+/g, ' ').match(/[A-Z0-9]{1,24}/gi) || [];
+                tokens.forEach(t => { let v = t.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (v.length === 10 && /[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } });
+                for (let i = 0; i < tokens.length; i++) {
+                    let joined = '';
+                    for (let j = i; j < Math.min(tokens.length, i + 5); j++) {
+                        joined += tokens[j];
+                        if (joined.length > 10) break;
+                        if (joined.length === 10) { let v = joined.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (/[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } }
+                    }
+                }
+                let amount = null;
+                for (const line of text.split('\n')) {
+                    if (/ETB|Birr/i.test(line)) {
+                        const m = line.match(/-?\s*([\d,]+\.?\d*)/);
+                        if (m) { const parsed = parseFloat(m[1].replace(/,/g, '')); if (!isNaN(parsed) && parsed > 0) amount = parsed; }
+                        break;
+                    }
+                }
+                if (ocrSpinner) ocrSpinner.style.display = 'none';
+                if (ocrDoneIcon) ocrDoneIcon.classList.add('show');
+                const resultObj = { reference: refCandidates.length ? refCandidates[0] : null, amount };
+                if (ocrProgressStatus) ocrProgressStatus.textContent = resultObj.reference ? '✅ Reference found!' : '⚠️ Reference not found.';
+                if (ocrProgressSub) ocrProgressSub.textContent = `Ref: ${resultObj.reference || '—'} Amount: ${resultObj.amount || '—'}`;
+                setTimeout(() => { if (ocrProgressModal) ocrProgressModal.classList.remove('active'); }, 1500);
+                lastOCRResult = resultObj; ocrBusy = false;
+                return resultObj;
+            } catch (e) {
+                if (ocrSpinner) ocrSpinner.style.display = 'none';
+                if (ocrDoneIcon) ocrDoneIcon.classList.add('show');
+                if (ocrProgressStatus) ocrProgressStatus.textContent = '❌ OCR failed.';
+                setTimeout(() => { if (ocrProgressModal) ocrProgressModal.classList.remove('active'); }, 1500);
+                lastOCRResult = { reference: null, amount: null }; ocrBusy = false;
+                return lastOCRResult;
+            } finally { objectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); }
+        }
+        if (depositImage) {
+            depositImage.addEventListener('change', async function() {
+                const file = this.files[0];
+                if (!file) { if (ocrStatus) ocrStatus.textContent = ''; return; }
+                const result = await extractReferenceFromImage(file);
+                if (result) {
+                    if (result.reference && depositReference) depositReference.value = result.reference;
+                    if (result.amount && depositAmount) depositAmount.value = result.amount;
+                    if (ocrStatus) ocrStatus.textContent = '✅ Extracted data.';
+                } else if (ocrStatus) ocrStatus.textContent = '⚠️ No data extracted.';
+            });
+        }
+        if (extractRefBtn) {
+            extractRefBtn.onclick = async function() {
+                const file = depositImage ? depositImage.files[0] : null;
+                if (!file) { if (ocrStatus) ocrStatus.textContent = '⚠️ Please select an image first.'; return; }
+                const result = await extractReferenceFromImage(file);
+                if (result) {
+                    if (result.reference && depositReference) depositReference.value = result.reference;
+                    if (result.amount && depositAmount) depositAmount.value = result.amount;
+                    if (ocrStatus) ocrStatus.textContent = '✅ Extracted data.';
+                } else if (ocrStatus) ocrStatus.textContent = '⚠️ No data extracted.';
+            };
+        }
+        const depositPasteText = $('depositPasteText');
+        const extractFromTextBtn = $('extractFromTextBtn');
+        const textExtractStatus = $('textExtractStatus');
+        function extractDataFromText(text) {
+            const result = { reference: null, amount: null };
+            if (!text || typeof text !== 'string') return result;
+            const raw = text.replace(/\u00A0/g, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[\u2010-\u2015]/g, '-');
+            const urlMatch = raw.match(/receipt\/([A-Za-z0-9]{6,24})/i);
+            if (urlMatch && urlMatch[1]) result.reference = urlMatch[1].toUpperCase();
+            if (!result.reference) {
+                const tokens = raw.match(/[A-Z0-9]{8,24}/gi) || [];
+                for (const t of tokens) {
+                    const v = t.toUpperCase();
+                    if (v.length < 8 || v.length > 24 || !/[A-Z]/.test(v) || !/\d/.test(v) || /^\d+$/.test(v)) continue;
+                    if (/^(ETB|VAT|SMS|HTTP|HTTPS|WWW)$/.test(v)) continue;
+                    result.reference = v;
+                    break;
+                }
+            }
+            const am = raw.match(/(\d+(?:[,\s]\d{3})*(?:\.\d{1,2})?)\s*(?:ብር|Birr|ETB|Br\b)/i);
+            if (am && am[1]) { const n = parseFloat(String(am[1]).replace(/[,\s]/g, '')); if (!isNaN(n) && n > 0) result.amount = n; }
+            if (result.amount == null) {
+                const am2 = raw.match(/(?:ብር|Birr|ETB|Br)\s*(\d+(?:[,\s]\d{3})*(?:\.\d{1,2})?)/i);
+                if (am2 && am2[1]) { const n = parseFloat(String(am2[1]).replace(/[,\s]/g, '')); if (!isNaN(n) && n > 0) result.amount = n; }
+            }
+            return result;
+        }
+        function applyExtractedDataToDepositForm(extracted) {
+            if (!extracted) return false;
+            const statusEl2 = document.getElementById('textExtractStatus');
+            let any = false;
+            if (extracted.amount != null && depositAmount) { depositAmount.value = extracted.amount; any = true; }
+            if (extracted.reference && depositReference) { depositReference.value = extracted.reference; any = true; }
+            if (any) {
+                if (depositError) depositError.textContent = '';
+                if (statusEl2) { statusEl2.textContent = `✅ Extracted · Amount: ${extracted.amount ?? '—'} · Ref: ${extracted.reference || '—'}`; statusEl2.style.color = '#8affb0'; }
+            } else if (statusEl2) { statusEl2.textContent = '⚠️ Could not detect. Type manually.'; statusEl2.style.color = '#ffd866'; }
+            return any;
+        }
+        if (depositPasteText) {
+            depositPasteText.addEventListener('paste', function() {
+                setTimeout(() => {
+                    const text = depositPasteText.value;
+                    if (text && text.trim()) applyExtractedDataToDepositForm(extractDataFromText(text));
+                }, 50);
+            });
+        }
+        if (extractFromTextBtn) {
+            extractFromTextBtn.onclick = function() {
+                const text = depositPasteText ? depositPasteText.value : '';
+                if (!text || !text.trim()) { if (textExtractStatus) { textExtractStatus.textContent = '⚠️ Paste the SMS first.'; textExtractStatus.style.color = '#ffd866'; } return; }
+                applyExtractedDataToDepositForm(extractDataFromText(text));
+            };
+        }
+
+        // ============================================================
+        //  SCREEN SWITCHING
+        // ============================================================
+        function showAuthScreen() {
+            if (authScreen) authScreen.style.display = 'flex';
+            if (welcomeScreen) welcomeScreen.style.display = 'none';
+            if (gameScreen) gameScreen.style.display = 'none';
+            if (authError) authError.textContent = '';
+            setConnectionStatus(false, '📡 Ready');
+            DB.setSavedBet(null);
+            telegramDetectedUsername = null;
+            telegramDetectedDisplayName = null;
+            currentDisplayName = null;
+            if (authUsername) {
+                authUsername.value = '';
+                authUsername.placeholder = 'Telegram detected name';
+                authUsername.readOnly = true;
+            }
+            stopNotificationListener(); stopStickyBroadcastListener(); stopResilienceEngine();
+            attemptTelegramDetection();
+        }
+        function showWelcomeScreen() {
+            if (authScreen) authScreen.style.display = 'none';
+            if (welcomeScreen) welcomeScreen.style.display = 'flex';
+            if (gameScreen) gameScreen.style.display = 'none';
+            updateWelcomeUI();
+            stopTimer(); stopResultsCountdown();
+            stopResilienceEngine();
+            syncWalletFromServer();
+            enableNetworkListener();
+            if (!DB.getToastShown()) {
+                if (welcomeToast) welcomeToast.classList.add('active');
+                DB.setToastShown();
+                setTimeout(() => { if (welcomeToast) welcomeToast.classList.remove('active'); }, 5000);
+            }
+        }
+        function showGameScreen() {
+            if (authScreen) authScreen.style.display = 'none';
+            if (welcomeScreen) welcomeScreen.style.display = 'none';
+            if (gameScreen) gameScreen.style.display = 'flex';
+            if (modeLabel) modeLabel.textContent = currentBet + ' Birr';
+            if (betDisplay) betDisplay.textContent = currentBet;
+            updateWalletUI(); updatePickStatus(); updateTotalBetDisplay();
+            DB.setSavedBet(currentBet);
+            enableNetworkListener();
+            requestAnimationFrame(() => renderNumberPicker(true));
+        }
+
+        // ============================================================
+        //  LOGIN FLOW
+        // ============================================================
+        function resolveLoginUsername() {
+            const displayName = authUsername ? authUsername.value.trim() : '';
+            if (!DEV_MODE && !(tg && tg.initData)) {
+                if (authError) authError.textContent = 'Please open Winzo from the Telegram Mini App.';
+                return null;
+            }
+            if (DEV_MODE && !displayName) { if (authError) authError.textContent = 'Enter a development username.'; return null; }
+            if (!DEV_MODE && !telegramUser) {
+                if (authError) authError.textContent = 'Telegram user could not be detected. Please reopen Winzo from Telegram.';
+                return null;
+            }
+            return displayName || telegramDetectedDisplayName || telegramDetectedUsername || '';
+        }
+        async function beginSession(displayName) {
+            currentDisplayName = displayName;
+            currentUser = null;
+            DB.setSavedCredentials('', '');
+            if (authError) authError.textContent = '';
+            showWelcomeScreen();
+            setConnectionStatus(false, '⚡ Connecting to game server…');
+            let initData = (tg && tg.initData) ? tg.initData : '';
+            if (!initData && isTelegram) initData = await waitForTelegramInitData(5000);
+            if (client) client.connect(initData, pendingReferralCode, null, displayName);
+            else { console.error('[WINZO] client not initialized'); }
+        }
+        function handleLogin() { const u = resolveLoginUsername(); if (u) beginSession(u); }
+        function handleSignup() { const u = resolveLoginUsername(); if (u) beginSession(u); }
+        function clearAllLocalData() {
+            localStorage.removeItem('bingo_current_user'); localStorage.removeItem('bingo_saved_bet');
+            localStorage.removeItem('bingo_toast_shown'); localStorage.removeItem('bingo_app_version');
+        }
+
+        // ============================================================
+        //  LOGOUT
+        // ============================================================
+        function performLogout() {
+            localSelectionRound = null; localSelectionPicks = [];
+            if (client) client.disconnect();
+            detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
+            stopTimer(); stopResultsCountdown();
+            stopNetworkListener(); stopNotificationListener(); stopStickyBroadcastListener();
+            clearTransactionPopups();
+            clearAllLocalData();
+            currentUser = null; currentBet = 15; currentRoom = 'room_15';
+            isGameInitialized = false;
+            walletData = { main: 0, play: 0, pending: 0, refEarn: 0 };
+            engineState = {
+                players: {}, allTakenNumbers: new Set(), drawnNumbers: [], winners: [],
+                gamePhase: 'selection', roundNumber: 1, timer: 30, activePlayersCount: 0,
+                playerNames: [], prizePool: 0, winnersModalShown: false
+            };
+            lastRoomSnapshotRaw = null; displayedCardRound = null; lastResultData = null;
+            wheelAnimationPlayedRounds.clear(); wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+            gamePausedBySticky = false; activeStickyBroadcast = null;
+            closeMoreDropdown(); hideWaitingModal();
+            if (welcomeToast) welcomeToast.classList.remove('active');
+            stopFireworks();
+            if (transactionModal) transactionModal.classList.remove('active');
+            if (winnersModal) winnersModal.classList.remove('active');
+            if (stickyOverlay) stickyOverlay.classList.remove('active');
+            if (broadcastModal) broadcastModal.classList.remove('active');
+            try { Guide.stop(); } catch (e) {}
+            resetWinningNumberCard();
+            updateWalletUI(); updateAllUI(); showAuthScreen();
+        }
+
+        // ============================================================
+        //  ROOM SELECTION
+        // ============================================================
+        function resetEngineStateForNewRound() {
+            localSelectionRound = null; localSelectionPicks = [];
+            if (currentUser && engineState.players[currentUser]) {
+                const p = engineState.players[currentUser];
+                p.pick = null; p.picks = []; p.ready = false; p.betDeducted = false; p.betSources = {};
+            }
+            engineState.allTakenNumbers = new Set();
+            engineState.drawnNumbers = []; engineState.winners = [];
+            engineState.gamePhase = 'selection'; engineState.waitingModalShown = false;
+            engineState.prizePool = 0; engineState.winnersModalShown = false;
+            lastRoomSnapshotRaw = null; displayedCardRound = null; lastResultData = null;
+            clearCardFetchRetry();
+            if (winnersModal) winnersModal.classList.remove('active');
+            resetWinningNumberCard();
+            wheelAnimationPlayedRounds.clear(); wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+        }
+        function selectBet(amount) {
+            if (!currentUser) return;
+            detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
+            stopTimer();
+            isGameInitialized = false;
+            resetEngineStateForNewRound();
+            currentBet = amount;
+            currentRoom = amount === 15 ? 'room_15' : 'room_30';
+            DB.setSavedBet(amount);
+            showGameScreen();
+            renderNumberPicker(true);
+            updateTotalBetDisplay();
+            initGameConnection();
+            updateStatus(`🔄 Joined ${amount} Birr room. Pick numbers!`);
+        }
+        function switchRoom() {
+            if (currentUser) {
+                if (getMyPicks().length) {
+                    if (!confirm('You have active picks. Switching rooms will clear them. Continue?')) return;
+                }
+                if (client) client.leave();
+            }
+            detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
+            stopTimer();
+            isGameInitialized = false;
+            resetEngineStateForNewRound();
+            DB.setSavedBet(null);
+            showWelcomeScreen();
+            updateStatus('🔄 Choose your room.');
+            closeMoreDropdown(); hideWaitingModal();
+            if (timerDisplay) timerDisplay.textContent = '30';
+            if (prizeDisplay) prizeDisplay.textContent = '0';
+            if (playerCountEl) playerCountEl.textContent = '0';
+            if (gamePhaseLabel) gamePhaseLabel.textContent = '⏳ Selecting';
+            renderNumberPicker(); updatePickStatus(); updateWalletUI(); updateTotalBetDisplay();
+        }
+        function toggleMoreDropdown(e) { e.stopPropagation(); if (moreDropdown) moreDropdown.classList.toggle('open'); }
+        function openReferralModal() {
+            if (!currentUser) return;
+            const link = `${TELEGRAM_BOT_LINK}?startapp=ref_${encodeURIComponent(currentUser)}`;
+            if (referralLink) referralLink.value = link;
+            if (referralModal) referralModal.classList.add('active');
+            closeMoreDropdown();
+        }
+        function closeMoreDropdown() { if (moreDropdown) moreDropdown.classList.remove('open'); }
+        document.addEventListener('click', (e) => { if (!e.target.closest('.more-wrapper')) closeMoreDropdown(); });
+
+        // ============================================================
+        //  TIMER
+        // ============================================================
+        function startTimer() {
+            stopTimer();
+            if (engineState.gamePhase !== 'selection') return;
+            if (gamePausedBySticky) return;
+            if (!phaseDeadline) return;
+            isTimerRunning = true;
+            const tick = () => {
+                if (gamePausedBySticky || engineState.gamePhase !== 'selection') { stopTimer(); return; }
+                const remaining = getRemainingSeconds(phaseDeadline);
+                engineState.timer = remaining;
+                if (timerDisplay) timerDisplay.textContent = remaining;
+                if (remaining <= 0) stopTimer();
+            };
+            tick();
+            timerInterval = setInterval(tick, 500);
+        }
+        function stopTimer() {
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            isTimerRunning = false;
+        }
+        function startResultsCountdown() {
+            if (isResultsCountdownRunning) return;
+            isResultsCountdownRunning = true;
+            let remaining = getRemainingSeconds(phaseDeadline);
+            if (!remaining || remaining <= 0) remaining = DEFAULT_RESULTS_SECONDS;
+            if (timerDisplay) timerDisplay.textContent = remaining;
+            resultsCountdownInterval = setInterval(() => {
+                remaining -= 1;
+                if (timerDisplay) timerDisplay.textContent = Math.max(0, remaining);
+                if (remaining <= 0) {
+                    stopResultsCountdown();
+                    if (winnersModal) winnersModal.classList.remove('active');
+                }
+            }, 1000);
+        }
+        function stopResultsCountdown() {
+            if (resultsCountdownInterval) { clearInterval(resultsCountdownInterval); resultsCountdownInterval = null; }
+            isResultsCountdownRunning = false;
+        }
+
+        // ============================================================
+        //  UI UPDATES
+        // ============================================================
+        function updateUIFromState() {
+            if (updatePending) return;
+            updatePending = true;
+            requestAnimationFrame(() => {
+                if (playerCountEl) playerCountEl.textContent = engineState.activePlayersCount;
+                const labels = { 'selection': '⏳ Selecting', 'spinning': '🎲 Rolling', 'results': '🏆 Results' };
+                if (gamePhaseLabel) gamePhaseLabel.textContent = labels[engineState.gamePhase] || '⏳';
+                renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+                updatePending = false;
+            });
+        }
+        function updatePickStatus() {
+            const picks = getMyPicks();
+            const play = safeNum(walletData.play);
+            const bet = safeNum(currentBet);
+            const insufficient = play < bet;
+            if (pickStatus) {
+                if (gamePausedBySticky) pickStatus.innerHTML = `⏸ <span class="highlight">Paused by admin</span>`;
+                else if (insufficient && !picks.length) pickStatus.innerHTML = `💰 Insufficient play balance (${play} Birr) — transfer from Main wallet to pick`;
+                else if (insufficient) pickStatus.innerHTML = `💰 Low play balance · picks: <span class="highlight">${picks.join(', ')}</span> (${picks.length}/${MAX_PICKS_PER_ROUND})`;
+                else if (picks.length) pickStatus.innerHTML = `🎯 Your picks: <span class="highlight">${picks.join(', ')}</span> (${picks.length}/${MAX_PICKS_PER_ROUND})`;
+                else pickStatus.innerHTML = `🎯 Pick up to <span class="highlight">3</span> numbers`;
+            }
+            if (selectedCountSpan) {
+                if (picks.length) { selectedCountSpan.textContent = picks.join(', '); selectedCountSpan.style.color = '#ffcc44'; }
+                else { selectedCountSpan.textContent = 'None'; selectedCountSpan.style.color = '#b8a0d0'; }
+            }
+        }
+        function updateAllUI() {
+            updateWalletUI();
+            if (playerCountEl) playerCountEl.textContent = engineState.activePlayersCount;
+            if (timerDisplay) timerDisplay.textContent = engineState.timer;
+            const labels = { 'selection': '⏳ Selecting', 'spinning': '🎲 Rolling', 'results': '🏆 Results' };
+            if (gamePhaseLabel) gamePhaseLabel.textContent = labels[engineState.gamePhase] || '⏳';
+            updatePickStatus(); renderNumberPicker();
+            updatePrizeDisplay(); updateTotalBetDisplay();
+        }
+        function renderNumberPicker(showLoading = false) {
+            if (!numPicker) return;
+            if (productionRenderQueued) return;
+            productionRenderQueued = true;
+            requestAnimationFrame(() => {
+                productionRenderQueued = false;
+                if (!currentUser) {
+                    numPicker.innerHTML = '<div style="color:#7a6a9a;font-size:0.7rem;text-align:center;padding:20px;">Please log in</div>';
+                    return;
+                }
+                if (showLoading || !isGameInitialized || Object.keys(engineState.players || {}).length === 0) {
+                    let loading = '';
+                    for (let i = 1; i <= 40; i++) loading += '<div class="num-btn loading">•</div>';
+                    numPicker.innerHTML = loading;
+                    return;
+                }
+                let buttons = numPicker.querySelectorAll('.num-btn[data-num]');
+                if (buttons.length !== 200) {
+                    let html = '';
+                    for (let i = 1; i <= 200; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
+                    numPicker.innerHTML = html;
+                    buttons = numPicker.querySelectorAll('.num-btn[data-num]');
+                }
+                const myPicks = getMyPicks();
+                const insufficientBalance = safeNum(walletData.play) < safeNum(currentBet);
+                const locked = gamePausedBySticky || engineState.gamePhase !== 'selection' ||
+                    engineState.activePlayersCount <= 1 || !isNetworkConnected;
+                buttons.forEach(btn => {
+                    const n = Number(btn.dataset.num);
+                    const selected = myPicks.includes(n);
+                    const taken = engineState.allTakenNumbers.has(n) && !selected;
+                    const pending = pendingPickOps.has(n);
+                    const noFunds = insufficientBalance && !selected;
+                    btn.classList.toggle('selected', selected);
+                    btn.classList.toggle('taken', taken);
+                    btn.classList.toggle('loading', pending);
+                    btn.classList.toggle('no-funds', noFunds);
+                    btn.disabled = locked || taken || pending || noFunds ||
+                        (myPicks.length >= MAX_PICKS_PER_ROUND && !selected);
+                });
+                updatePickStatus();
+                updateTotalBetDisplay();
+            });
+        }
+        function showWaitingModal() { if (waitingModal) waitingModal.classList.add('active'); }
+        function hideWaitingModal() { if (waitingModal) waitingModal.classList.remove('active'); }
+        if (closeWaitingBtn) closeWaitingBtn.onclick = () => hideWaitingModal();
+        if (transactionCloseBtn) {
+            transactionCloseBtn.onclick = () => {
+                if (transactionModal) transactionModal.classList.remove('active');
+            };
+        }
+
+        // ============================================================
+        //  PICK HANDLERS
+        // ============================================================
+        function handlePickOk(number) {
+            const num = Number(number);
+            pendingPickOps.delete(num);
+            renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+            updateStatus(`✅ Picked ${num} for ${currentBet} Birr!`);
+        }
+        function handlePickFail(number, reason) {
+            const num = Number(number);
+            pendingPickOps.delete(num);
+            const myPicks = getMyPicks();
+            if (myPicks.includes(num)) {
+                const remaining = myPicks.filter(n => n !== num);
+                syncLocalPlayerPicks(remaining, engineState.roundNumber, remaining.length > 0);
+            }
+            if (client) client.walletRefresh();
+            renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+            const play = safeNum(walletData.play);
+            const msgs = {
+                'taken':         `❌ Number ${num} was just taken!`,
+                'insufficient':  `⚠️ Insufficient play balance. Current: ${play} Birr.`,
+                'user-not-found':`⚠️ Account not found on server. Please reconnect.`,
+                'debit-error':   `⚠️ Server error while deducting balance. Try again.`,
+                'max-picks':     `❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`,
+                'not-selection': `⛔ Cannot pick numbers now.`,
+                'duplicate':     `❌ Already picked.`,
+                'not-picked':    `↩️ Not in your picks.`,
+                'not-owner':     `⚠️ This number isn't yours.`,
+                'refund-failed': `⚠️ Could not release. Try again.`,
+                'range':         `⚠️ Invalid number.`,
+                'not-authed':    `🔑 Please log in.`,
+            };
+            updateStatus(msgs[reason] || `⚠️ ${reason}`);
+        }
+
+        // ============================================================
+        //  NUMBER PICKER TOUCH HANDLING
+        // ============================================================
+        if (numPicker) {
+            const handleNumberPick = function(e) {
+                const btn = e.target.closest('.num-btn[data-num]');
+                if (!btn || btn.disabled || btn.classList.contains('loading')) return;
+                const num = Number(btn.dataset.num);
+                if (!Number.isInteger(num) || num < 1 || num > 200) return;
+                if (pendingPickOps.has(num)) return;
+                const opRound = Number(engineState.roundNumber);
+                if (gamePausedBySticky || !isNetworkConnected) { updateStatus('⏸ Game is temporarily unavailable.'); return; }
+                if (engineState.gamePhase !== 'selection') { updateStatus('⛔ Cannot pick numbers now.'); return; }
+                if (engineState.activePlayersCount <= 1) { updateStatus('⏳ Waiting for more players...'); return; }
+                const myPicks = getMyPicks();
+                const removing = myPicks.includes(num);
+                if (removing) {
+                    pendingPickOps.add(num);
+                    syncLocalPlayerPicks(myPicks.filter(n => n !== num), opRound, myPicks.length > 1);
+                    renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+                    if (client) client.unpick(num);
+                    return;
+                }
+                if (myPicks.length >= MAX_PICKS_PER_ROUND) { updateStatus(`❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`); return; }
+                if (engineState.allTakenNumbers.has(num)) { updateStatus(`❌ Number ${num} is already taken!`); return; }
+                if (safeNum(walletData.play) < safeNum(currentBet)) {
+                    updateStatus(`⚠️ Insufficient play balance (${safeNum(walletData.play)} Birr). Need ${safeNum(currentBet)} Birr.`);
+                    if (client) client.walletRefresh();
+                    return;
+                }
+                pendingPickOps.add(num);
+                syncLocalPlayerPicks([...myPicks, num], opRound, true);
+                renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
+                if (client) client.pick(num);
+            };
+
+            let touchStartX = 0, touchStartY = 0, touchStartTime = 0, touchMoved = false;
+            let activeTouchTarget = null;
+            const SWIPE_THRESHOLD = 12;
+            const TAP_MAX_DURATION = 400;
+
+            numPicker.addEventListener('touchstart', function(e) {
+                if (e.touches.length !== 1) return;
+                const touch = e.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                touchStartTime = Date.now();
+                touchMoved = false;
+                activeTouchTarget = e.target.closest('.num-btn[data-num]') || null;
+            }, { passive: true });
+
+            numPicker.addEventListener('touchmove', function(e) {
+                if (e.touches.length !== 1) return;
+                const touch = e.touches[0];
+                const dx = Math.abs(touch.clientX - touchStartX);
+                const dy = Math.abs(touch.clientY - touchStartY);
+                if (dx > SWIPE_THRESHOLD || dy > SWIPE_THRESHOLD) {
+                    touchMoved = true;
+                }
+            }, { passive: true });
+
+            numPicker.addEventListener('touchend', function(e) {
+                const duration = Date.now() - touchStartTime;
+                if (touchMoved || duration > TAP_MAX_DURATION) {
+                    touchMoved = false; activeTouchTarget = null;
+                    return;
+                }
+                const touch = e.changedTouches[0];
+                const target = document.elementFromPoint(touch.clientX, touch.clientY);
+                const btn = target ? target.closest('.num-btn[data-num]') : activeTouchTarget;
+                activeTouchTarget = null;
+                touchMoved = false;
+                if (!btn) return;
+                e.preventDefault();
+                handleNumberPick({ target: btn });
+            }, { passive: false });
+
+            numPicker.addEventListener('touchcancel', function() {
+                touchMoved = false;
+                activeTouchTarget = null;
+            }, { passive: true });
+
+            numPicker.addEventListener('click', function(e) {
+                if (e.pointerType === 'touch') return;
+                if (e._winzoHandled) return;
+                e._winzoHandled = true;
+                handleNumberPick(e);
+            });
+        }
+
+        // ============================================================
+        //  SERVER CLIENT
+        // ============================================================
+        class WinzoClient {
+            constructor(handlers) {
+                Object.assign(this, handlers);
+                this.ws = null; this.backoff = 800;
+                this.initData = ''; this.refCode = null; this.roomId = null; this._ka = null;
+                this.devUsername = '';
+                this.pendingTransactionImages = new Map();
+                this.connecting = false;
+            }
+            async connect(initData, refCode, roomId, devUsername) {
+                this.initData = initData || '';
+                this.refCode = refCode || null;
+                this.roomId = roomId || null;
+                this.devUsername = String(devUsername || this.devUsername || currentUser || '').trim();
+                if (!this.initData && isTelegram) {
+                    this.initData = await waitForTelegramInitData(5000);
+                }
+                if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch (e) {} }
+                this.connecting = true;
+                try {
+                    this.ws = new WebSocket(SERVER_WS_URL);
+                } catch (err) {
+                    window.WINZO_RECORD_ERROR('WS-CONSTRUCT', err);
+                    this.connecting = false;
+                    this.onConnection && this.onConnection(false);
+                    return;
+                }
+                this.authenticated = false;
+                this.connectionGeneration = (this.connectionGeneration || 0) + 1;
+                const generation = this.connectionGeneration;
+                this.ws.onopen = () => {
+                    this.connecting = false;
+                    this.backoff = 800;
+                    this.onConnection && this.onConnection(false);
+                    const authMsg = { type: 'auth', initData: this.initData, ref: this.refCode };
+                    if (DEV_MODE && !this.initData && this.devUsername) authMsg.devUsername = this.devUsername;
+                    this.rawSend(authMsg);
+                };
+                this.ws.onmessage = ev => {
+                    let m; try { m = JSON.parse(ev.data); } catch { return; }
+                    if (m.type === 'authed') {
+                        this.authenticated = true;
+                        this.onAuth && this.onAuth(m.uid, m.displayName);
+                        this.onConnection && this.onConnection(true);
+                        this.rawSend({ type: 'wallet-refresh' });
+                        if (this.roomId) this.rawSend({ type: 'join', room: this.roomId });
+                    }
+                    else if (m.type === 'state')        this.onState && this.onState(m.state, m.room);
+                    else if (m.type === 'pick-ok')      this.onPickOk && this.onPickOk(m.number);
+                    else if (m.type === 'pick-fail')    this.onPickFail && this.onPickFail(m.number, m.reason);
+                    else if (m.type === 'unpick-ok')    this.onPickOk && this.onPickOk(m.number);
+                    else if (m.type === 'unpick-fail')  this.onPickFail && this.onPickFail(m.number, m.reason);
+                    else if (m.type === 'wallet')       this.onWallet && this.onWallet(m);
+                    else if (m.type === 'transaction-created') {
+                        const pendingImage = m.clientRequestId ? this.pendingTransactionImages.get(m.clientRequestId) : null;
+                        if (m.clientRequestId) this.pendingTransactionImages.delete(m.clientRequestId);
+                        if (pendingImage) this.transactionImage(m.id, pendingImage);
+                        this.onTransactionCreated && this.onTransactionCreated(m);
+                    }
+                    else if (m.type === 'transaction-status') this.onTransactionStatus && this.onTransactionStatus(m);
+                    else if (m.type === 'notification') this.onNotification && this.onNotification(m, m.id);
+                    else if (m.type === 'sticky-broadcast') this.onNotification && this.onNotification(m, m.id);
+                    else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
+                    else if (m.type === 'error')        { this.onError && this.onError(m); if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} } }
+                };
+                this.ws.onclose = (ev) => {
+                    if (generation !== this.connectionGeneration) return;
+                    clearInterval(this._ka);
+                    this.authenticated = false;
+                    this.connecting = false;
+                    this.onConnection && this.onConnection(false);
+                    if (ev.code === 1000 || ev.code === 4001 || ev.code === 4003) return;
+                    setTimeout(() => this.connect(this.initData, this.refCode, this.roomId, this.devUsername), this.backoff);
+                    this.backoff = Math.min(this.backoff * 2, 15000);
+                };
+                this.ws.onerror = (err) => {
+                    window.WINZO_RECORD_ERROR('WS-ERROR', err);
+                };
+                clearInterval(this._ka);
+                this._ka = setInterval(() => this.rawSend({ type: 'ping' }), 25000);
+            }
+            rawSend(m) {
+                if (this.ws && this.ws.readyState === 1) { try { this.ws.send(JSON.stringify(m)); return true; } catch {} }
+                return false;
+            }
+            send(m) { return this.rawSend(m); }
+            join(roomId) { this.roomId = roomId; if (this.ws?.readyState === 1) this.rawSend({ type: 'join', room: roomId }); }
+            pick(n) { return this.rawSend({ type: 'pick', number: n }); }
+            unpick(n) { return this.rawSend({ type: 'unpick', number: n }); }
+            transfer(a) { return this.rawSend({ type: 'transfer', amount: a }); }
+            transactionRequest(data) { return this.rawSend(Object.assign({ type: 'transaction-request' }, data)); }
+            transactionImage(id, imageData) { return this.rawSend({ type: 'transaction-image', id, imageData }); }
+            walletRefresh() { return this.rawSend({ type: 'wallet-refresh' }); }
+            leave() { if (this.ws?.readyState === 1) this.rawSend({ type: 'leave' }); this.roomId = null; }
+            disconnect() { clearInterval(this._ka); this.connecting = false; if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch {} } this.ws = null; this.roomId = null; this.devUsername = ''; }
+        }
+
+        // ============================================================
+        //  GAME CONNECTION
+        // ============================================================
+        function initGameConnection() {
+            const generation = ++roomConnectionGeneration;
+            pendingPickOps.clear();
+            detachLastResultListener(); clearCardFetchRetry();
+            stopResilienceEngine(); stopTimer();
+            if (!currentRoom || !currentUser) return;
+            isGameInitialized = true;
+            if (client) client.join(currentRoom);
+            setConnectionStatus(!!isNetworkConnected, (isNetworkConnected ? 'Connected to ' : 'Connecting to ') + currentBet + ' Birr room');
+            startResilienceEngine();
+            setTimeout(() => {
+                if (generation === roomConnectionGeneration) renderNumberPicker();
+            }, 100);
+        }
+        function syncGameState(data) {
+            if (!data || typeof data !== 'object') return;
+            lastRoomSnapshotRaw = data;
+            const players = (data.players && typeof data.players === 'object') ? data.players : {};
+            const playerNames = Object.keys(players);
+            const phase = data.gameState || 'selection';
+            const round = Number(data.round) || 1;
+            const roundChanged = (round !== engineState.roundNumber);
+            if (roundChanged) { localSelectionRound = null; localSelectionPicks = []; }
+            if (currentUser && phase === 'selection') {
+                const authoritative = getPlayerPicks(players[currentUser]);
+                if (pendingPickOps.size === 0) {
+                    localSelectionRound = round;
+                    localSelectionPicks = authoritative.slice(0, MAX_PICKS_PER_ROUND);
+                }
+            }
+            engineState.players = players;
+            engineState.playerNames = playerNames;
+            engineState.activePlayersCount = Number.isFinite(Number(data.onlineCount))
+                ? Number(data.onlineCount)
+                : playerNames.length;
+            engineState.gamePhase = phase;
+            engineState.roundNumber = round;
+            phaseDeadline = Number(data.endsAt || data.selectionEndsAt) || 0;
+            if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
+            if (data.lastResult) lastResultData = data.lastResult;
+            engineState.timer = phaseDeadline ? getRemainingSeconds(phaseDeadline) : (Number(data.timer) || 0);
+            engineState.drawnNumbers = Array.isArray(data.drawnNumbers) ? data.drawnNumbers : [];
+            engineState.winners = Array.isArray(data.winners) ? data.winners : [];
+            engineState.prizePool = Number(data.prizePool) || 0;
+            engineState.allTakenNumbers = new Set(
+                Object.keys(data.numbersTaken || {})
+                    .filter(k => data.numbersTaken[k] === true)
+                    .map(Number).filter(n => n >= 1 && n <= 200)
+            );
+            if (roundChanged) {
+                displayedCardRound = null; lastResultData = null;
+                clearCardFetchRetry();
+            }
+            if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
+            updateTotalBetDisplay();
+            if (phase === 'selection') {
+                if (!isTimerRunning && !gamePausedBySticky) startTimer();
+                if (playerNames.length <= 1) showWaitingModal();
+                else hideWaitingModal();
+            } else { stopTimer(); hideWaitingModal(); }
+            updateUIFromState();
+            if (phase === 'results') {
+                if (!engineState.winnersModalShown) {
+                    engineState.winnersModalShown = true;
+                    // Announcement audio is synchronized to the visible winner card in displayWinningNumberCard().
+                }
+            } else { engineState.winnersModalShown = false; }
+            applyCardState();
+            updatePrizeDisplay(); updatePickStatus(); renderNumberPicker(); updateTotalBetDisplay();
+        }
+        async function fileToCompressedDataUrl(file) {
+            if (!file || !file.type.startsWith('image/')) return '';
+            const raw = await new Promise((resolve, reject) => {
+                const fr = new FileReader(); fr.onload = () => resolve(fr.result); fr.onerror = reject; fr.readAsDataURL(file);
+            });
+            const img = await new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = reject; im.src = raw; });
+            const max = 1280; const scale = Math.min(1, max / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+            const c = document.createElement('canvas'); c.width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale)); c.height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+            return c.toDataURL('image/jpeg', 0.72);
+        }
+        async function requestTransaction(type, amount, reference = '', imageFile = null, extra = {}) {
+            if (!currentUser || !client || !isNetworkConnected) return Promise.resolve(false);
+            amount = Number(amount);
+            if (!['deposit', 'withdraw'].includes(type) || !Number.isFinite(amount) || amount <= 0) return Promise.resolve(false);
+            const id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('tx_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+            transactionStatus.textContent = '⏳ Sending request to admin...';
+            transactionStatus.className = 'status-text pending';
+            if (transactionModal) transactionModal.classList.add('active');
+            let compressedImage = '';
+            if (type === 'deposit' && imageFile) {
+                try { compressedImage = await fileToCompressedDataUrl(imageFile); } catch (_) {}
+                if (compressedImage && client.pendingTransactionImages) client.pendingTransactionImages.set(id, compressedImage);
+            }
+            const sent = client.transactionRequest({
+                clientRequestId: id, txType: type, amount,
+                reference: reference ? safeProductionName(reference) : '',
+                fullName: extra.name ? safeProductionName(extra.name) : '',
+                phoneNumber: extra.phone ? safeProductionName(extra.phone) : ''
+            });
+            if (!sent) {
+                if (client.pendingTransactionImages) client.pendingTransactionImages.delete(id);
+                transactionStatus.textContent = '⚠️ Network unavailable.';
+                return Promise.resolve(false);
+            }
+            transactionStatus.textContent = '⏳ Pending admin approval...';
+            return Promise.resolve(true);
+        }
+
+        // ============================================================
+        //  INIT
+        // ============================================================
+        function init() {
+            if (authLoginBtn) authLoginBtn.onclick = handleLogin;
+            if (authSignupBtn) authSignupBtn.onclick = handleSignup;
+            if (bet15Btn) bet15Btn.onclick = () => selectBet(15);
+            if (bet30Btn) bet30Btn.onclick = () => selectBet(30);
+            if (welcomeLogoutBtn) welcomeLogoutBtn.onclick = function() { if (confirm('Are you sure you want to logout?')) performLogout(); };
+            if (gameLogoutBtn) gameLogoutBtn.onclick = function() { if (confirm('Are you sure you want to logout?')) performLogout(); };
+            if (welcomeDepositBtn) welcomeDepositBtn.onclick = openDepositModal;
+            if (depositBtn) depositBtn.onclick = openDepositModal;
+            if (reconnectBtn) reconnectBtn.onclick = function() {
+                closeMoreDropdown();
+                updateStatus('🔌 Reconnecting…');
+                if (client) client.connect((tg && tg.initData) || '', pendingReferralCode, currentRoom);
+                setTimeout(() => { updateStatus('✅ Reconnect requested.'); }, 500);
+            };
+            if (withdrawBtn) withdrawBtn.onclick = () => {
+                const available = safeNum(walletData.main) - safeNum(walletData.pending);
+                if (withdrawAvailableBalance) withdrawAvailableBalance.textContent = available;
+                if (withdrawError) withdrawError.textContent = '';
+                if (withdrawName) withdrawName.value = '';
+                if (withdrawPhone) withdrawPhone.value = '';
+                if (withdrawAmountEl) withdrawAmountEl.value = '';
+                if (withdrawModal) withdrawModal.classList.add('active');
+                closeMoreDropdown();
+                if (!Guide.hasSeen('withdraw')) setTimeout(() => Guide.start(getWithdrawGuideSteps(), 'withdraw'), 380);
+            };
+            if (transferBtn) transferBtn.onclick = () => {
+                const amount = prompt('Enter amount to transfer from Main to Play:', '10');
+                if (amount !== null) {
+                    const num = parseInt(amount);
+                    if (!isNaN(num) && num > 0) transferToPlay(num);
+                    else alert('Please enter a valid positive number.');
+                }
+                closeMoreDropdown();
+            };
+            if (switchRoomBtn) switchRoomBtn.onclick = function() {
+                if (currentUser) switchRoom(); else showWelcomeScreen();
+                closeMoreDropdown();
+            };
+            if (referralBtn) referralBtn.onclick = openReferralModal;
+            if (customerServiceBtn) customerServiceBtn.onclick = () => {
+                closeMoreDropdown();
+                const url = 'https://t.me/winzosupportcenter';
+                if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
+            };
+            if (referralCloseBtn) referralCloseBtn.onclick = () => { if (referralModal) referralModal.classList.remove('active'); };
+            if (referralCopyBtn) referralCopyBtn.onclick = async () => {
+                const link = referralLink ? referralLink.value : '';
+                try { await navigator.clipboard.writeText(link); } catch (e) { if (referralLink) { referralLink.select(); document.execCommand('copy'); } }
+                referralCopyBtn.textContent = '✅ Copied';
+                setTimeout(() => referralCopyBtn.textContent = '📋 Copy', 1500);
+            };
+            if (referralShareBtn) referralShareBtn.onclick = () => {
+                const link = referralLink ? referralLink.value : '';
+                const shareText = `Join Winzo and play games with me! ${link}`;
+                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(shareText)}`;
+                if (tg && tg.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl, '_blank');
+            };
+            if (moreBtn) moreBtn.onclick = toggleMoreDropdown;
+            if (depositConfirm) depositConfirm.onclick = async () => {
+                const file = depositImage ? depositImage.files[0] : null;
+                let amount = parseFloat(depositAmount ? depositAmount.value : '0');
+                let ref = depositReference ? depositReference.value.trim() : '';
+                if (file && (!amount || !ref)) {
+                    if (ocrStatus) ocrStatus.textContent = '🔍 Reading payment details...';
+                    const extracted = await extractReferenceFromImage(file);
+                    if (!amount && extracted && extracted.amount) amount = Number(extracted.amount);
+                    if (!ref && extracted && extracted.reference) ref = String(extracted.reference);
+                    if (depositAmount && amount > 0) depositAmount.value = amount;
+                    if (depositReference && ref) depositReference.value = ref;
+                }
+                if (!amount || amount <= 0) { if (depositError) depositError.textContent = 'Could not detect the deposit amount.'; return; }
+                if (!ref && !file) { if (depositError) depositError.textContent = 'Provide a reference or screenshot.'; return; }
+                depositToPlay(amount, ref, file);
+            };
+            if (depositCancel) depositCancel.onclick = () => { if (depositModal) depositModal.classList.remove('active'); };
+            if (withdrawConfirm) withdrawConfirm.onclick = () => {
+                const amount = parseInt(withdrawAmountEl ? withdrawAmountEl.value : '0');
+                const name = withdrawName ? withdrawName.value.trim() : '';
+                const phone = withdrawPhone ? withdrawPhone.value.trim() : '';
+                if (!amount || amount <= 0 || !name || !phone) { if (withdrawError) withdrawError.textContent = 'Please fill in all fields.'; return; }
+                withdrawRequest(amount, name, phone);
+            };
+            if (withdrawCancel) withdrawCancel.onclick = () => { if (withdrawModal) withdrawModal.classList.remove('active'); };
+            injectGuideHelpButton('depositModal', getDepositGuideSteps, 'deposit');
+            injectGuideHelpButton('withdrawModal', getWithdrawGuideSteps, 'withdraw');
+            watchGuideModalClose(depositModal);
+            watchGuideModalClose(withdrawModal);
+            if (tg && tg.BackButton) {
+                tg.BackButton.onClick(() => {
+                    if (gameScreen && gameScreen.style.display !== 'none') {
+                        if (client) client.leave();
+                        detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine(); stopTimer();
+                        isGameInitialized = false;
+                        if (winnersModal) winnersModal.classList.remove('active');
+                        resetWinningNumberCard();
+                        showWelcomeScreen();
+                    } else showWelcomeScreen();
+                });
+                tg.BackButton.show();
+            }
+            currentUser = null;
+            if (DEV_MODE) {
+                const wrapper = document.querySelector('.game-wrapper');
+                if (wrapper) {
+                    const badge = document.createElement('div');
+                    badge.className = 'dev-badge';
+                    badge.textContent = 'DEV';
+                    wrapper.appendChild(badge);
+                }
+            } else {
+                const footer = document.getElementById('hiddenCleanupFooter');
+                if (footer) footer.style.display = 'none';
+            }
+            client = new WinzoClient({
+                onAuth: (uid, displayName) => {
+                    currentUser = uid;
+                    currentDisplayName = displayName || currentDisplayName || telegramDetectedDisplayName || telegramDetectedUsername || uid;
+                    console.info('[WINZO AUTH]', { uid, displayName: currentDisplayName, telegramId: telegramUser?.id || null, telegramUsername: telegramUser?.username || null });
+                    DB.setCurrentUser(uid);
+                    updateWalletUI(); updateWelcomeUI();
+                },
+                onState: (state, room) => {
+                    if (!state || (room && room !== currentRoom)) return;
+                    syncGameState(state); markSyncReceived();
+                },
+                onConnection: (online) => {
+                    setConnectionStatus(online, online ? 'Firebase wallet server connected' : '⚡ Reconnecting…');
+                    isNetworkConnected = !!online;
+                    renderNumberPicker();
+                },
+                onPickOk: handlePickOk,
+                onPickFail: handlePickFail,
+                onWallet: (w) => {
+                    walletData.main = safeNum(w.main, 0);
+                    walletData.play = safeNum(w.play, 0);
+                    walletData.pending = safeNum(w.pending, 0);
+                    walletData.refEarn = safeNum(w.refEarn, 0);
+                    walletData.updatedAt = safeNum(w.updatedAt, Date.now());
+                    updateWalletUI(); updateWelcomeUI();
+                    renderNumberPicker();
+                },
+                onTransactionCreated: (m) => {
+                    transactionStatus.textContent = '⏳ Pending admin approval...';
+                },
+                onTransactionStatus: (m) => {
+                    const approved = m.status === 'approved';
+                    transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
+                    transactionStatus.className = 'status-text ' + (approved ? 'approved' : 'rejected');
+                    if (client) client.walletRefresh();
+                    setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
+                },
+                onNotification: (m, key) => handleIncomingNotificationData(m, key),
+                onError: (m) => updateStatus('⚠️ ' + (m.message || 'server error')),
+            });
+            showAuthScreen();
+        }
+
+        // ============================================================
+        //  BOOT
+        // ============================================================
+        if (DEV_MODE) {
+            console.info('WINZO client booted (server-authoritative mode)');
+            console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
+            console.info('Dev tip: window.WINZO_ERRORS collects runtime errors.');
+        }
+        init();
+    </script>
+</body>
+</html>
