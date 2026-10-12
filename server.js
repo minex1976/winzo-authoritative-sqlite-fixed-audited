@@ -479,22 +479,6 @@ async function findUserRefForWallet(identity = {}) {
   return null;
 }
 
-/**
- * Admin decision — ROBUST version.
- *
- * Strategy:
- *  1. Read the tx.
- *  2. If already finalized → return 'already-decided'.
- *  3. Deposit rejection = only update tx status (no wallet change).
- *  4. For everything else:
- *     a. Resolve the correct wallet UID.
- *     b. Read fresh balance snapshot.
- *     c. If ledger already has this tx ID → treat as success (idempotent).
- *     d. Pre-check balance preconditions and return SPECIFIC error reasons.
- *     e. Apply the change via an atomic transaction.
- *     f. Verify the ledger exists after write; if not, return a precise reason.
- *     g. Update the tx record to the final status.
- */
 async function adminDecision(id, decision, reason = '') {
   decision = String(decision || '').trim().toLowerCase();
   if (decision === 'approve') decision = 'approved';
@@ -511,12 +495,10 @@ async function adminDecision(id, decision, reason = '') {
     if (txAmount <= 0) return { ok: false, reason: 'bad-amount' };
     if (!['deposit', 'withdraw'].includes(tx.type)) return { ok: false, reason: 'bad-type' };
 
-    // Already finalized? Never touch the wallet again.
     if (tx.status !== 'pending' && tx.status !== 'processing') {
       return { ok: false, reason: 'already-decided', tx };
     }
 
-    // ---- Deposit rejection: no wallet change ----
     if (tx.type === 'deposit' && decision === 'rejected') {
       const userInfo = await findUserRefForWallet({
         uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
@@ -534,7 +516,6 @@ async function adminDecision(id, decision, reason = '') {
         return current;
       });
       if (!claim?.committed) {
-        // Either already decided or race. Treat as success if the status matches.
         const fresh = await txRef.once('value');
         const f = fresh.val() || {};
         if (f.status === 'rejected') {
@@ -549,7 +530,6 @@ async function adminDecision(id, decision, reason = '') {
       return { ok: true, tx: updatedTx };
     }
 
-    // ---- All other cases: resolve user & apply wallet change ----
     const userInfo = await findUserRefForWallet({
       uid: tx.uid, wallet_uid: tx.wallet_uid, telegram_id: tx.telegram_id,
       telegram_username: tx.telegram_username, username: tx.username
@@ -558,12 +538,10 @@ async function adminDecision(id, decision, reason = '') {
     const userRef = userInfo.ref;
     const userUid = userInfo.uid;
 
-    // Read current state to check preconditions & idempotency
     const freshSnap = await userRef.once('value');
     if (!freshSnap.exists()) return { ok: false, reason: 'wallet-user-not-found' };
     const fresh = freshSnap.val() || {};
 
-    // Idempotency: if the ledger already has this tx, treat as success.
     const existingLedger = fresh.wallet_ledger && fresh.wallet_ledger[id];
     if (existingLedger) {
       if (String(existingLedger.decision) !== decision) {
@@ -584,7 +562,6 @@ async function adminDecision(id, decision, reason = '') {
     const pending = toFiniteNumber(fresh.pending_withdrawal ?? fresh.pendingWithdrawal ?? 0, 0);
     const play = toFiniteNumber(fresh.play_wallet ?? fresh.playWallet ?? 0, 0);
 
-    // Precondition checks with SPECIFIC error messages
     if (tx.type === 'withdraw' && decision === 'approved') {
       if (main < txAmount) return { ok: false, reason: 'insufficient-main (have ' + main + ', need ' + txAmount + ')' };
       if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
@@ -592,13 +569,10 @@ async function adminDecision(id, decision, reason = '') {
     if (tx.type === 'withdraw' && decision === 'rejected') {
       if (pending < txAmount) return { ok: false, reason: 'insufficient-pending (have ' + pending + ', need ' + txAmount + ')' };
     }
-    // deposit approved → always allowed
 
-    // Apply atomically
     let attemptedChange = false;
     const result = await userRef.transaction(u => {
       if (!u) return u;
-      // Idempotency inside the transaction
       const ledger = u.wallet_ledger && u.wallet_ledger[id];
       if (ledger) return u;
 
@@ -635,7 +609,6 @@ async function adminDecision(id, decision, reason = '') {
       return u;
     });
 
-    // Recover the freshest state regardless of committed flag
     let updatedUser = null;
     if (result && result.snapshot && result.snapshot.exists()) {
       updatedUser = result.snapshot.val() || {};
@@ -647,7 +620,6 @@ async function adminDecision(id, decision, reason = '') {
 
     const ledgerEntry = updatedUser.wallet_ledger && updatedUser.wallet_ledger[id];
     if (!ledgerEntry) {
-      // Transaction did NOT apply. Figure out why so we can return a precise reason.
       const u = updatedUser;
       const main3 = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? 0, 0);
       const pending3 = toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0);
@@ -822,7 +794,7 @@ class Room {
     const payload = JSON.stringify({ type: 'state', room: this.id, state: this.snapshot() });
     for (const ws of wss.clients) if (ws.readyState === 1 && ws.authed && ws.roomId === this.id) ws.send(payload);
   }
-  async push() { await this.persist(); this.dirty = true; }
+  async push() { await this.persist(); this.broadcast(); }
 }
 
 let rooms = {};
@@ -842,7 +814,7 @@ async function loadRooms() {
   }
 }
 
-async function saveRoom(room) { await room.persist(); room.dirty = true; }
+async function saveRoom(room) { await room.persist(); room.broadcast(); }
 
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
@@ -1004,7 +976,6 @@ async function toResults(room) {
   room.phase = 'results'; room.endsAt = now() + RESULTS_SECONDS * 1000; room.dirty = true;
 }
 
-// --- Minimal historical analytics recorder (Ethiopia local date; excludes bots from human counts) ---
 function ethiopiaAnalyticsParts(timestamp = now()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Africa/Addis_Ababa',
@@ -1037,7 +1008,6 @@ async function recordRoundAnalytics(room, reason) {
       reason: String(reason || ''),
       source: 'authoritative-server'
     };
-    // One record per room and round; does not touch gameplay or wallet data.
     await db.ref(`analytics/gameHistory/${dateKey}/${room.id}/${record.round}`)
       .transaction(current => current || record);
   } catch (error) {
@@ -1145,7 +1115,7 @@ function scheduleBots(room) {
         room.taken.set(num, uid);
         p.picks.push(num);
         room.dirty = true;
-        room.dirty = true;
+        room.broadcast();
       });
     } catch (err) {
       console.error('[BOT-PICK]', err);
@@ -1159,6 +1129,7 @@ function scheduleBots(room) {
   room.botTimers.push(first);
 }
 
+// --- Main game loop: 500ms ---
 setInterval(async () => {
   for (const room of Object.values(rooms)) {
     await room.mutex.run(async () => {
@@ -1166,9 +1137,11 @@ setInterval(async () => {
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
       else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
-      if (room.dirty) await room.persist();
-      // All room-state broadcasts are centralized on this 500 ms loop.
-      room.broadcast();
+      if (room.dirty) {
+        await room.persist();
+        room.broadcast();
+        room.dirty = false;
+      }
     });
   }
 }, 500);
@@ -1177,7 +1150,7 @@ const conns = new Map();
 const wss = new WebSocketServer({ noServer: true });
 
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-function sendRoomState(room) { if (room) room.dirty = true; }
+function sendRoomState(room) { if (room) room.broadcast(); }
 
 wss.on('connection', (ws) => {
   ws.isAlive = true;
@@ -1210,7 +1183,7 @@ wss.on('connection', (ws) => {
         p.active = false;
         room.dirty = true;
         await room.persist();
-        room.dirty = true;
+        room.broadcast();
       }).catch(err => console.error('[WS-CLOSE] disconnect refund failed', err));
     }
   });
@@ -1300,11 +1273,7 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    if (r.ok && room.dirty) {
-      await room.persist();
-      room.dirty = true;
-      room.dirty = false;
-    }
+    // Broadcast deferred to the next 500ms loop tick.
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1312,11 +1281,7 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
-    if (r.ok && room.dirty) {
-      await room.persist();
-      room.dirty = true;
-      room.dirty = false;
-    }
+    // Broadcast deferred to the next 500ms loop tick.
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1359,6 +1324,7 @@ async function handle(ws, m) {
   }
 }
 
+// --- Ping/pong interval: 60 seconds ---
 setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 60000);
 
 const app = express();
