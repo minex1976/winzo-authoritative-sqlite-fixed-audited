@@ -412,8 +412,8 @@
                 </div>
             </div>
             <div class="game-info-bar">
-                <div class="info-item">Timer: <span class="value timer" id="timerDisplay">30</span>s</div>
-                <div class="info-item">Online: <span class="value players" id="playerCount">0</span></div>
+                <div class="info-item"🕑 Timer: <span class="value timer" id="timerDisplay">30</span>s</div>
+                <div class="info-item">👥 Online: <span class="value players" id="playerCount">0</span></div>
                 <div class="info-item">🏆 Prize: <span class="value bet-total" id="totalBetDisplay">0</span> Birr</div>
             </div>
             <div class="pick-status" id="pickStatus"><span>Pick up to <span class="highlight">3</span> numbers</span></div>
@@ -453,7 +453,7 @@
             <div class="winning-card-halo"></div>
             <div class="winning-number-card">
                 <div class="winning-card-sparkles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
-                <div class="winning-card-title">🎯 Winning Number</div>
+                <div class="winning-card-title">The Winning Number is </div>
                 <div class="winning-number-big" id="winningNumberBig">--</div>
                 <div class="winning-card-divider"></div>
                 <div class="winning-card-amount" id="winningCardAmount">
@@ -469,7 +469,7 @@
     <div class="winner-celebration" id="winnerCelebration" role="status" aria-live="polite">🎉 Congratulations! You won!</div>
     <div class="deposit-modal" id="depositModal">
         <div class="modal-content">
-            <h3> በቴሌብር ወደ 0998487148 ገቢ ያድርጉ </h3>
+            <h3> በቴሌብር ወደ 0923002900 የስገቡ </h3>
             <div class="balance-info">አሁን ያሎት ብር: <span class="amount" id="depositPlayBalance">0</span></div>
             <div class="paste-box">
                 <label class="paste-label" for="depositPasteText">📋 የቴሌብር መልእክት እዚህ ይለጥፉ / Paste Telebirr SMS here</label>
@@ -1217,7 +1217,7 @@
         }
         function setConnectionStatus(online, message) {
             const cls = online ? 'online' : 'offline';
-            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : '⚡ Offline'; authStatus.className = 'connection-status ' + cls; }
+            if (authStatus) { authStatus.textContent = online ? '🌐 Online' : ''; authStatus.className = 'connection-status ' + cls; }
             if (statusDot) statusDot.className = 'status-dot ' + cls;
             if (message) updateStatus(message);
         }
@@ -1368,20 +1368,20 @@
 
         function getDepositGuideSteps() {
             return [
-                { target: '#depositPasteText', text: '1️⃣ በቅድሚያ copy ያደረጉትን የቴሌብር SMS መልእክትዎን እዚህ paste ያድርጉ። ከዚያም፣ paste ያደረጉት SMS ላይ የተጠቀሰው የብር መጠን እና Reference ኮድ ከስር ክፍት ቦታ ላይ መግባቱን ይመልከቱ።' },
-                { target: '#extractFromTextBtn', text: '2️⃣ መረጃውን ለማውጣት (copy/paste ያደረጉት SMS ላይ የተቀሰው ብር እና Reference ቁጥር ከስር ባለው ክፍት ቦታ ላይ ካልሰፈረ ፣🔍 Extract የሚለውን ቁልፍ ይጫኑ።' },
-                { target: '#depositAmount', text: '3️⃣ የላኩትን የብር መጠን እዚህ ያረጋግጡ ወይም ይፃፉ።' },
-                { target: '#depositReference', text: '4️⃣ Reference ቁጥሩን ያረጋግጡ።' },
-                { target: '#depositImage', text: '5️⃣ Screenshot ያደረጉትን እዚህ ይላኩ።' },
-                { target: '#depositConfirm', text: '6️⃣ ሁሉንም አረጋግጠው Send የሚለውን ይጫኑ። አድሚን ካጸደቀው በኋላ ብሩ ወደ ሒሳብዎ ይገባል።' }
+                { target: '#depositPasteText', text: '1️⃣ የቴሌብር መልእክትዎን (SMS) እዚህ ይለጥፉ። የብር መጠኑና ማጣቀሻው በራስ-ሰር ይሞላል።' },
+                { target: '#extractFromTextBtn', text: '2️⃣ መረጃውን በራስ-ሰር ለማውጣት ይህን 🔍 Extract ቁልፍ ይጫኑ።' },
+                { target: '#depositAmount', text: '3️⃣ ያስገቡትን የብር መጠን እዚህ ያረጋግጡ ወይም በእጅ ያስገቡ።' },
+                { target: '#depositReference', text: '4️⃣ የግብይት ማጣቀሻ ቁጥር (Reference) እዚህ ይገኛል።' },
+                { target: '#depositImage', text: '5️⃣ የክፍያ ፎቶ (Screenshot) ካለዎት እዚህ ይላኩ።' },
+                { target: '#depositConfirm', text: '6️⃣ ሁሉንም አረጋግጠው Send ይጫኑ። አስተዳዳሪው ካጸደቀ በኋላ ብሩ ወደ ሒሳብዎ ይገባል።' }
             ];
         }
         function getWithdrawGuideSteps() {
             return [
-                { target: '#withdrawName', text: '1️⃣ ሙሉ ስምዎን እዚህ ያስገቡ (ለምሳሌ: አበበ ከበደ)።' },
-                { target: '#withdrawPhone', text: '2️⃣ የቴሌብር ስልክ ቁጥርዎን ያስገቡ (ለምሳሌ: 09xxxxxxxx)።' },
+                { target: '#withdrawName', text: '1️⃣ ሙሉ ስምዎን እዚህ ያስገቡ' },
+                { target: '#withdrawPhone', text: '2️⃣ የቴሌብር ስልክ ቁጥርዎን ያስገቡ },
                 { target: '#withdrawAmount', text: '3️⃣ ወጪ ማድረግ የሚፈልጉትን የብር መጠን ያስገቡ።' },
-                { target: '#withdrawConfirm', text: '4️⃣ መረጃውን አረጋግጠው Send ይጫኑ። ጥያቄው ወደ አስተዳዳሪ ይላካል።' }
+                { target: '#withdrawConfirm', text: '4️⃣ መረጃውን አረጋግጠው Send ይጫኑ። ከዚያም፣ ጥያቄው ወደ Admin ይላካል።' }
             ];
         }
         function injectGuideHelpButton(modalId, stepsFn, guideKey) {
@@ -1435,7 +1435,7 @@
                     ? winners.map(w => String(w || '').trim()).filter(Boolean)
                     : [];
                 if (list.length) {
-                    const label = list.length > 1 ? '🏆 Winners' : 'The Winner is:';
+                    const label = list.length > 1 ? '🏆 Winners' : 'The winner is:';
                     winnerNamesEl.innerHTML = label + '<br>' + list.map(n => escapeHtmlText(n)).join('<br>');
                 } else {
                     winnerNamesEl.textContent = '😔 No Winner';
