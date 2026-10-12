@@ -822,7 +822,7 @@ class Room {
     const payload = JSON.stringify({ type: 'state', room: this.id, state: this.snapshot() });
     for (const ws of wss.clients) if (ws.readyState === 1 && ws.authed && ws.roomId === this.id) ws.send(payload);
   }
-  async push() { await this.persist(); this.broadcast(); }
+  async push() { await this.persist(); this.dirty = true; }
 }
 
 let rooms = {};
@@ -842,7 +842,7 @@ async function loadRooms() {
   }
 }
 
-async function saveRoom(room) { await room.persist(); room.broadcast(); }
+async function saveRoom(room) { await room.persist(); room.dirty = true; }
 
 async function debit(uid, amount, roomId, round) {
   const amt = toFiniteNumber(amount, 0);
@@ -1145,7 +1145,7 @@ function scheduleBots(room) {
         room.taken.set(num, uid);
         p.picks.push(num);
         room.dirty = true;
-        room.broadcast();
+        room.dirty = true;
       });
     } catch (err) {
       console.error('[BOT-PICK]', err);
@@ -1166,20 +1166,18 @@ setInterval(async () => {
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
       else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
-      if (room.dirty) {
-        await room.persist();
-        room.broadcast();
-        room.dirty = false;
-      }
+      if (room.dirty) await room.persist();
+      // All room-state broadcasts are centralized on this 500 ms loop.
+      room.broadcast();
     });
   }
-}, 1000);
+}, 500);
 
 const conns = new Map();
 const wss = new WebSocketServer({ noServer: true });
 
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-function sendRoomState(room) { if (room) room.broadcast(); }
+function sendRoomState(room) { if (room) room.dirty = true; }
 
 wss.on('connection', (ws) => {
   ws.isAlive = true;
@@ -1212,7 +1210,7 @@ wss.on('connection', (ws) => {
         p.active = false;
         room.dirty = true;
         await room.persist();
-        room.broadcast();
+        room.dirty = true;
       }).catch(err => console.error('[WS-CLOSE] disconnect refund failed', err));
     }
   });
@@ -1304,7 +1302,7 @@ async function handle(ws, m) {
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
     if (r.ok && room.dirty) {
       await room.persist();
-      room.broadcast();
+      room.dirty = true;
       room.dirty = false;
     }
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
@@ -1316,7 +1314,7 @@ async function handle(ws, m) {
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
     if (r.ok && room.dirty) {
       await room.persist();
-      room.broadcast();
+      room.dirty = true;
       room.dirty = false;
     }
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
@@ -1361,7 +1359,7 @@ async function handle(ws, m) {
   }
 }
 
-setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 25000);
+setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 60000);
 
 const app = express();
 
