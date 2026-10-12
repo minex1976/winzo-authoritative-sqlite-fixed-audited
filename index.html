@@ -1368,12 +1368,12 @@
 
         function getDepositGuideSteps() {
             return [
-                { target: '#depositPasteText', text: '1️⃣ የቴሌብር መልእክትዎን (SMS) እዚህ ይለጥፉ። የብር መጠኑና ማጣቀሻው በራስ-ሰር ይሞላል።' },
-                { target: '#extractFromTextBtn', text: '2️⃣ መረጃውን በራስ-ሰር ለማውጣት ይህን 🔍 Extract ቁልፍ ይጫኑ።' },
-                { target: '#depositAmount', text: '3️⃣ ያስገቡትን የብር መጠን እዚህ ያረጋግጡ ወይም በእጅ ያስገቡ።' },
-                { target: '#depositReference', text: '4️⃣ የግብይት ማጣቀሻ ቁጥር (Reference) እዚህ ይገኛል።' },
-                { target: '#depositImage', text: '5️⃣ የክፍያ ፎቶ (Screenshot) ካለዎት እዚህ ይላኩ።' },
-                { target: '#depositConfirm', text: '6️⃣ ሁሉንም አረጋግጠው Send ይጫኑ። አስተዳዳሪው ካጸደቀ በኋላ ብሩ ወደ ሒሳብዎ ይገባል።' }
+                { target: '#depositPasteText', text: '1️⃣ በቅድሚያ copy ያደረጉትን የቴሌብር SMS መልእክትዎን እዚህ paste ያድርጉ። ከዚያም፣ paste ያደረጉት SMS ላይ የተጠቀሰው የብር መጠን እና Reference ኮድ ከስር ክፍት ቦታ ላይ መግባቱን ይመልከቱ።' },
+                { target: '#extractFromTextBtn', text: '2️⃣ መረጃውን ለማውጣት (copy/paste ያደረጉት SMS ላይ የተቀሰው ብር እና Reference ቁጥር ከስር ባለው ክፍት ቦታ ላይ ካልሰፈረ ፣🔍 Extract የሚለውን ቁልፍ ይጫኑ።' },
+                { target: '#depositAmount', text: '3️⃣ የላኩትን የብር መጠን እዚህ ያረጋግጡ ወይም ይፃፉ።' },
+                { target: '#depositReference', text: '4️⃣ Reference ቁጥሩን ያረጋግጡ።' },
+                { target: '#depositImage', text: '5️⃣ Screenshot ያደረጉትን እዚህ ይላኩ።' },
+                { target: '#depositConfirm', text: '6️⃣ ሁሉንም አረጋግጠው Send የሚለውን ይጫኑ። አድሚን ካጸደቀው በኋላ ብሩ ወደ ሒሳብዎ ይገባል።' }
             ];
         }
         function getWithdrawGuideSteps() {
@@ -1435,7 +1435,7 @@
                     ? winners.map(w => String(w || '').trim()).filter(Boolean)
                     : [];
                 if (list.length) {
-                    const label = list.length > 1 ? '🏆 Winners' : '🏆 Winner';
+                    const label = list.length > 1 ? '🏆 Winners' : 'The Winner is:';
                     winnerNamesEl.innerHTML = label + '<br>' + list.map(n => escapeHtmlText(n)).join('<br>');
                 } else {
                     winnerNamesEl.textContent = '😔 No Winner';
