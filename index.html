@@ -238,13 +238,16 @@
         .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
         .wheel-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; }
 
-        .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(320px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px 16px; border: 2px solid #ffcc44; border-radius: 22px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 26px rgba(255,204,68,.32); font-size: .88rem; line-height: 1.65; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; animation: moreTipPop .35s cubic-bezier(.34,1.56,.64,1) both; }
-        /* Speech-bubble tail aims directly at the More (⋮) button. */
-        .more-login-tip::before { content: ""; position: absolute; top: -17px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 14px solid transparent; border-right: 14px solid transparent; border-bottom: 17px solid #ffcc44; filter: drop-shadow(0 -2px 3px rgba(255,204,68,.25)); animation: moreTipTail  .65s ease-in-out infinite alternate; }
-        .more-login-tip::after { content: ""; position: absolute; top: -12px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 11px solid transparent; border-right: 11px solid transparent; border-bottom: 13px solid #44206b; animation: moreTipTail  .65s ease-in-out infinite alternate; }
+        .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(320px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px 16px; border: 2px solid #ffcc44; border-radius: 22px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 26px rgba(255,204,68,.32); font-size: .88rem; line-height: 1.65; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; transform-origin: top center; animation: moreTipPop .45s cubic-bezier(.34,1.56,.64,1) both, moreTipGlow 1.25s ease-in-out .45s infinite alternate; }
+        /* Larger speech-bubble tail points up at the More (⋮) button. */
+        .more-login-tip::before { content: ""; position: absolute; top: -29px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 24px solid transparent; border-right: 24px solid transparent; border-bottom: 30px solid #ffcc44; filter: drop-shadow(0 -3px 7px rgba(255,204,68,.75)); transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate, moreTipTailFlash 1.15s ease-in-out infinite; }
+        .more-login-tip::after { content: ""; position: absolute; top: -21px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 19px solid transparent; border-right: 19px solid transparent; border-bottom: 23px solid #44206b; transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate; }
         .more-login-tip.active { display: block; }
-        @keyframes moreTipTail { from { translate: 0 2px; } to { translate: 0 -2px; } }
-        @keyframes moreTipPop { from { opacity: 0; transform: translateY(-8px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes moreTipTailDance { from { translate: 0 5px; rotate: -4deg; scale: .96 1; } to { translate: 0 -5px; rotate: 4deg; scale: 1.05 1.04; } }
+        @keyframes moreTipTailFlash { 0%, 100% { filter: drop-shadow(0 0 3px rgba(255,204,68,.45)); } 50% { filter: drop-shadow(0 0 12px rgba(255,230,120,1)); } }
+        @keyframes moreTipGlow { from { box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 18px rgba(255,204,68,.3); border-color: #ffcc44; } to { box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 34px rgba(255,204,68,.78); border-color: #fff0a6; } }
+        @keyframes moreTipPop { 0% { opacity: 0; transform: translateY(-12px) scale(.78); } 65% { opacity: 1; transform: translateY(3px) scale(1.04); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        @media (prefers-reduced-motion: reduce) { .more-login-tip, .more-login-tip::before, .more-login-tip::after { animation: none !important; } }
         .guide-help-btn { position: absolute; top: 10px; right: 12px; background: rgba(255, 204, 68, 0.15); border: 1px solid rgba(255, 204, 68, 0.45); color: #ffcc44; font-size: 0.68rem; font-weight: 800; padding: 4px 12px; border-radius: 20px; cursor: pointer; letter-spacing: 0.4px; z-index: 5; font-family: inherit; }
         .guide-help-btn:active { transform: translateY(1px); }
         .guide-overlay { display: none; position: fixed; inset: 0; z-index: 100010 !important; pointer-events: none; isolation: isolate; }
@@ -2154,7 +2157,7 @@
             const tip = document.createElement('div');
             tip.className = 'more-login-tip';
             tip.setAttribute('role', 'status');
-            tip.textContent = 'ገንዘብ ለማስገባት\nገንዘብ ለማውጣት\nሪፈር ለማድረግ እና\nየደንበኞች አገልግሎት ሰጪዎችን ለማግኘት ይህን ይጫኑ።';
+            tip.textContent = 'ገንዘብ ለማስገባት\nገንዘብ ለማውጣት\nሪፈር ለማድረግ እና\nየደንበኞች አገልግሎት ሰጪዎችን ለማግኘት ቀስቱ የሚያመለክተውን ይጫኑ።';
             document.body.appendChild(tip);
             function positionTip() {
                 if (!document.body.contains(tip) || !moreBtn) return;
