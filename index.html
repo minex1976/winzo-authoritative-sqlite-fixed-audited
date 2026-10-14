@@ -238,14 +238,21 @@
         .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
         .wheel-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; }
 
+        .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(320px, calc(100vw - 24px)); box-sizing: border-box; padding: 14px 16px; border: 2px solid #ffcc44; border-radius: 22px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 26px rgba(255,204,68,.32); font-size: .88rem; line-height: 1.65; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; animation: moreTipPop .35s cubic-bezier(.34,1.56,.64,1) both; }
+        /* Speech-bubble tail aims directly at the More (⋮) button. */
+        .more-login-tip::before { content: ""; position: absolute; top: -17px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 14px solid transparent; border-right: 14px solid transparent; border-bottom: 17px solid #ffcc44; filter: drop-shadow(0 -2px 3px rgba(255,204,68,.25)); animation: moreTipTail  .65s ease-in-out infinite alternate; }
+        .more-login-tip::after { content: ""; position: absolute; top: -12px; left: var(--more-tip-tail-left, 50%); transform: translateX(-50%); border-left: 11px solid transparent; border-right: 11px solid transparent; border-bottom: 13px solid #44206b; animation: moreTipTail  .65s ease-in-out infinite alternate; }
+        .more-login-tip.active { display: block; }
+        @keyframes moreTipTail { from { translate: 0 2px; } to { translate: 0 -2px; } }
+        @keyframes moreTipPop { from { opacity: 0; transform: translateY(-8px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .guide-help-btn { position: absolute; top: 10px; right: 12px; background: rgba(255, 204, 68, 0.15); border: 1px solid rgba(255, 204, 68, 0.45); color: #ffcc44; font-size: 0.68rem; font-weight: 800; padding: 4px 12px; border-radius: 20px; cursor: pointer; letter-spacing: 0.4px; z-index: 5; font-family: inherit; }
         .guide-help-btn:active { transform: translateY(1px); }
-        .guide-overlay { display: none; position: fixed; inset: 0; z-index: 2100; pointer-events: none; }
+        .guide-overlay { display: none; position: fixed; inset: 0; z-index: 100010 !important; pointer-events: none; isolation: isolate; }
         .guide-overlay.active { display: block; }
-        .guide-highlight { position: absolute; display: none; border: 3px solid #ffcc44; border-radius: 30px; background: rgba(255, 204, 68, 0.06); box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.20), 0 0 32px rgba(255, 204, 68, 0.55); pointer-events: none; transition: left .35s cubic-bezier(0.34, 1.56, 0.64, 1), top .35s cubic-bezier(0.34, 1.56, 0.64, 1), width .35s cubic-bezier(0.34, 1.56, 0.64, 1), height .35s cubic-bezier(0.34, 1.56, 0.64, 1); animation: guideHighlightPulse 1.8s ease-in-out infinite alternate; }
+        .guide-highlight { position: absolute; display: none; border: 3px solid #ffcc44; border-radius: 30px; background: rgba(255, 204, 68, 0.06); box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.20), 0 0 32px rgba(255, 204, 68, 0.55); pointer-events: none; z-index: 100011; transition: left .35s cubic-bezier(0.34, 1.56, 0.64, 1), top .35s cubic-bezier(0.34, 1.56, 0.64, 1), width .35s cubic-bezier(0.34, 1.56, 0.64, 1), height .35s cubic-bezier(0.34, 1.56, 0.64, 1); animation: guideHighlightPulse 1.8s ease-in-out infinite alternate; }
         .guide-highlight.show { display: block; }
         @keyframes guideHighlightPulse { 0% { box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.18), 0 0 22px rgba(255, 204, 68, 0.45); } 100% { box-shadow: 0 0 0 8px rgba(255, 204, 68, 0.08), 0 0 44px rgba(255, 204, 68, 0.85); } }
-        .guide-bubble { position: absolute; display: none; max-width: 280px; background: linear-gradient(160deg, #3a1a5e, #1e2a4e); border: 2px solid #ffcc44; border-radius: 20px; padding: 14px 16px 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(255, 204, 68, 0.35); color: #f0e6ff; pointer-events: auto; z-index: 2200; }
+        .guide-bubble { position: absolute; display: none; max-width: 280px; background: linear-gradient(160deg, #3a1a5e, #1e2a4e); border: 2px solid #ffcc44; border-radius: 20px; padding: 14px 16px 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(255, 204, 68, 0.35); color: #f0e6ff; pointer-events: auto; z-index: 100012 !important; }
         .guide-bubble.show { display: block; animation: guideBubbleIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1); }
         @keyframes guideBubbleIn { 0% { transform: scale(0.6) translateY(10px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
         .guide-bubble::after { content: ""; position: absolute; width: 12px; height: 12px; left: var(--arrow-left, 50%); transform: translateX(-50%) rotate(45deg); border: 2px solid #ffcc44; }
@@ -1911,7 +1918,7 @@
             if (textExtractStatus) { textExtractStatus.textContent = ''; textExtractStatus.style.color = '#ffd866'; }
             if (depositModal) depositModal.classList.add('active');
             closeMoreDropdown();
-            if (!Guide.hasSeen('deposit')) setTimeout(() => Guide.start(getDepositGuideSteps(), 'deposit'), 380);
+            if (!Guide.hasSeen('deposit')) setTimeout(() => { if (depositModal && depositModal.classList.contains('active')) Guide.start(getDepositGuideSteps(), 'deposit'); }, 500);
         }
         function depositToPlay(amount, reference, imageFile) {
             if (!currentUser) return false;
@@ -2137,6 +2144,47 @@
         }
 
         // ============================================================
+        //  LOGIN TIP: point new session users to the More (⋮) menu
+        // ============================================================
+        let moreLoginTipShownThisSession = false;
+        let moreLoginTipTimer = null;
+        function showMoreLoginTip() {
+            if (moreLoginTipShownThisSession || !currentUser || !moreBtn || !gameScreen || gameScreen.style.display === 'none') return;
+            moreLoginTipShownThisSession = true;
+            const tip = document.createElement('div');
+            tip.className = 'more-login-tip';
+            tip.setAttribute('role', 'status');
+            tip.textContent = 'ገንዘብ ለማስገባት\nገንዘብ ለማውጣት\nሪፈር ለማድረግ እና\nየደንበኞች አገልግሎት ሰጪዎችን ለማግኘት ይህን ይጫኑ።';
+            document.body.appendChild(tip);
+            function positionTip() {
+                if (!document.body.contains(tip) || !moreBtn) return;
+                const r = moreBtn.getBoundingClientRect();
+                const vw = window.innerWidth, vh = window.innerHeight;
+                const w = Math.min(320, vw - 24);
+                tip.style.width = w + 'px';
+                let left = r.left + r.width / 2 - w / 2;
+                left = Math.max(12, Math.min(vw - w - 12, left));
+                tip.style.left = left + 'px';
+                tip.style.top = Math.max(12, Math.min(vh - tip.offsetHeight - 12, r.bottom + 18)) + 'px';
+                const targetCenter = r.left + r.width / 2;
+                const tailLeft = Math.max(22, Math.min(w - 22, targetCenter - left));
+                tip.style.setProperty('--more-tip-tail-left', tailLeft + 'px');
+            }
+            positionTip();
+            tip.classList.add('active');
+            positionTip();
+            window.addEventListener('resize', positionTip);
+            window.addEventListener('scroll', positionTip, true);
+            if (moreLoginTipTimer) clearTimeout(moreLoginTipTimer);
+            moreLoginTipTimer = setTimeout(() => {
+                window.removeEventListener('resize', positionTip);
+                window.removeEventListener('scroll', positionTip, true);
+                tip.remove();
+                moreLoginTipTimer = null;
+            }, 8000);
+        }
+
+        // ============================================================
         //  LOGIN FLOW
         // ============================================================
         function resolveLoginUsername() {
@@ -2153,6 +2201,7 @@
             return displayName || telegramDetectedDisplayName || telegramDetectedUsername || '';
         }
         async function beginSession(displayName) {
+            moreLoginTipShownThisSession = false;
             currentDisplayName = displayName;
             currentUser = null;
             DB.setSavedCredentials('', '');
@@ -2175,6 +2224,9 @@
         //  LOGOUT
         // ============================================================
         function performLogout() {
+            moreLoginTipShownThisSession = false;
+            if (moreLoginTipTimer) { clearTimeout(moreLoginTipTimer); moreLoginTipTimer = null; }
+            const oldMoreTip = document.querySelector('.more-login-tip'); if (oldMoreTip) oldMoreTip.remove();
             localSelectionRound = null; localSelectionPicks = [];
             if (client) client.disconnect();
             detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
@@ -2237,6 +2289,7 @@
             currentRoom = amount === 15 ? 'room_15' : 'room_30';
             DB.setSavedBet(amount);
             showGameScreen();
+            setTimeout(showMoreLoginTip, 250);
             renderNumberPicker(true);
             updateTotalBetDisplay();
             initGameConnection();
