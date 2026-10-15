@@ -603,7 +603,7 @@
         // ============================================================
         const DEV_MODE = false;
         window.WINZO_CONFIG = window.WINZO_CONFIG || {
-            WS_URL: WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.app.aletcloud.com/'
+            WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.app.aletcloud.com/'
         };
         const SERVER_WS_URL = String((window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || '').trim().replace(/\/$/, '');
         let client = null;
