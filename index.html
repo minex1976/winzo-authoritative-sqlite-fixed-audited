@@ -244,12 +244,14 @@
         .wheel-anim-machine.ready-art-active .wheel-ready-art { display:block; z-index:40; }
         .wheel-anim-machine.ready-art-active .wheel-pointer,
         .wheel-anim-machine.ready-art-active .wheel-container,
-        .wheel-anim-machine.ready-art-active .wheel-stand,
-        .wheel-anim-machine.ready-art-active .wheel-ready-bubble { visibility:visible; top:66%; z-index:30; min-width:100px; padding:2px 18px; background:transparent; border:0; box-shadow:none; animation:none; }
+        .wheel-anim-machine.ready-art-active .wheel-stand { visibility:visible; top:66%; z-index:30; }
+        /* Keep the live countdown above the artwork so digits are never hidden by the image. */
+        .wheel-anim-machine.ready-art-active .wheel-ready-bubble { display:block !important; visibility:visible !important; position:absolute; left:50%; top:67% !important; transform:translate(-50%,-50%); z-index:60 !important; min-width:100px; padding:2px 18px; background:rgba(0,0,0,.16); border:0; box-shadow:none; animation:none; color:#fff; }
         @media (max-width:420px) { .wheel-ready-art { width:96vw; top:44%; max-height:70vh; } }
         .wheel-ready-label { display: block; font-size: clamp(15px, 4vw, 22px); font-weight: 900; letter-spacing: .4px; }
         .wheel-ready-number { display:block; font-size:clamp(44px, 11vw, 68px); font-weight:1000; line-height:1.05; color:#b6ff43; -webkit-text-stroke:1px #174c0b; text-shadow:0 3px 0 #174c0b, 0 0 12px rgba(190,255,80,.9); }
         .wheel-ready-number:empty { display: none; }
+        .wheel-anim-machine.ready-art-active .wheel-ready-number:not(:empty) { display:block !important; position:relative; z-index:61; visibility:visible !important; opacity:1 !important; }
         @keyframes readyBubblePulse { from { filter: drop-shadow(0 0 2px rgba(75,220,255,.3)); } to { filter: drop-shadow(0 0 10px rgba(75,220,255,.85)); } }
 
         .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(280px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 12px; border: 2px solid #ffcc44; border-radius: 17px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 8px 24px rgba(0,0,0,.58), 0 0 18px rgba(255,204,68,.28); font-size: .78rem; line-height: 1.45; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; transform-origin: top center; animation: moreTipPop .45s cubic-bezier(.34,1.56,.64,1) both, moreTipGlow 1.25s ease-in-out .45s infinite alternate; }
