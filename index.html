@@ -240,8 +240,8 @@
         /* Transparent spoken countdown bubble layered in front of the wheel */
         .wheel-ready-bubble { position: absolute; z-index: 20; left: 50%; top: 42%; transform: translate(-50%, -50%); width: max-content; max-width: 90vw; padding: 8px 16px; text-align: center; color: #fff; background: rgba(8, 12, 25, .12); border: 2px solid rgba(90, 225, 255, .9); border-radius: 18px; text-shadow: 0 2px 8px #000, 0 0 14px rgba(75,220,255,.95); box-shadow: 0 0 18px rgba(75,220,255,.4); pointer-events: none; display: none; }
         .wheel-ready-bubble.active { display: block; animation: readyBubblePulse .55s ease-in-out infinite alternate; }
-        .wheel-ready-art { display:none; position:absolute; z-index:24; left:50%; top:46%; transform:translate(-50%,-50%); width:min(560px, 98vw); height:auto; max-height:78vh; object-fit:contain; pointer-events:none; filter:drop-shadow(0 8px 18px rgba(0,0,0,.28)); }
-        .wheel-anim-machine.ready-art-active .wheel-ready-art { display:block; }
+        .wheel-ready-art { display:none; position:absolute; z-index:40; left:50%; top:46%; transform:translate(-50%,-50%); width:min(560px, 98vw); height:auto; max-height:78vh; object-fit:contain; pointer-events:none; filter:drop-shadow(0 8px 18px rgba(0,0,0,.28)); }
+        .wheel-anim-machine.ready-art-active .wheel-ready-art { display:block; z-index:40; }
         .wheel-anim-machine.ready-art-active .wheel-pointer,
         .wheel-anim-machine.ready-art-active .wheel-container,
         .wheel-anim-machine.ready-art-active .wheel-stand,
