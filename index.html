@@ -237,14 +237,21 @@
         .wheel-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; background: #6a3a9a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem; font-weight: 900; border: 4px solid #f0e6ff; box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5; }
         .wheel-stand { width: 80px; height: 120px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
         .wheel-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; }
+        /* Transparent spoken countdown bubble layered in front of the wheel */
+        .wheel-ready-bubble { position: absolute; z-index: 20; left: 50%; top: 42%; transform: translate(-50%, -50%); width: max-content; max-width: 90vw; padding: 8px 16px; text-align: center; color: #fff; background: rgba(8, 12, 25, .12); border: 2px solid rgba(90, 225, 255, .9); border-radius: 18px; text-shadow: 0 2px 8px #000, 0 0 14px rgba(75,220,255,.95); box-shadow: 0 0 18px rgba(75,220,255,.4); pointer-events: none; display: none; }
+        .wheel-ready-bubble.active { display: block; animation: readyBubblePulse .55s ease-in-out infinite alternate; }
+        .wheel-ready-label { display: block; font-size: clamp(15px, 4vw, 22px); font-weight: 900; letter-spacing: .4px; }
+        .wheel-ready-number { display: block; font-size: clamp(34px, 10vw, 52px); font-weight: 1000; line-height: 1.05; color: #ffe66d; }
+        .wheel-ready-number:empty { display: none; }
+        @keyframes readyBubblePulse { from { filter: drop-shadow(0 0 2px rgba(75,220,255,.3)); } to { filter: drop-shadow(0 0 10px rgba(75,220,255,.85)); } }
 
         .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(280px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 12px; border: 2px solid #ffcc44; border-radius: 17px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 8px 24px rgba(0,0,0,.58), 0 0 18px rgba(255,204,68,.28); font-size: .78rem; line-height: 1.45; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; transform-origin: top center; animation: moreTipPop .45s cubic-bezier(.34,1.56,.64,1) both, moreTipGlow 1.25s ease-in-out .45s infinite alternate; }
         /* Compact upward arrow tail points toward the More (⋮) button. */
-        .more-login-tip::before { content: ""; position: absolute; top: -21px; left: var(--more-tip-tail-left, 50%); width: 3px; height: 19px; border-radius: 3px; background: #ffcc44; transform: translateX(-50%); filter: drop-shadow(0 0 4px rgba(255,204,68,.55)); transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate, moreTipTailFlash 1.15s ease-in-out infinite; }
-        .more-login-tip::after { content: ""; position: absolute; top: -22px; left: var(--more-tip-tail-left, 50%); width: 10px; height: 10px; border-top: 3px solid #ffcc44; border-left: 3px solid #ffcc44; border-radius: 2px 0 0 0; transform: translateX(-50%) rotate(45deg); transform-origin: 50% 50%; animation: moreTipTailDance .58s ease-in-out infinite alternate; }
+        .more-login-tip::before { content: ""; position: absolute; top: -21px; left: var(--more-tip-tail-left, 50%); width: 5px; height: 22px; border-radius: 4px; background: #35e7ff; transform: translateX(-50%); filter: drop-shadow(0 0 4px rgba(53,231,255,.75)); transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate, moreTipTailFlash 1.15s ease-in-out infinite; }
+        .more-login-tip::after { content: ""; position: absolute; top: -22px; left: var(--more-tip-tail-left, 50%); width: 10px; height: 10px; border-top: 4px solid #35e7ff; border-left: 4px solid #35e7ff; border-radius: 2px 0 0 0; transform: translateX(-50%) rotate(45deg); transform-origin: 50% 50%; animation: moreTipTailDance .58s ease-in-out infinite alternate; }
         .more-login-tip.active { display: block; }
         @keyframes moreTipTailDance { from { translate: 0 5px; rotate: -4deg; scale: .96 1; } to { translate: 0 -5px; rotate: 4deg; scale: 1.05 1.04; } }
-        @keyframes moreTipTailFlash { 0%, 100% { filter: drop-shadow(0 0 3px rgba(255,204,68,.45)); } 50% { filter: drop-shadow(0 0 12px rgba(255,230,120,1)); } }
+        @keyframes moreTipTailFlash { 0%, 100% { filter: drop-shadow(0 0 3px rgba(53,231,255,.65)); } 50% { filter: drop-shadow(0 0 12px rgba(255,230,120,1)); } }
         @keyframes moreTipGlow { from { box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 18px rgba(255,204,68,.3); border-color: #ffcc44; } to { box-shadow: 0 12px 36px rgba(0,0,0,.65), 0 0 34px rgba(255,204,68,.78); border-color: #fff0a6; } }
         @keyframes moreTipPop { 0% { opacity: 0; transform: translateY(-12px) scale(.78); } 65% { opacity: 1; transform: translateY(3px) scale(1.04); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         @media (prefers-reduced-motion: reduce) { .more-login-tip, .more-login-tip::before, .more-login-tip::after { animation: none !important; } }
@@ -255,10 +262,10 @@
         .guide-highlight { position: absolute; display: none; border: 3px solid #ffcc44; border-radius: 30px; background: rgba(255, 204, 68, 0.06); box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.20), 0 0 32px rgba(255, 204, 68, 0.55); pointer-events: none; z-index: 100011; transition: left .35s cubic-bezier(0.34, 1.56, 0.64, 1), top .35s cubic-bezier(0.34, 1.56, 0.64, 1), width .35s cubic-bezier(0.34, 1.56, 0.64, 1), height .35s cubic-bezier(0.34, 1.56, 0.64, 1); animation: guideHighlightPulse 1.8s ease-in-out infinite alternate; }
         .guide-highlight.show { display: block; }
         @keyframes guideHighlightPulse { 0% { box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.18), 0 0 22px rgba(255, 204, 68, 0.45); } 100% { box-shadow: 0 0 0 8px rgba(255, 204, 68, 0.08), 0 0 44px rgba(255, 204, 68, 0.85); } }
-        .guide-bubble { position: absolute; display: none; max-width: 240px; background: linear-gradient(160deg, #3a1a5e, #1e2a4e); border: 2px solid #ffcc44; border-radius: 16px; padding: 10px 12px 9px; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.72), 0 0 20px rgba(255, 204, 68, 0.28); color: #f0e6ff; pointer-events: auto; z-index: 100012 !important; }
+        .guide-bubble { position: absolute; display: none; max-width: 240px; background: linear-gradient(160deg, #3a1a5e, #1e2a4e); border: 2px solid #35e7ff; border-radius: 16px; padding: 10px 12px 9px; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.72), 0 0 20px rgba(53, 231, 255, 0.35); color: #f0e6ff; pointer-events: auto; z-index: 100012 !important; }
         .guide-bubble.show { display: block; animation: guideBubbleIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1); }
         @keyframes guideBubbleIn { 0% { transform: scale(0.6) translateY(10px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
-        .guide-bubble::after { content: ""; position: absolute; width: 12px; height: 12px; left: var(--arrow-left, 50%); transform: translateX(-50%) rotate(45deg); border: 2px solid #ffcc44; }
+        .guide-bubble::after { content: ""; position: absolute; width: 15px; height: 15px; left: var(--arrow-left, 50%); transform: translateX(-50%) rotate(45deg); border: 3px solid #35e7ff; filter: drop-shadow(0 0 5px rgba(53,231,255,.9)); }
         .guide-bubble.arrow-bottom::after { bottom: -7px; border-top: none; border-left: none; background: #1e2a4e; }
         .guide-bubble.arrow-top::after { top: -7px; border-bottom: none; border-right: none; background: #3a1a5e; }
         .guide-step-counter { display: inline-block; background: rgba(255, 204, 68, 0.18); color: #ffcc44; font-size: 0.62rem; font-weight: 800; padding: 2px 10px; border-radius: 12px; margin-bottom: 6px; letter-spacing: 0.5px; }
@@ -580,6 +587,10 @@
         <div class="wheel-container">
             <div class="wheel" id="baWheel"></div>
             <div class="wheel-center">W</div>
+        </div>
+        <div id="wheelReadyBubble" class="wheel-ready-bubble" aria-live="polite">
+            <span id="wheelReadyLabel" class="wheel-ready-label">Get ready to win</span>
+            <span id="wheelReadyNumber" class="wheel-ready-number"></span>
         </div>
         <div class="wheel-stand"></div>
         <div id="baStatus" class="wheel-anim-status">Ready.</div>
@@ -1579,11 +1590,37 @@
                 statusEl.textContent = 'Get ready to win!';
                 overlay.classList.add('active');
                 const readyAudio = document.getElementById('getReadyToWinAudio');
+                const readyBubble = document.getElementById('wheelReadyBubble');
+                const readyLabel = document.getElementById('wheelReadyLabel');
+                const readyNumber = document.getElementById('wheelReadyNumber');
+                let readyCountdownTimers = [];
                 let spinStarted = false;
+                const showReadyBubble = () => {
+                    if (!readyBubble || !readyLabel || !readyNumber) return;
+                    readyLabel.textContent = 'Get ready to win';
+                    readyNumber.textContent = '';
+                    readyBubble.classList.add('active');
+                    // Align the visual countdown with the announcement track's final spoken countdown.
+                    const durationMs = readyAudio && Number.isFinite(readyAudio.duration) && readyAudio.duration > 0
+                        ? readyAudio.duration * 1000 : 6000;
+                    const countdownStart = Math.max(0, durationMs - 3000);
+                    [1, 2, 3].forEach((n, i) => {
+                        readyCountdownTimers.push(setTimeout(() => {
+                            readyNumber.textContent = String(n);
+                        }, countdownStart + i * 1000));
+                    });
+                };
+                const hideReadyBubble = () => {
+                    readyCountdownTimers.forEach(clearTimeout);
+                    readyCountdownTimers = [];
+                    if (readyBubble) readyBubble.classList.remove('active');
+                };
+                showReadyBubble();
                 const beginSpin = () => {
                     if (spinStarted) return;
                     spinStarted = true;
                     if (readyAudio) readyAudio.onended = null;
+                    hideReadyBubble();
                     statusEl.textContent = 'Spinning the wheel...';
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
@@ -2175,7 +2212,7 @@
             const tip = document.createElement('div');
             tip.className = 'more-login-tip';
             tip.setAttribute('role', 'status');
-            tip.textContent = 'ገንዘብ ለማስገባት\nገንዘብ ለማውጣት\nሪፈር ለማድረግ እና\nየደንበኞች አገልግሎት ሰጪዎችን ለማግኘት ከላይ ያለውን (⋮) ምልክት ይጫኑ።';
+            tip.textContent = 'ገንዘብ ለማስገባት\nገንዘብ ለማውጣት\nሪፈር ለማድረግ እና\nየደንበኞች አገልግሎት ሰጪዎችን ለማግኘት ይህን ይጫኑ።';
             document.body.appendChild(tip);
             function positionTip() {
                 if (!document.body.contains(tip) || !moreBtn) return;
