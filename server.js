@@ -5,24 +5,50 @@ import http from 'http';
 import admin from 'firebase-admin';
 
 // --- Firebase Initialization ---
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
-const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+// AletCloud must provide Firebase credentials as environment variables.
+// Preferred option: FIREBASE_SERVICE_ACCOUNT_JSON containing the full service
+// account JSON (one-line JSON is easiest). Legacy split variables are supported.
 const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
+let firebaseServiceAccount = null;
 
-if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY || !FIREBASE_DATABASE_URL) {
-  console.error('CRITICAL: Missing Firebase environment variables. Exiting.');
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    firebaseServiceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  } else {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    if (projectId && clientEmail && privateKey) {
+      firebaseServiceAccount = { projectId, clientEmail, privateKey };
+    }
+  }
+} catch (error) {
+  console.error('CRITICAL: FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.');
+  console.error(error.message);
   process.exit(1);
 }
 
-admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: FIREBASE_PROJECT_ID,
-    clientEmail: FIREBASE_CLIENT_EMAIL,
-    privateKey: FIREBASE_PRIVATE_KEY,
-  }),
-  databaseURL: FIREBASE_DATABASE_URL
-});
+const missingFirebaseSettings = [];
+if (!firebaseServiceAccount) missingFirebaseSettings.push('FIREBASE_SERVICE_ACCOUNT_JSON (or FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY)');
+if (!FIREBASE_DATABASE_URL) missingFirebaseSettings.push('FIREBASE_DATABASE_URL');
+
+if (missingFirebaseSettings.length) {
+  console.error('CRITICAL: Missing Firebase environment variables:');
+  for (const setting of missingFirebaseSettings) console.error(` - ${setting}`);
+  console.error('Set these in AletCloud → service → Environment/Secrets, then redeploy.');
+  process.exit(1);
+}
+
+try {
+  admin.initializeApp({
+    credential: admin.credential.cert(firebaseServiceAccount),
+    databaseURL: FIREBASE_DATABASE_URL
+  });
+} catch (error) {
+  console.error('CRITICAL: Firebase Admin initialization failed. Check the service-account JSON and database URL.');
+  console.error(error.message);
+  process.exit(1);
+}
 
 const db = admin.database();
 
