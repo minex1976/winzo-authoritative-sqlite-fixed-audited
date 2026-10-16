@@ -691,6 +691,95 @@ async function adminDecision(id, decision, reason = '') {
   }
 }
 
+
+// --- Automatic deposit verification from trusted Firebase /incoming_sms ---
+// A reference is claimed globally before the wallet approval is attempted.
+// Only records with an explicit transaction reference AND amount are eligible.
+function normalizePaymentReference(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 128);
+}
+function parsePaymentRecord(record) {
+  const r = record && typeof record === 'object' ? record : { text: String(record || '') };
+  const text = String(r.text || r.message || r.body || r.sms || r.content || '');
+  let reference = r.reference || r.transaction_reference || r.transactionReference || r.transaction_id || r.transactionId || r.txn_id || r.txnId || r.ref || '';
+  if (!reference && text) {
+    const m = text.match(/your\s+transaction\s+number\s+is\s*[:\-]?\s*([A-Za-z0-9]{6,})/i)
+      || text.match(/\breference(?:\s*(?:number|code|no\.?))?\s*[:\-]?\s*([A-Za-z0-9]{6,})/i)
+      || text.match(/\b(?:transaction\s+number|txn\s*(?:id|no\.?))\s*[:\-]?\s*([A-Za-z0-9]{6,})/i);
+    if (m) reference = m[1];
+  }
+  let amount = Number(r.amount ?? r.transaction_amount ?? r.transactionAmount ?? r.paid_amount ?? r.paidAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    // Deliberately accept only currency-labelled amounts to avoid matching phone/date numbers.
+    const m = text.match(/(?:ETB|Birr|ብር)\s*([0-9][0-9,]*(?:\.\d{1,2})?)|([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር)/i);
+    if (m) amount = Number(String(m[1] || m[2]).replace(/,/g, ''));
+  }
+  return { reference: normalizePaymentReference(reference), amount: Number.isFinite(amount) ? amount : 0, text };
+}
+async function autoApproveMatchingDeposits(smsId, smsRecord) {
+  const payment = parsePaymentRecord(smsRecord);
+  if (!payment.reference || payment.amount <= 0) return;
+  const txSnap = await db.ref('transactions').orderByChild('status').equalTo('pending').once('value');
+  const candidates = [];
+  txSnap.forEach(child => {
+    const tx = child.val() || {};
+    if (tx.type !== 'deposit') return;
+    if (normalizePaymentReference(tx.reference) !== payment.reference) return;
+    if (Math.abs(toFiniteNumber(tx.amount, 0) - payment.amount) > 0.009) return;
+    candidates.push({ id: child.key, tx });
+  });
+  // Ambiguous matches are not automatically approved.
+  if (candidates.length !== 1) {
+    if (candidates.length > 1) console.warn(`[AUTO-DEPOSIT] ambiguous reference=${payment.reference}; matches=${candidates.length}; left pending`);
+    return;
+  }
+  const { id, tx } = candidates[0];
+  const claimRef = db.ref('deposit_reference_claims/' + payment.reference);
+  const claim = await claimRef.transaction(current => {
+    if (current) return current;
+    return { transaction_id: id, sms_id: String(smsId), amount: payment.amount, reference: payment.reference, claimed_at: now(), status: 'claimed' };
+  });
+  const claimValue = claim?.snapshot?.val();
+  if (!claim?.committed && String(claimValue?.transaction_id || '') !== id) {
+    console.warn(`[AUTO-DEPOSIT] reused reference=${payment.reference}; existing_tx=${claimValue?.transaction_id || 'unknown'} new_tx=${id}; left pending`);
+    return;
+  }
+  if (!claim?.committed && claimValue?.status === 'approved') return;
+  // Recheck that this exact SMS/reference/amount still points to the same pending transaction.
+  const fresh = await db.ref('transactions/' + id).once('value');
+  const freshTx = fresh.val() || {};
+  if (freshTx.status !== 'pending' || freshTx.type !== 'deposit'
+      || normalizePaymentReference(freshTx.reference) !== payment.reference
+      || Math.abs(toFiniteNumber(freshTx.amount, 0) - payment.amount) > 0.009) return;
+  const result = await adminDecision(id, 'approved', `Auto-approved: verified incoming SMS ${String(smsId).slice(0, 80)}`);
+  if (result.ok) {
+    await claimRef.update({ status: 'approved', approved_at: now() });
+    console.log(`[AUTO-DEPOSIT] approved tx=${id} ref=${payment.reference} amount=${payment.amount}`);
+  } else {
+    // Release only our own unapproved claim so a transient wallet/database error can retry.
+    await claimRef.transaction(current => current && current.transaction_id === id && current.status === 'claimed' ? null : current);
+    console.warn(`[AUTO-DEPOSIT] approval failed tx=${id} ref=${payment.reference}: ${result.reason || 'unknown'}`);
+  }
+}
+async function processIncomingSmsSnapshot(snapshot) {
+  if (!snapshot?.exists()) return;
+  const value = snapshot.val();
+  await autoApproveMatchingDeposits(snapshot.key, value);
+}
+function startAutomaticDepositMonitor() {
+  const smsRef = db.ref('incoming_sms');
+  smsRef.on('child_added', snap => processIncomingSmsSnapshot(snap).catch(e => console.error('[AUTO-DEPOSIT] SMS processing failed', e.message)));
+  smsRef.on('child_changed', snap => processIncomingSmsSnapshot(snap).catch(e => console.error('[AUTO-DEPOSIT] SMS update processing failed', e.message)));
+  // Also retry pending requests against SMS records that already existed before this process started.
+  smsRef.once('value').then(snap => {
+    if (!snap.exists()) return;
+    const jobs = [];
+    snap.forEach(child => jobs.push(autoApproveMatchingDeposits(child.key, child.val())));
+    return Promise.allSettled(jobs);
+  }).catch(e => console.error('[AUTO-DEPOSIT] initial scan failed', e.message));
+  console.log('[AUTO-DEPOSIT] real-time monitor attached to /incoming_sms');
+}
+
 async function markNotificationRead(uid, id) {
   await db.ref('notifications/' + id).update({ read: true });
 }
@@ -1517,6 +1606,7 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 loadRooms().then(() => {
+  startAutomaticDepositMonitor();
   server.listen(PORT, '0.0.0.0', () => console.log(`Winzo Realtime Database server listening on :${PORT}`));
   for (const room of Object.values(rooms)) {
     if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
