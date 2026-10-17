@@ -3,6 +3,8 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import admin from 'firebase-admin';
+import pg from 'pg';
+const { Pool } = pg;
 
 // --- Firebase Initialization ---
 // AletCloud must provide Firebase credentials as environment variables.
@@ -51,6 +53,58 @@ try {
 }
 
 const db = admin.database();
+
+// PostgreSQL is used as a durable financial-event/audit store in this release.
+// Firebase remains the live wallet source of truth; do not delete Firebase wallet data.
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const pgPool = DATABASE_URL ? new Pool({
+  connectionString: DATABASE_URL,
+  // Managed database providers commonly require TLS. Set PGSSLMODE=disable only
+  // if your provider explicitly says TLS is not supported.
+  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+}) : null;
+let pgReady = false;
+
+async function initPostgres() {
+  if (!pgPool) {
+    console.warn('[POSTGRES] DATABASE_URL is not set; PostgreSQL audit logging is disabled.');
+    return;
+  }
+  await pgPool.query(`CREATE TABLE IF NOT EXISTS financial_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_key TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount >= 0),
+    room_id TEXT,
+    round_number INTEGER,
+    wallet TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pgPool.query('CREATE INDEX IF NOT EXISTS financial_events_user_created_idx ON financial_events (username, created_at DESC)');
+  await pgPool.query('SELECT 1');
+  pgReady = true;
+  console.log('[POSTGRES] connected; financial_events table ready. Firebase remains wallet source of truth.');
+}
+
+async function recordFinancialEvent(event) {
+  if (!pgPool || !pgReady) return;
+  try {
+    await pgPool.query(
+      `INSERT INTO financial_events (event_key, username, event_type, amount, room_id, round_number, wallet, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT (event_key) DO NOTHING`,
+      [String(event.eventKey), String(event.username), String(event.type), Number(event.amount), event.roomId || null,
+       Number.isFinite(Number(event.round)) ? Number(event.round) : null, event.wallet || null, JSON.stringify(event.metadata || {})]
+    );
+  } catch (e) {
+    // Do not reverse a successful Firebase wallet update because an audit write failed.
+    console.error('[POSTGRES] financial event write failed:', e.message);
+  }
+}
 
 // --- Configuration ---
 const PORT = Number(process.env.PORT || 10000);
@@ -785,25 +839,33 @@ async function markNotificationRead(uid, id) {
 }
 
 async function claimPayout(uid, amount, roomId, round, kind) {
-  const key = `payout:${roomId}_${round}_${uid}_${kind}`;
-  const markerRef = db.ref('notifications/' + key);
-  const marker = await markerRef.once('value');
-  if (marker.exists()) return false;
-
-  let success = false;
-  await db.ref('users/' + uid).transaction(u => {
+  const amt = toFiniteNumber(amount, 0);
+  if (!uid || amt <= 0) return false;
+  const eventKey = `payout:${roomId}_${round}_${uid}_${kind}`;
+  let applied = false;
+  let newBalance = 0;
+  const result = await db.ref('users/' + uid).transaction(u => {
     if (!u) return u;
-    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amount;
+    u.wallet_ledger = u.wallet_ledger && typeof u.wallet_ledger === 'object' ? u.wallet_ledger : {};
+    if (u.wallet_ledger[eventKey]) return u;
+    u.main_wallet = toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0) + amt;
     u.wallet_updated_at = now();
     u.updated_at = u.wallet_updated_at;
-    success = true;
+    u.wallet_ledger[eventKey] = { type: kind, amount: amt, room_id: roomId, round: Number(round), timestamp: u.wallet_updated_at };
+    applied = true;
     return u;
   });
-
-  if (success) {
-    await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now() });
+  const committed = !!result?.committed;
+  const user = result?.snapshot?.val() || {};
+  const didApply = committed && applied;
+  if (didApply) {
+    newBalance = toFiniteNumber(user.main_wallet, 0);
+    await recordFinancialEvent({ eventKey, username: uid, type: kind === 'win' ? 'winner_payout' : kind, amount: amt, roomId, round, wallet: 'main', metadata: { balance_after: newBalance } });
+    await sendWallet(uid); // Push immediately; no player tap/visibility refresh needed.
+    const markerRef = db.ref('notifications/' + eventKey);
+    await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now(), amount: amt, room_id: roomId, round: Number(round) });
   }
-  return success;
+  return didApply;
 }
 
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
@@ -827,6 +889,8 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
 
   if (success) {
     await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
+    await recordFinancialEvent({ eventKey: key, username: ref, type: 'referral_commission', amount, roomId, round, wallet: 'main', metadata: { winner_uid: winnerUid } });
+    await sendWallet(ref);
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
   }
   return success;
@@ -948,6 +1012,7 @@ async function debit(uid, amount, roomId, round) {
     if (committed) {
       const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
       console.log(`[DEBIT] uid=${uid} amount=${amt} committed=true newPlay=${newPlay} room=${roomId} round=${round}`);
+      await recordFinancialEvent({ eventKey: `debit:${roomId}:${round}:${uid}:${crypto.randomUUID()}`, username: uid, type: 'wager_debit', amount: amt, roomId, round, wallet: 'play', metadata: { balance_after: newPlay } });
       await sendWallet(uid);
       return { ok: true, balance: newPlay };
     }
@@ -966,28 +1031,48 @@ async function debit(uid, amount, roomId, round) {
   }
 }
 
-async function refundWager(uid, amount, roomId, round) {
+async function refundWager(uid, amount, roomId, round, reason = 'refund') {
   const amt = toFiniteNumber(amount, 0);
-  if (amt <= 0) return false;
+  if (amt <= 0 || !uid) return false;
+  const eventKey = `refund:${roomId}:${round}:${uid}:${String(reason).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   try {
-    let committed = false;
+    let applied = false;
     const result = await db.ref('users/' + uid).transaction(u => {
       if (!u) return u;
+      u.wallet_ledger = u.wallet_ledger && typeof u.wallet_ledger === 'object' ? u.wallet_ledger : {};
+      if (u.wallet_ledger[eventKey]) return u;
       u.play_wallet = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0) + amt;
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
-      committed = true;
+      u.wallet_ledger[eventKey] = { type: 'wager_refund', amount: amt, room_id: roomId, round: Number(round), reason, timestamp: u.wallet_updated_at };
+      applied = true;
       return u;
     });
-    const ok = committed && !!(result && result.committed);
+    const committed = !!result?.committed;
+    const user = result?.snapshot?.val() || {};
+    // Treat an already-present idempotency marker as settled, so a retry can clear
+    // the stale pick without issuing a second credit under a different reset path.
+    const alreadySettled = !!user.wallet_ledger?.[eventKey];
+    const ok = alreadySettled;
     if (ok) {
-      const newPlay = toFiniteNumber(result.snapshot.val()?.play_wallet, 0);
-      console.log(`[REFUND] uid=${uid} amount=${amt} newPlay=${newPlay} room=${roomId} round=${round}`);
+      const newPlay = toFiniteNumber(user.play_wallet, 0);
+      if (committed && applied) {
+        console.log(`[REFUND] uid=${uid} amount=${amt} newPlay=${newPlay} room=${roomId} round=${round} reason=${reason}`);
+        await recordFinancialEvent({ eventKey, username: uid, type: 'wager_refund', amount: amt, roomId, round, wallet: 'play', metadata: { reason, balance_after: newPlay } });
+      } else {
+        console.log(`[REFUND] idempotent retry uid=${uid} room=${roomId} round=${round} reason=${reason}`);
+      }
       await sendWallet(uid);
     }
     return ok;
   } catch (e) {
     console.error(`[REFUND] uid=${uid} amount=${amt} ERROR`, e);
+    try {
+      const check = await db.ref('users/' + uid + '/wallet_ledger/' + eventKey).once('value');
+      if (check.exists()) { await sendWallet(uid); return true; }
+    } catch (checkError) {
+      console.error(`[REFUND] idempotency verification failed uid=${uid}`, checkError.message);
+    }
     return false;
   }
 }
@@ -1019,7 +1104,7 @@ async function unpickIntent(room, uid, num) {
     const p = room.players.get(uid);
     if (!p || !p.picks.includes(num)) return { ok: false, reason: 'not-picked' };
     if (room.taken.get(num) !== uid) return { ok: false, reason: 'not-owner' };
-    if (!(await refundWager(uid, room.bet, room.id, room.round))) return { ok: false, reason: 'refund-failed' };
+    if (!(await refundWager(uid, room.bet, room.id, room.round, `unpick-${num}-${crypto.randomUUID()}`))) return { ok: false, reason: 'refund-failed' };
     p.picks = p.picks.filter(n => n !== num); room.taken.delete(num); room.dirty = true;
     return { ok: true };
   });
@@ -1028,9 +1113,14 @@ async function unpickIntent(room, uid, num) {
 async function refundDisconnectedPlayer(room, p) {
   if (!p || p.isBot || !p.picks.length) return;
   const amount = room.bet * p.picks.length;
-  await refundWager(p.uid, amount, room.id, room.round);
+  const refunded = await refundWager(p.uid, amount, room.id, room.round, 'disconnect');
+  if (!refunded) {
+    console.error(`[DISCONNECT-REFUND] failed; retaining picks for safe retry uid=${p.uid} room=${room.id} round=${room.round}`);
+    return false;
+  }
   for (const n of p.picks) if (room.taken.get(n) === p.uid) room.taken.delete(n);
   p.picks = []; p.active = false; room.dirty = true;
+  return true;
 }
 
 async function toSpinning(room) {
@@ -1134,7 +1224,7 @@ async function resetRound(room, why) {
   await recordRoundAnalytics(room, why);
   for (const p of room.players.values()) {
     if (p.isBot || !p.picks.length) continue;
-    if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round);
+    if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round, 'round-reset');
   }
   room.round += 1; room.phase = 'selection'; room.endsAt = now() + SELECTION_SECONDS * 1000;
   room.taken.clear(); room.winningNumber = null; room.winners = []; room.prizePool = 0; room.lastResult = null;
@@ -1536,9 +1626,14 @@ app.get('/health', async (_, res) => {
   try {
     await Promise.race([
       db.ref('rooms').limitToFirst(1).once('value'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('database-timeout')), 2500))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('firebase-database-timeout')), 2500))
     ]);
-    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'firebase-realtime-database', websocket: true, uptime: process.uptime(), origins: ALLOWED_ORIGINS, rooms: roomInfo });
+    let postgres = 'not-configured';
+    if (pgPool) {
+      try { await pgPool.query('SELECT 1'); postgres = 'connected'; }
+      catch { postgres = 'unavailable'; }
+    }
+    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'firebase-realtime-database', postgres, postgresRole: 'financial-event-audit', walletSourceOfTruth: 'firebase-realtime-database', websocket: true, uptime: process.uptime(), origins: ALLOWED_ORIGINS, rooms: roomInfo });
   } catch (e) {
     res.status(503).json({ ok: false, service: 'winzo-authoritative-server', database: 'unavailable', websocket: true, error: e.message || 'database-unavailable' });
   }
@@ -1569,11 +1664,14 @@ app.get('/config', (_, res) => res.json({
   ok: true,
   service: 'winzo-authoritative-server',
   database: 'firebase-realtime-database',
+  postgres: pgPool ? (pgReady ? 'connected' : 'configured-not-ready') : 'not-configured',
+  postgresRole: 'financial-event-audit',
+  walletSourceOfTruth: 'firebase-realtime-database',
   walletSchema: 'users/<uid>/{main_wallet,play_wallet,pending_withdrawal,referral_earnings}',
   websocket: true
 }));
 
-app.get('/', (_, res) => res.type('text').send('Winzo authoritative Firebase server is running.'));
+app.get('/', (_, res) => res.type('text').send('Winzo authoritative game server is running (Firebase wallets + optional PostgreSQL financial-event audit).'));
 
 const server = http.createServer(app);
 
@@ -1600,14 +1698,15 @@ async function gracefulShutdown(signal) {
   } catch (e) { console.error('[SHUTDOWN] persist failed', e); }
   for (const ws of wss.clients) { try { ws.close(1001, 'server shutting down'); } catch {} }
   server.close(() => process.exit(0));
+  if (pgPool) await pgPool.end().catch(() => {});
   setTimeout(() => process.exit(0), 5000).unref();
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-loadRooms().then(() => {
+initPostgres().then(() => loadRooms()).then(() => {
   startAutomaticDepositMonitor();
-  server.listen(PORT, '0.0.0.0', () => console.log(`Winzo Realtime Database server listening on :${PORT}`));
+  server.listen(PORT, '0.0.0.0', () => console.log(`Winzo game server listening on :${PORT}`));
   for (const room of Object.values(rooms)) {
     if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
     if (room.phase === 'selection') normalizeRoundBots(room);
@@ -1615,11 +1714,12 @@ loadRooms().then(() => {
     scheduleBots(room);
   }
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
+  console.log(`PostgreSQL audit: ${pgReady ? 'connected' : 'disabled'}`);
   console.log(`Bot pool size: ${BOT_NAMES.length}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
   console.log(`Results phase length: ${RESULTS_SECONDS}s`);
   console.log(`Allowed WebSocket origins: ${ALLOWED_ORIGINS.join(', ')}`);
 }).catch(err => {
-  console.error("Failed to load rooms from Realtime Database. Check your credentials and database URL.", err);
+  console.error("Failed to initialize PostgreSQL or load rooms. Check DATABASE_URL, Firebase credentials, and database connectivity.", err);
   process.exit(1);
 });
