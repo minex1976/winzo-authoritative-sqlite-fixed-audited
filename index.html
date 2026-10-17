@@ -3170,12 +3170,10 @@
     visibleKind = '';
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
-  // Render again when login -> welcome -> game transitions happen.
-  const observer = new MutationObserver(render);
-  observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['style', 'class'] });
+  // Keep this listener isolated from the game's DOM and rendering loop.
+  // Polling also notices when the user reaches the game screen.
   poll();
-  setInterval(poll, 2000);
-  setInterval(render, 500);
+  setInterval(poll, 2500);
 })();
 </script>
 
