@@ -65,7 +65,7 @@ if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 3;
-const RESULTS_SECONDS = 18;
+const RESULTS_SECONDS = 13;
 const MAX_PICKS = 3;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
