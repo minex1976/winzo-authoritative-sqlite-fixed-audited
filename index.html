@@ -3177,5 +3177,75 @@
 })();
 </script>
 
+
+<script>
+/* Per-user admin events: approvals, rejections, and account notices. */
+(function () {
+  'use strict';
+  const DB_ROOT = 'https://render-e9e2d-default-rtdb.firebaseio.com';
+  let busy = false;
+  let activeUid = '';
+  const seenThisSession = new Set();
+
+  function pickIcon(type) {
+    type = String(type || '');
+    if (type.endsWith('_approval')) return '🎉';
+    if (type.endsWith('_rejection') || type === 'deposit_no_sms' || type === 'deposit_used_ref') return '⚠️';
+    return '📢';
+  }
+
+  function showBubble(text, icon) {
+    const msg = String(text || '').trim();
+    if (!msg) return false;
+    if (typeof showToast === 'function') {
+      showToast(icon + ' ' + msg, icon === '⚠️' ? 'warning' : 'info');
+      return true;
+    }
+    console.info('[Winzo user event]', icon, msg);
+    return false;
+  }
+
+  async function pollUserEvents() {
+    if (busy) return;
+    const uid = String(typeof currentUser !== 'undefined' ? (currentUser || '') : '').trim();
+    if (!uid) { activeUid = ''; return; }
+    if (uid !== activeUid) { activeUid = uid; seenThisSession.clear(); }
+    busy = true;
+    try {
+      const safeUid = encodeURIComponent(uid);
+      const response = await fetch(DB_ROOT + '/broadcasts/user_events/' + safeUid + '.json?cb=' + Date.now(), {
+        method: 'GET', cache: 'no-store'
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const events = await response.json() || {};
+      for (const [key, ev] of Object.entries(events)) {
+        if (!ev || typeof ev !== 'object') continue;
+        if (Number(ev.expiresAt) && Number(ev.expiresAt) < Date.now()) continue;
+        if (ev.read === true || seenThisSession.has(key)) continue;
+        const displayed = showBubble(ev.message, pickIcon(ev.type));
+        if (!displayed) continue;
+        seenThisSession.add(key);
+        try {
+          const mark = await fetch(DB_ROOT + '/broadcasts/user_events/' + safeUid + '/' + encodeURIComponent(key) + '/read.json', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: 'true'
+          });
+          if (!mark.ok) throw new Error('HTTP ' + mark.status);
+        } catch (err) {
+          console.warn('[Winzo user event] Could not mark event as read:', err && err.message || err);
+        }
+      }
+    } catch (err) {
+      console.warn('[Winzo user event] Could not fetch user events:', err && err.message || err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  pollUserEvents();
+  setInterval(pollUserEvents, 3000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) pollUserEvents(); });
+})();
+</script>
+
 </body>
 </html>
