@@ -173,8 +173,8 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #fireworksCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3000; display: none; }
         #fireworksCanvas.active { display: block; pointer-events: none; }
-        .ocr-progress-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.7); justify-content: center; align-items: center; z-index: 2000; padding: 20px; }
-        .ocr-progress-modal.active { display: flex; }
+        .ocr-progress-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.7); justify-content: center; align-items: center; z-index: 200000 !important; padding: 20px; }
+        .ocr-progress-modal.active { display: flex !important; z-index: 200000 !important; }
         .ocr-progress-modal .modal-content { max-width: 340px; text-align: center; padding: 30px 20px; }
         .ocr-progress-modal .spinner { width: 60px; height: 60px; margin: 0 auto 16px; border: 4px solid rgba(255, 204, 68, 0.1); border-top: 4px solid #ffcc44; border-radius: 50%; animation: spin 0.8s linear infinite; }
         .ocr-progress-modal .status-text { color: #f0e6ff; font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
@@ -536,7 +536,10 @@
     <div class="winner-celebration" id="winnerCelebration" role="status" aria-live="polite">🎉 Congratulations! You won!</div>
     <div class="deposit-modal" id="depositModal">
         <div class="modal-content">
-            <h3> በቴሌብር ወደ 0923002900 ይላኩ </h3>
+            <h3 style="color:#ffcc44;line-height:1.65;font-size:1rem;font-weight:700;letter-spacing:0.3px;">
+                በቴልብር ወደ 0923002900 ገቢ ያድርጉ።<br>
+                ስም ፦ ምንይሁን ማሞ
+            </h3>
             <div class="balance-info">አሁን ያሎት ብር: <span class="amount" id="depositPlayBalance">0</span></div>
             <div class="paste-box">
                 <label class="paste-label" for="depositPasteText">📋 የቴሌብር መልእክት እዚህ ይለጥፉ / Paste Telebirr SMS here</label>
@@ -2260,8 +2263,36 @@
         // ============================================================
         let moreLoginTipShownThisSession = false;
         let moreLoginTipTimer = null;
+        let moreLoginTipVisibilityInterval = null;
+        let moreLoginTipPositionHandler = null;
+
+        function isMoreBtnVisiblyTop() {
+            if (!moreBtn || !moreBtn.isConnected) return false;
+            const r = moreBtn.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) return false;
+            if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) return false;
+            const cx = r.left + r.width / 2;
+            const cy = r.top + r.height / 2;
+            const el = document.elementFromPoint(cx, cy);
+            return !!(el && (el === moreBtn || moreBtn.contains(el) || el.contains(moreBtn)));
+        }
+
+        function hideMoreLoginTip() {
+            if (moreLoginTipTimer) { clearTimeout(moreLoginTipTimer); moreLoginTipTimer = null; }
+            if (moreLoginTipVisibilityInterval) { clearInterval(moreLoginTipVisibilityInterval); moreLoginTipVisibilityInterval = null; }
+            if (moreLoginTipPositionHandler) {
+                window.removeEventListener('resize', moreLoginTipPositionHandler);
+                window.removeEventListener('scroll', moreLoginTipPositionHandler, true);
+                moreLoginTipPositionHandler = null;
+            }
+            const tip = document.querySelector('.more-login-tip');
+            if (tip) tip.remove();
+        }
+
         function showMoreLoginTip() {
-            if (moreLoginTipShownThisSession || !currentUser || !moreBtn || !gameScreen || gameScreen.style.display === 'none') return;
+            if (moreLoginTipShownThisSession || !currentUser || !moreBtn) return;
+            if (!gameScreen || gameScreen.style.display === 'none') return;
+            if (!isMoreBtnVisiblyTop()) return;
             moreLoginTipShownThisSession = true;
             const tip = document.createElement('div');
             tip.className = 'more-login-tip';
@@ -2285,15 +2316,17 @@
             positionTip();
             tip.classList.add('active');
             positionTip();
+            moreLoginTipPositionHandler = positionTip;
             window.addEventListener('resize', positionTip);
             window.addEventListener('scroll', positionTip, true);
-            if (moreLoginTipTimer) clearTimeout(moreLoginTipTimer);
-            moreLoginTipTimer = setTimeout(() => {
-                window.removeEventListener('resize', positionTip);
-                window.removeEventListener('scroll', positionTip, true);
-                tip.remove();
-                moreLoginTipTimer = null;
-            }, 12000);
+            /* Watch every 400ms — the moment the More button is covered (e.g. by the
+               spinning-wheel overlay, a modal, or the game screen being hidden),
+               the bubble closes immediately. */
+            moreLoginTipVisibilityInterval = setInterval(() => {
+                if (!document.body.contains(tip)) { hideMoreLoginTip(); return; }
+                if (!isMoreBtnVisiblyTop()) hideMoreLoginTip();
+            }, 400);
+            moreLoginTipTimer = setTimeout(hideMoreLoginTip, 12000);
         }
 
         // ============================================================
@@ -2337,8 +2370,7 @@
         // ============================================================
         function performLogout() {
             moreLoginTipShownThisSession = false;
-            if (moreLoginTipTimer) { clearTimeout(moreLoginTipTimer); moreLoginTipTimer = null; }
-            const oldMoreTip = document.querySelector('.more-login-tip'); if (oldMoreTip) oldMoreTip.remove();
+            hideMoreLoginTip();
             localSelectionRound = null; localSelectionPicks = [];
             if (client) client.disconnect();
             detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
@@ -2414,6 +2446,7 @@
                 }
                 if (client) client.leave();
             }
+            hideMoreLoginTip();
             detachLastResultListener(); clearCardFetchRetry(); stopResilienceEngine();
             stopTimer();
             isGameInitialized = false;
@@ -2870,7 +2903,7 @@
                 if (!engineState.winnersModalShown) {
                     engineState.winnersModalShown = true;
                 }
-            } else { engineState.winnersModalShown = false; }
+            } else engineState.winnersModalShown = false;
             applyCardState();
             updatePrizeDisplay(); updatePickStatus(); renderNumberPicker(); updateTotalBetDisplay();
         }
