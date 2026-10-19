@@ -226,7 +226,6 @@
         @media (max-width: 430px) { #usernameWalletItem { display: none !important; } }
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
 
-        /* --- Spinning Wheel Animation Styles --- */
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
@@ -299,7 +298,6 @@
         @keyframes winnerToastIn { to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
         @keyframes winnerToastOut { to { opacity: 0; transform: translate(-50%, -14px) scale(0.96); visibility: hidden; } }
 
-        /* Admin broadcast overlay: independent of the game WebSocket and always above game UI */
         #winzoAdminBroadcastLayer {
           position: fixed !important; inset: 0 !important; z-index: 2147483647 !important;
           display: none; align-items: center; justify-content: center; padding: 18px;
@@ -323,10 +321,6 @@
           color:#211400; background:linear-gradient(135deg,#ffdf6b,#f5a623);
         }
 
-        /* ============================================================
-           Per-user event modal — centered, top of every other modal,
-           dismiss ONLY via the OK button.
-           ============================================================ */
         #winzoUserEventModal {
           position: fixed !important;
           inset: 0 !important;
@@ -408,7 +402,6 @@
     </style>
 </head>
 <body>
-    <!-- Audio placeholders: paste your original base64 back into the `src` attribute -->
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
     <audio id="getReadyToWinAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_READY_AUDIO_BASE64_HERE"></audio>
 
@@ -651,9 +644,6 @@
     </div>
 
     <script>
-        // ============================================================
-        //  PRODUCTION FLAG
-        // ============================================================
         const DEV_MODE = false;
         window.WINZO_CONFIG = window.WINZO_CONFIG || {
             WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.app.aletcloud.com/'
@@ -661,9 +651,6 @@
         const SERVER_WS_URL = String((window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || '').trim().replace(/\/$/, '');
         let client = null;
 
-        // ============================================================
-        //  ERROR HANDLER
-        // ============================================================
         window.WINZO_ERRORS = [];
         window.WINZO_RECORD_ERROR = function (kind, payload) {
             const entry = { kind, payload: String(payload && (payload.message || payload)).slice(0, 500), at: Date.now() };
@@ -674,9 +661,6 @@
         window.addEventListener('error', (e) => window.WINZO_RECORD_ERROR('ERROR', e.error || e.message || e));
         window.addEventListener('unhandledrejection', (e) => window.WINZO_RECORD_ERROR('PROMISE', e.reason || e));
 
-        // ============================================================
-        //  CONSTANTS
-        // ============================================================
         const PAYOUT_RATE = 0.80;
         const TELEGRAM_BOT_LINK = 'http://t.me/WinzoBettingBot';
         const DEFAULT_RESULTS_SECONDS = 15;
@@ -707,9 +691,6 @@
             } catch (e) {}
         }
 
-        // ============================================================
-        //  AUDIO
-        // ============================================================
         let audioCtx = null; let audioInitialized = false;
         const generatedEffectNodes = new Set();
         function stopGeneratedEffects() {
@@ -753,9 +734,9 @@
         ['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => {
             document.addEventListener(ev, unlockEmbeddedSpeechAudio, { passive: true, capture: true });
         });
-        function playTone(freq, duration, type = 'sine', volume = 0.30, delay = 0) { /* Disabled: spoken announcements only. */ }
-        function playWinningAudio() { /* Disabled: only the two spoken announcements are used. */ }
-        function playNoWinnerAudio() { /* Disabled: only the two spoken announcements are used. */ }
+        function playTone(freq, duration, type = 'sine', volume = 0.30, delay = 0) { }
+        function playWinningAudio() { }
+        function playNoWinnerAudio() { }
 
         let wheelSoundNodes = [];
         let wheelSoundStopTimer = null;
@@ -902,9 +883,6 @@
             playNoWinnerAudio();
         }
 
-        // ============================================================
-        //  FIREWORKS
-        // ============================================================
         const canvas = document.getElementById('fireworksCanvas');
         const ctx2 = canvas.getContext('2d');
         let fireworks = []; let particles = []; let fireworksRunning = false;
@@ -1008,9 +986,6 @@
             fireworks = []; particles = [];
         }
 
-        // ============================================================
-        //  TELEGRAM
-        // ============================================================
         let tg = null; let telegramUser = null; let isTelegram = false;
         let telegramDetectionAttempts = 0; const maxTelegramAttempts = 10;
 
@@ -1110,9 +1085,6 @@
         };
         if (DB.getVersion() !== APP_VERSION) { DB.clearAll(); DB.setVersion(); }
 
-        // ============================================================
-        //  STATE
-        // ============================================================
         let currentUser = null;
         let isGameInitialized = false;
         let currentBet = 15;
@@ -1156,9 +1128,6 @@
         let productionRenderQueued = false;
         let updatePending = false;
 
-        // ============================================================
-        //  DOM REFS
-        // ============================================================
         const $ = (id) => document.getElementById(id);
         const authScreen = $('authScreen'); const welcomeScreen = $('welcomeScreen'); const gameScreen = $('gameScreen');
         const authError = $('authError'); const authUsername = $('authUsername');
@@ -1202,9 +1171,6 @@
         const stickyMsgEl = $('stickyMsg');
         const stickyTitleEl = $('stickyTitle');
 
-        // ============================================================
-        //  NETWORK LISTENER
-        // ============================================================
         function startNetworkListener() {
             if (networkListenerActive) return;
             networkListenerActive = true;
@@ -1241,16 +1207,10 @@
             if (client) client.send({ type: 'wallet-refresh' });
         });
 
-        // ============================================================
-        //  GAME RECOVERY
-        // ============================================================
         function markSyncReceived() { lastSuccessfulSyncAt = Date.now(); }
         function startResilienceEngine() {}
         function stopResilienceEngine() {}
 
-        // ============================================================
-        //  HELPERS
-        // ============================================================
         function getServerNow() { return Date.now() + serverTimeOffset; }
         function getRemainingSeconds(deadline) { return Number(deadline) ? Math.max(0, Math.ceil((Number(deadline) - getServerNow()) / 1000)) : 0; }
         function safeProductionName(value) { return String(value ?? '').replace(/[<>"'`]/g, '').trim().slice(0, 64); }
@@ -1333,9 +1293,6 @@
             }
         }
 
-        // ============================================================
-        //  GUIDE
-        // ============================================================
         const Guide = (function () {
             let overlayEl = null, highlightEl = null, bubbleEl = null, counterEl = null, textEl = null;
             let prevBtnEl = null, nextBtnEl = null, skipBtnEl = null, dismissBtnEl = null;
@@ -1494,9 +1451,6 @@
             }).observe(modalEl, { attributes: true, attributeFilter: ['class'] });
         }
 
-        // ============================================================
-        //  WINNING CARD & WHEEL ANIMATION
-        // ============================================================
         function clearCardFetchRetry() {
             if (cardFetchRetryTimer) { clearTimeout(cardFetchRetryTimer); cardFetchRetryTimer = null; }
             cardFetchRetryCount = 0;
@@ -1855,9 +1809,6 @@
         function attachLastResultListener() {}
         function detachLastResultListener() {}
 
-        // ============================================================
-        //  WALLET
-        // ============================================================
         function syncWalletFromServer() {
             if (currentUser && client) client.walletRefresh();
         }
@@ -1895,9 +1846,6 @@
         }
         window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
 
-        // ============================================================
-        //  NOTIFICATIONS (WebSocket-side; per-user events are handled by a separate module)
-        // ============================================================
         let notificationSeenKeys = new Set();
         let txPopupQueue = [], txPopupActive = false, currentPopupNotificationKey = null;
         let broadcastPopupQueue = [], broadcastPopupActive = false, currentBroadcastNotificationKey = null;
@@ -2019,9 +1967,6 @@
             welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 5000);
         }
 
-        // ============================================================
-        //  DEPOSIT / WITHDRAW
-        // ============================================================
         function openDepositModal() {
             if (depositPlayBalance) depositPlayBalance.textContent = walletData.play;
             if (depositError) depositError.textContent = '';
@@ -2072,7 +2017,6 @@
             return true;
         }
 
-        // ---- OCR ----
         let ocrBusy = false; let lastOCRResult = { reference: null, amount: null };
         async function extractReferenceFromImage(file) {
             if (!file) { if (ocrStatus) ocrStatus.textContent = '⚠️ No image selected.'; return null; }
@@ -2210,9 +2154,6 @@
             };
         }
 
-        // ============================================================
-        //  SCREEN SWITCHING
-        // ============================================================
         function showAuthScreen() {
             if (authScreen) authScreen.style.display = 'flex';
             if (welcomeScreen) welcomeScreen.style.display = 'none';
@@ -2258,9 +2199,6 @@
             requestAnimationFrame(() => renderNumberPicker(true));
         }
 
-        // ============================================================
-        //  LOGIN TIP
-        // ============================================================
         let moreLoginTipShownThisSession = false;
         let moreLoginTipTimer = null;
         let moreLoginTipVisibilityInterval = null;
@@ -2319,9 +2257,6 @@
             moreLoginTipPositionHandler = positionTip;
             window.addEventListener('resize', positionTip);
             window.addEventListener('scroll', positionTip, true);
-            /* Watch every 400ms — the moment the More button is covered (e.g. by the
-               spinning-wheel overlay, a modal, or the game screen being hidden),
-               the bubble closes immediately. */
             moreLoginTipVisibilityInterval = setInterval(() => {
                 if (!document.body.contains(tip)) { hideMoreLoginTip(); return; }
                 if (!isMoreBtnVisiblyTop()) hideMoreLoginTip();
@@ -2329,9 +2264,6 @@
             moreLoginTipTimer = setTimeout(hideMoreLoginTip, 12000);
         }
 
-        // ============================================================
-        //  LOGIN FLOW
-        // ============================================================
         function resolveLoginUsername() {
             const displayName = authUsername ? authUsername.value.trim() : '';
             if (!DEV_MODE && !(tg && tg.initData)) {
@@ -2365,9 +2297,6 @@
             localStorage.removeItem('bingo_toast_shown'); localStorage.removeItem('bingo_app_version');
         }
 
-        // ============================================================
-        //  LOGOUT
-        // ============================================================
         function performLogout() {
             moreLoginTipShownThisSession = false;
             hideMoreLoginTip();
@@ -2404,9 +2333,6 @@
             updateWalletUI(); updateAllUI(); showAuthScreen();
         }
 
-        // ============================================================
-        //  ROOM SELECTION
-        // ============================================================
         function resetEngineStateForNewRound() {
             localSelectionRound = null; localSelectionPicks = [];
             if (currentUser && engineState.players[currentUser]) {
@@ -2472,9 +2398,6 @@
         function closeMoreDropdown() { if (moreDropdown) moreDropdown.classList.remove('open'); }
         document.addEventListener('click', (e) => { if (!e.target.closest('.more-wrapper')) closeMoreDropdown(); });
 
-        // ============================================================
-        //  TIMER
-        // ============================================================
         function startTimer() {
             stopTimer();
             if (engineState.gamePhase !== 'selection') return;
@@ -2515,9 +2438,6 @@
             isResultsCountdownRunning = false;
         }
 
-        // ============================================================
-        //  UI UPDATES
-        // ============================================================
         function updateUIFromState() {
             if (updatePending) return;
             updatePending = true;
@@ -2608,9 +2528,6 @@
             };
         }
 
-        // ============================================================
-        //  PICK HANDLERS
-        // ============================================================
         function handlePickOk(number) {
             const num = Number(number);
             pendingPickOps.delete(num);
@@ -2645,9 +2562,6 @@
             updateStatus(msgs[reason] || `⚠️ ${reason}`);
         }
 
-        // ============================================================
-        //  NUMBER PICKER TOUCH HANDLING
-        // ============================================================
         if (numPicker) {
             const handleNumberPick = function(e) {
                 const btn = e.target.closest('.num-btn[data-num]');
@@ -2735,9 +2649,6 @@
             });
         }
 
-        // ============================================================
-        //  SERVER CLIENT
-        // ============================================================
         class WinzoClient {
             constructor(handlers) {
                 Object.assign(this, handlers);
@@ -2801,6 +2712,7 @@
                     else if (m.type === 'notification') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'sticky-broadcast') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
+                    else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                     else if (m.type === 'error')        { this.onError && this.onError(m); if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} } }
                 };
                 this.ws.onclose = (ev) => {
@@ -2835,9 +2747,6 @@
             disconnect() { clearInterval(this._ka); this.connecting = false; if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch {} } this.ws = null; this.roomId = null; this.devUsername = ''; }
         }
 
-        // ============================================================
-        //  GAME CONNECTION
-        // ============================================================
         function initGameConnection() {
             const generation = ++roomConnectionGeneration;
             pendingPickOps.clear();
@@ -2946,9 +2855,6 @@
             return Promise.resolve(true);
         }
 
-        // ============================================================
-        //  INIT
-        // ============================================================
         function init() {
             if (authLoginBtn) authLoginBtn.onclick = handleLogin;
             if (authSignupBtn) authSignupBtn.onclick = handleSignup;
@@ -3102,14 +3008,13 @@
                     setTimeout(() => transactionModal && transactionModal.classList.remove('active'), 1800);
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
+                onUserEvent: (m) => { if (window.handleUserEventMessage) window.handleUserEventMessage(m); },
                 onError: (m) => updateStatus('⚠️ ' + (m.message || 'server error')),
             });
+            window.client = client;
             showAuthScreen();
         }
 
-        // ============================================================
-        //  BOOT
-        // ============================================================
         if (DEV_MODE) {
             console.info('WINZO client booted (server-authoritative mode)');
             console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
@@ -3127,9 +3032,9 @@
       </div>
     </div>
     <script>
-    /* Admin broadcasts use Firebase RTDB directly, so they do not depend on the game socket.
-       Handles: /broadcasts/persistent (sticky top), /broadcasts/transient (auto-remove toast).
-       Unchanged from the original file. */
+    /* Public broadcasts (transient + persistent) read directly from Firebase.
+       Firebase rules make ONLY these two paths publicly readable.
+       The rest of /broadcasts — including user_events and requests — is server-only. */
     (function () {
       'use strict';
       const DB_ROOT = 'https://render-e9e2d-default-rtdb.firebaseio.com';
@@ -3191,18 +3096,18 @@
         if (pollBusy) return;
         pollBusy = true;
         try {
-          const response = await fetch(DB_ROOT + '/broadcasts.json?cb=' + Date.now(), {
-            method: 'GET', cache: 'no-store'
-          });
-          if (!response.ok) throw new Error('HTTP ' + response.status);
-          const data = await response.json() || {};
-          latest.transient = data.transient || null;
-          latest.persistent = data.persistent || null;
+          const [trRes, peRes] = await Promise.all([
+            fetch(DB_ROOT + '/broadcasts/transient.json?cb=' + Date.now(),  { cache: 'no-store' }),
+            fetch(DB_ROOT + '/broadcasts/persistent.json?cb=' + Date.now(), { cache: 'no-store' })
+          ]);
+          if (!trRes.ok || !peRes.ok) throw new Error('HTTP ' + (trRes.status + '/' + peRes.status));
+          latest.transient  = (await trRes.json()) || null;
+          latest.persistent = (await peRes.json()) || null;
           render();
         } catch (err) {
           if (Date.now() - lastErrorAt > 30000) {
             lastErrorAt = Date.now();
-            console.warn('[Winzo broadcast] Firebase read failed; retrying:', err && err.message || err);
+            console.warn('[Winzo broadcast] Firebase read failed; retrying:', (err && err.message) || err);
           }
         } finally {
           pollBusy = false;
@@ -3219,11 +3124,6 @@
     })();
     </script>
 
-    <!-- ============================================================
-         Per-user event modal (REPLACES the previous per-user events
-         script). Shows centered modal with OK-to-dismiss, backed by
-         Firebase /broadcasts/user_events/{uid}.
-         ============================================================ -->
     <div id="winzoUserEventModal" role="dialog" aria-modal="true" aria-labelledby="wueTitle" aria-describedby="wueMessage">
       <div class="wue-card">
         <div class="wue-icon" id="wueIcon">📢</div>
@@ -3233,12 +3133,18 @@
       </div>
     </div>
     <script>
-    /* Per-user admin events: approvals, rejections, and account notices. */
+    /* Per-user admin events delivered over the game WebSocket.
+       The server pushes `user-event` messages; the client queues them,
+       displays each in the modal, and acks dismissal so the server marks it read. */
     (function () {
       'use strict';
+      const modalEl = document.getElementById('winzoUserEventModal');
+      const iconEl  = document.getElementById('wueIcon');
+      const titleEl = document.getElementById('wueTitle');
+      const msgEl   = document.getElementById('wueMessage');
+      const okBtn   = document.getElementById('wueOk');
+      if (!modalEl || !okBtn) return;
 
-      const DB_ROOT        = 'https://render-e9e2d-default-rtdb.firebaseio.com';
-      const POLL_INTERVAL  = 3000;
       const TITLE_MAP = {
         deposit_approval:   'Deposit Approved',
         deposit_rejection:  'Deposit Rejected',
@@ -3247,144 +3153,62 @@
         deposit_no_sms:     'Deposit Not Processed',
         deposit_used_ref:   'Reference Already Used'
       };
+      const queue = [];
+      let showing = false;
+      let current = null;
 
-      const modalEl = document.getElementById('winzoUserEventModal');
-      const iconEl  = document.getElementById('wueIcon');
-      const titleEl = document.getElementById('wueTitle');
-      const msgEl   = document.getElementById('wueMessage');
-      const okBtn   = document.getElementById('wueOk');
-
-      let busy        = false;
-      let activeUid   = '';
-      let lastSeenUid = '';
-      const seenThisSession = new Set();
-      const queue     = [];
-      let current     = null;
-      let showing     = false;
-
-      function pickIcon(type) {
-        type = String(type || '');
-        if (type.endsWith('_approval')) return '🎉';
-        if (type.endsWith('_rejection') || type === 'deposit_no_sms' || type === 'deposit_used_ref') return '⚠️';
+      function pickIcon(t) {
+        t = String(t || '');
+        if (t.endsWith('_approval')) return '🎉';
+        if (t.endsWith('_rejection') || t === 'deposit_no_sms' || t === 'deposit_used_ref') return '⚠️';
         return '📢';
       }
-      function pickTitle(type) {
-        return TITLE_MAP[String(type || '')] || 'Notification';
-      }
-
       function openModal(ev) {
         iconEl.textContent  = pickIcon(ev.type);
-        titleEl.textContent = pickTitle(ev.type);
+        titleEl.textContent = TITLE_MAP[ev.type] || 'Notification';
         msgEl.textContent   = String(ev.message || '');
         modalEl.classList.add('is-visible');
         setTimeout(() => { try { okBtn.focus(); } catch (_) {} }, 60);
       }
       function closeModal() { modalEl.classList.remove('is-visible'); }
-
       function showNext() {
         if (showing || !queue.length) return;
         showing = true;
         current = queue.shift();
         openModal(current);
       }
-
-      async function markRead(ev) {
-        if (!ev || !ev._key || !activeUid) return;
-        try {
-          await fetch(
-            DB_ROOT + '/broadcasts/user_events/' + encodeURIComponent(activeUid) + '/' + encodeURIComponent(ev._key) + '/read.json',
-            { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: 'true' }
-          );
-        } catch (err) {
-          console.warn('[Winzo user event] mark-read failed:', err && err.message || err);
-        }
-      }
-
-      async function handleOk() {
+      function handleOk() {
         const ev = current;
         current = null;
         showing = false;
         closeModal();
-        if (ev) await markRead(ev);
+        if (ev && ev.key && window.client && typeof window.client.send === 'function') {
+          try { window.client.send({ type: 'user-event-read', key: ev.key }); } catch (_) {}
+        }
         setTimeout(showNext, 160);
       }
 
-      async function pollUserEvents() {
-        if (busy) return;
-        const uid = String(typeof currentUser !== 'undefined' ? (currentUser || '') : '').trim();
-        if (!uid) return;
-
-        if (lastSeenUid && lastSeenUid !== uid) {
-          queue.length = 0;
-          current = null;
-          showing = false;
-          closeModal();
-          seenThisSession.clear();
-        }
-        lastSeenUid = uid;
-        activeUid   = uid;
-
-        busy = true;
-        try {
-          const safeUid = encodeURIComponent(uid);
-          const response = await fetch(
-            DB_ROOT + '/broadcasts/user_events/' + safeUid + '.json?cb=' + Date.now(),
-            { method: 'GET', cache: 'no-store' }
-          );
-          if (!response.ok) throw new Error('HTTP ' + response.status);
-
-          const events = await response.json() || {};
-          const now = Date.now();
-
-          const queuedKeys = new Set(queue.map(e => e._key));
-          if (current && current._key) queuedKeys.add(current._key);
-
-          const fresh = [];
-          for (const key of Object.keys(events)) {
-            const ev = events[key];
-            if (!ev || typeof ev !== 'object') continue;
-            if (Number(ev.expiresAt) && Number(ev.expiresAt) < now) continue;
-            if (ev.read === true) continue;
-            if (seenThisSession.has(key)) continue;
-            if (queuedKeys.has(key)) continue;
-            ev._key = key;
-            fresh.push(ev);
-          }
-          fresh.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
-
-          for (const ev of fresh) {
-            queue.push(ev);
-            seenThisSession.add(ev._key);
-          }
-
-          if (!showing) showNext();
-        } catch (err) {
-          console.warn('[Winzo user event] fetch failed:', err && err.message || err);
-        } finally {
-          busy = false;
-        }
-      }
-
       okBtn.addEventListener('click', handleOk);
-
       document.addEventListener('keydown', (e) => {
         if (!current) return;
         if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          e.stopPropagation();
-          handleOk();
+          e.preventDefault(); e.stopPropagation(); handleOk();
         }
       }, true);
+      modalEl.addEventListener('click', (e) => { if (e.target === modalEl) e.stopPropagation(); });
 
-      modalEl.addEventListener('click', (e) => {
-        if (e.target === modalEl) e.stopPropagation();
-      });
-
-      pollUserEvents();
-      setInterval(pollUserEvents, POLL_INTERVAL);
-      document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) pollUserEvents();
-      });
+      window.handleUserEventMessage = function (m) {
+        if (!m || typeof m !== 'object') return;
+        if (!m.type) return;
+        if (m.read === true) return;
+        const key = String(m.key || '');
+        if (!key) return;
+        if (Number(m.expiresAt) && Number(m.expiresAt) < Date.now()) return;
+        if (queue.some(q => q.key === key)) return;
+        if (current && current.key === key) return;
+        queue.push({ ...m, key });
+        showNext();
+      };
     })();
     </script>
 </body>
