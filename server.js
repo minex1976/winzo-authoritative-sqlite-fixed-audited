@@ -1762,6 +1762,113 @@ app.post('/admin/user-event', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ---------- Admin: user directory (aggregate view) ----------
+app.get('/admin/users', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const [usersSnap, tgSnap, txsSnap] = await Promise.all([
+      db.ref('users').once('value'),
+      db.ref('telegram_users').once('value'),
+      db.ref('transactions').once('value')
+    ]);
+    const users = usersSnap.exists() ? (usersSnap.val() || {}) : {};
+    const tgMap = tgSnap.exists() ? (tgSnap.val() || {}) : {};
+    const txs = txsSnap.exists() ? (txsSnap.val() || {}) : {};
+
+    const byUid = new Map();
+    const byUsername = new Map();
+    const byTelegramId = new Map();
+    const blank = () => ({ deposit_count: 0, withdraw_count: 0, deposit_total: 0, withdraw_total: 0 });
+    const bump = (map, key, tx) => {
+      if (!key) return;
+      let acc = map.get(key);
+      if (!acc) { acc = blank(); map.set(key, acc); }
+      const amount = Number(tx.amount) || 0;
+      if (tx.type === 'deposit')  { acc.deposit_count  += 1; acc.deposit_total  += amount; }
+      if (tx.type === 'withdraw') { acc.withdraw_count += 1; acc.withdraw_total += amount; }
+    };
+    for (const txId of Object.keys(txs)) {
+      const tx = txs[txId] || {};
+      bump(byUid, safeUid(tx.wallet_uid || tx.uid || ''), tx);
+      bump(byUsername, safeUid(tx.username || ''), tx);
+      const tId = Number(tx.telegram_id || 0);
+      if (tId > 0) bump(byTelegramId, tId, tx);
+    }
+
+    const rows = [];
+    for (const uid of Object.keys(users)) {
+      const u = users[uid] || {};
+      const tgId = u.telegram_id != null ? Number(u.telegram_id) : (tgMap[uid] ? Number(uid) : 0);
+      const a = byUid.get(safeUid(uid)) || blank();
+      const b = byUsername.get(safeUid(u.username || uid)) || blank();
+      const c = (tgId > 0 && byTelegramId.get(tgId)) || blank();
+      const pick = (a.deposit_count + a.withdraw_count) >= (b.deposit_count + b.withdraw_count) &&
+                   (a.deposit_count + a.withdraw_count) >= (c.deposit_count + c.withdraw_count)
+        ? a : ((b.deposit_count + b.withdraw_count) >= (c.deposit_count + c.withdraw_count) ? b : c);
+
+      rows.push({
+        uid,
+        name: u.display_name || u.username || uid,
+        username: u.username || null,
+        telegram_id: tgId || null,
+        telegram_username: u.telegram_username || null,
+        main: toFiniteNumber(u.main_wallet ?? u.mainWallet ?? u.main_balance ?? u.mainBalance ?? 0, 0),
+        play: toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0),
+        pending: toFiniteNumber(u.pending_withdrawal ?? u.pendingWithdrawal ?? 0, 0),
+        ref: toFiniteNumber(u.referral_earnings ?? u.referralEarnings ?? 0, 0),
+        referred_by: u.referred_by || null,
+        deposit_count: pick.deposit_count,
+        withdraw_count: pick.withdraw_count,
+        deposit_total: pick.deposit_total,
+        withdraw_total: pick.withdraw_total,
+        created_at: Number(u.created_at || 0) || null,
+        updated_at: Number(u.updated_at || u.wallet_updated_at || 0) || null,
+        is_bot: /^__bot_/.test(uid)
+      });
+    }
+    rows.sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0));
+    res.json({ ok: true, users: rows, generated_at: now() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---------- Admin: one user's full transaction history ----------
+app.get('/admin/users/:uid/transactions', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const uid = safeUid(req.params.uid);
+  if (!uid) return res.status(400).json({ ok: false, error: 'bad-uid' });
+  try {
+    const snap = await db.ref('transactions').once('value');
+    const data = snap.exists() ? (snap.val() || {}) : {};
+    const list = [];
+    for (const id of Object.keys(data)) {
+      const tx = data[id] || {};
+      const matchesUid = safeUid(tx.wallet_uid || tx.uid || '') === uid;
+      const matchesUsername = safeUid(tx.username || '') === uid;
+      if (!matchesUid && !matchesUsername) continue;
+      list.push({
+        id,
+        type: tx.type || '',
+        amount: Number(tx.amount) || 0,
+        status: tx.status || '',
+        reference: tx.reference || '',
+        reason: tx.reason || '',
+        full_name: tx.full_name || '',
+        phone_number: tx.phone_number || '',
+        telegram_id: tx.telegram_id || null,
+        wallet_uid: tx.wallet_uid || tx.uid || '',
+        timestamp: Number(tx.timestamp) || 0,
+        wallet_applied: Number(tx.wallet_applied) || 0
+      });
+    }
+    list.sort((a, b) => b.timestamp - a.timestamp);
+    res.json({ ok: true, transactions: list });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/health', async (_, res) => {
   const roomInfo = {};
   for (const room of Object.values(rooms)) {
