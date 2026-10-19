@@ -5,9 +5,6 @@ import http from 'http';
 import admin from 'firebase-admin';
 
 // --- Firebase Initialization ---
-// AletCloud must provide Firebase credentials as environment variables.
-// Preferred option: FIREBASE_SERVICE_ACCOUNT_JSON containing the full service
-// account JSON (one-line JSON is easiest). Legacy split variables are supported.
 const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
 let firebaseServiceAccount = null;
 
@@ -72,6 +69,21 @@ const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
+
+// --- Admin broadcast helpers ---
+const ADMIN_BROADCAST_REQUEST_KEYS = new Set([
+  'deposit_approval','deposit_rejection',
+  'withdraw_approval','withdraw_rejection',
+  'deposit_no_sms','deposit_used_ref'
+]);
+const DEFAULT_REQUEST_MESSAGES = {
+  deposit_approval:   'ትአዛዝዎ በትክክል ተፈፅሟል! የዊንዞ ደንበኛ ስለሆኑ እናመሰግናለን።',
+  deposit_rejection:  'ውድ ደንበኛችን፣ ጥያቄዎት አልተስተናገደም።',
+  withdraw_approval:  'ውድ ደንበኛችን፣ የወጪ ጥያቄዎ ተከናውኗል።',
+  withdraw_rejection: 'የወጪ ጥያቄዎ አልተስተናገደም።',
+  deposit_no_sms:     'ውድ ደንበኛችን፣ ጥያቄዎ አልተስተናገደም። ትክክለኛውን መረጃ ያስገቡና በድጋሚ የሞክሩ።',
+  deposit_used_ref:   'ውድ ደንበኛችን፣ አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። ጥያቄውን ማስተናገድ አልተቻለም።'
+};
 
 const BOT_NAMES = [
   'Dawit','Abel','Yonas','Biruk','Tesfaye','Mulugeta','Getachew','Henok','Ermias','Amanuel',
@@ -215,7 +227,7 @@ async function resolveTelegramUser(user, referredBy = null) {
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim()
     || telegramUsername
     || `tg_${telegramId}`;
-    
+
   const canonicalUid = `tg_${telegramId}`;
   const mapRef = db.ref('telegram_users/' + telegramId);
 
@@ -246,25 +258,25 @@ async function resolveTelegramUser(user, referredBy = null) {
     }
 
     if (found.uid !== canonicalUid) {
-        console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
-        const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
-            telegram_id: telegramId,
-            display_name: displayName,
-            telegram_username: telegramUsername || null,
-            main_wallet: found.data.main_wallet,
-            play_wallet: found.data.play_wallet,
-            pending_withdrawal: found.data.pending_withdrawal,
-            referral_earnings: found.data.referral_earnings
-        });
-        await db.ref('users/' + found.uid).remove();
-        found = { uid: canonicalUid, data: migratedUser };
+      console.log(`[IDENTITY] Migrating legacy user ${found.uid} to ${canonicalUid}`);
+      const migratedUser = await ensureUser(canonicalUid, referredBy, false, {
+        telegram_id: telegramId,
+        display_name: displayName,
+        telegram_username: telegramUsername || null,
+        main_wallet: found.data.main_wallet,
+        play_wallet: found.data.play_wallet,
+        pending_withdrawal: found.data.pending_withdrawal,
+        referral_earnings: found.data.referral_earnings
+      });
+      await db.ref('users/' + found.uid).remove();
+      found = { uid: canonicalUid, data: migratedUser };
     } else {
-        const updated = await ensureUser(found.uid, referredBy, false, {
-            telegram_id: telegramId,
-            display_name: displayName,
-            telegram_username: telegramUsername || null
-        });
-        found.data = updated;
+      const updated = await ensureUser(found.uid, referredBy, false, {
+        telegram_id: telegramId,
+        display_name: displayName,
+        telegram_username: telegramUsername || null
+      });
+      found.data = updated;
     }
 
     await mapRef.set({
@@ -283,7 +295,7 @@ async function resolveTelegramUser(user, referredBy = null) {
     telegram_username: telegramUsername || null
   });
   if (!created) return null;
-  
+
   await mapRef.set({
     uid: canonicalUid,
     username: created.username || canonicalUid,
@@ -691,10 +703,7 @@ async function adminDecision(id, decision, reason = '') {
   }
 }
 
-
 // --- Automatic deposit verification from trusted Firebase /incoming_sms ---
-// A reference is claimed globally before the wallet approval is attempted.
-// Only records with an explicit transaction reference AND amount are eligible.
 function normalizePaymentReference(value) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 128);
 }
@@ -710,7 +719,6 @@ function parsePaymentRecord(record) {
   }
   let amount = Number(r.amount ?? r.transaction_amount ?? r.transactionAmount ?? r.paid_amount ?? r.paidAmount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    // Deliberately accept only currency-labelled amounts to avoid matching phone/date numbers.
     const m = text.match(/(?:ETB|Birr|ብር)\s*([0-9][0-9,]*(?:\.\d{1,2})?)|([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር)/i);
     if (m) amount = Number(String(m[1] || m[2]).replace(/,/g, ''));
   }
@@ -728,7 +736,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
     if (Math.abs(toFiniteNumber(tx.amount, 0) - payment.amount) > 0.009) return;
     candidates.push({ id: child.key, tx });
   });
-  // Ambiguous matches are not automatically approved.
   if (candidates.length !== 1) {
     if (candidates.length > 1) console.warn(`[AUTO-DEPOSIT] ambiguous reference=${payment.reference}; matches=${candidates.length}; left pending`);
     return;
@@ -745,7 +752,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
     return;
   }
   if (!claim?.committed && claimValue?.status === 'approved') return;
-  // Recheck that this exact SMS/reference/amount still points to the same pending transaction.
   const fresh = await db.ref('transactions/' + id).once('value');
   const freshTx = fresh.val() || {};
   if (freshTx.status !== 'pending' || freshTx.type !== 'deposit'
@@ -756,7 +762,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
     await claimRef.update({ status: 'approved', approved_at: now() });
     console.log(`[AUTO-DEPOSIT] approved tx=${id} ref=${payment.reference} amount=${payment.amount}`);
   } else {
-    // Release only our own unapproved claim so a transient wallet/database error can retry.
     await claimRef.transaction(current => current && current.transaction_id === id && current.status === 'claimed' ? null : current);
     console.warn(`[AUTO-DEPOSIT] approval failed tx=${id} ref=${payment.reference}: ${result.reason || 'unknown'}`);
   }
@@ -770,7 +775,6 @@ function startAutomaticDepositMonitor() {
   const smsRef = db.ref('incoming_sms');
   smsRef.on('child_added', snap => processIncomingSmsSnapshot(snap).catch(e => console.error('[AUTO-DEPOSIT] SMS processing failed', e.message)));
   smsRef.on('child_changed', snap => processIncomingSmsSnapshot(snap).catch(e => console.error('[AUTO-DEPOSIT] SMS update processing failed', e.message)));
-  // Also retry pending requests against SMS records that already existed before this process started.
   smsRef.once('value').then(snap => {
     if (!snap.exists()) return;
     const jobs = [];
@@ -802,8 +806,6 @@ async function claimPayout(uid, amount, roomId, round, kind) {
 
   if (success) {
     await markerRef.set({ username: uid, type: 'payout_marker', read: true, timestamp: now() });
-    // Push the new balance to the winner immediately. The wallet listener will
-    // also fire as a redundant, authoritative safety net.
     await sendWallet(uid);
   }
   return success;
@@ -831,14 +833,12 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (success) {
     await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
-    // Push the commission to the referrer immediately (listener also fires as a net).
     await sendWallet(ref);
   }
   return success;
 }
 
 // --- Room / Game Logic ---
-
 class Room {
   constructor(id, bet, row = null) {
     this.id = id; this.bet = bet;
@@ -1053,7 +1053,7 @@ async function toSpinning(room) {
   const allPlayers = [...humans, ...bots];
   const allNums = [...new Set(allPlayers.flatMap(p => p.picks))];
   if (!allNums.length) return resetRound(room, 'no-picks');
-  
+
   winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
   winners = allPlayers.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
 
@@ -1073,10 +1073,10 @@ async function toSpinning(room) {
       if (share <= 0) break;
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
       if (!room.players.get(uid)?.isBot) {
-          await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
-          const uSnap = await db.ref('users/' + uid).once('value');
-          const ref = uSnap.val()?.referred_by;
-          if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
+        await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!`, type: 'notification' });
+        const uSnap = await db.ref('users/' + uid).once('value');
+        const ref = uSnap.val()?.referred_by;
+        if (ref) await creditReferral(ref, Math.floor(share * REFERRAL_RATE), room.id, room.round, uid);
       }
     }
   }
@@ -1256,7 +1256,7 @@ setInterval(async () => {
       const t = now();
       if (room.phase === 'selection' && t >= room.endsAt) await toSpinning(room);
       else if (room.phase === 'spinning' && t >= room.endsAt) await toResults(room);
-      else if (room.phase === 'results' && t >= room.endsAt) await resetRound(room, 'results-done');
+      else if (room.phase === 'results' && t >= room.endsAt) resetRound(room, 'results-done');
       if (room.dirty) {
         await room.persist();
         room.broadcast();
@@ -1268,12 +1268,7 @@ setInterval(async () => {
 
 const conns = new Map();
 
-// --- Live wallet listeners (truly instantaneous updates) ---
-// One Firebase Realtime Database .on('value') listener is attached to each
-// connected user's `users/<uid>` node. Any change to that node — from any
-// source (this server, another instance, admin console, Cloud Function) —
-// is pushed to every socket belonging to that user within milliseconds.
-// No client interaction (no "tap to refresh") is required.
+// --- Live wallet listeners ---
 const walletListeners = new Map();
 
 function attachWalletListener(uid) {
@@ -1327,7 +1322,6 @@ wss.on('connection', (ws) => {
       set.delete(ws);
       if (set.size) return;
       conns.delete(ws.uid);
-      // Last socket for this user just closed — release the Firebase listener.
       detachWalletListener(ws.uid);
     }
     if (ws.roomId) {
@@ -1376,9 +1370,6 @@ async function handle(ws, m) {
     let set = conns.get(uid); if (!set) { set = new Set(); conns.set(uid, set); } set.add(ws);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: ws.telegramId, telegramUsername: ws.telegramUsername || null });
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
-    // Attach the live wallet listener AFTER the initial authed+wallet messages
-    // so the client never sees a wallet message before it knows it's authed.
-    // The listener fires immediately with the current state, then on every change.
     attachWalletListener(uid);
     console.log(`[AUTH] uid=${uid} → wallet sent, listener attached`);
 
@@ -1390,6 +1381,30 @@ async function handle(ws, m) {
     });
     pending.sort((a, b) => b.timestamp - a.timestamp);
     send(ws, { type: 'pending-transactions', transactions: pending.slice(0, 10) });
+
+    // Deliver unread user events (approvals/rejections/notices) queued while offline.
+    (async () => {
+      try {
+        const snap = await db.ref('broadcasts/user_events/' + uid).once('value');
+        const events = snap.val() || {};
+        const nowTs = now();
+        const list = [];
+        for (const [key, ev] of Object.entries(events)) {
+          if (!ev || typeof ev !== 'object') continue;
+          if (Number(ev.expiresAt) && Number(ev.expiresAt) < nowTs) {
+            db.ref('broadcasts/user_events/' + uid + '/' + key).remove().catch(() => {});
+            continue;
+          }
+          if (ev.read === true) continue;
+          list.push({ key, ...ev });
+        }
+        list.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+        for (const ev of list) send(ws, { type: 'user-event', ...ev });
+      } catch (e) {
+        console.error('[USER-EVENT] load failed', e.message);
+      }
+    })();
+
     return;
   }
 
@@ -1436,7 +1451,6 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'pick-ok', number: Number(m.number) } : { type: 'pick-fail', number: Number(m.number), reason: r.reason });
-    // Broadcast deferred to the next 500ms loop tick.
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1444,7 +1458,6 @@ async function handle(ws, m) {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
     send(ws, r.ok ? { type: 'unpick-ok', number: Number(m.number) } : { type: 'unpick-fail', number: Number(m.number), reason: r.reason });
-    // Broadcast deferred to the next 500ms loop tick.
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
@@ -1485,17 +1498,28 @@ async function handle(ws, m) {
     if (snap.exists() && snap.val()?.username === ws.uid) await markNotificationRead(ws.uid, id);
     return;
   }
+  if (m.type === 'user-event-read') {
+    const key = String(m.key || '').slice(0, 128);
+    if (!/^[A-Za-z0-9_\-]+$/.test(key)) return;
+    try {
+      await db.ref('broadcasts/user_events/' + ws.uid + '/' + key).update({ read: true });
+    } catch (e) {
+      console.error('[USER-EVENT] mark-read failed', e.message);
+    }
+    return;
+  }
 }
 
 // --- Ping/pong interval: 60 seconds ---
 setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 60000);
 
 const app = express();
+app.use(express.json({ limit: '3mb' }));
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -1576,6 +1600,168 @@ app.get('/admin/diagnose', async (req, res) => {
   }
 });
 
+// ---------- Admin: Incoming SMS (read-only) ----------
+app.get('/admin/sms', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const snap = await db.ref('incoming_sms').once('value');
+    const data = {};
+    if (snap.exists()) snap.forEach(c => { data[c.key] = c.val(); });
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---------- Admin: auto_approved (read + write) ----------
+app.get('/admin/auto-approved', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const snap = await db.ref('auto_approved').once('value');
+    const data = {};
+    if (snap.exists()) snap.forEach(c => { data[c.key] = c.val(); });
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put('/admin/auto-approved/:id', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const id = safeUid(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'bad-id' });
+  try {
+    await db.ref('auto_approved/' + id).set(req.body || {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---------- Admin: used_references (read + write) ----------
+app.get('/admin/used-references', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const snap = await db.ref('used_references').once('value');
+    const data = {};
+    if (snap.exists()) snap.forEach(c => { data[c.key] = c.val(); });
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put('/admin/used-references/:ref', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const ref = String(req.params.ref || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 128);
+  if (!ref) return res.status(400).json({ ok: false, error: 'bad-ref' });
+  try {
+    await db.ref('used_references/' + ref).set(req.body || {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---------- Admin: broadcasts (transient, persistent, requests) ----------
+app.get('/admin/broadcasts', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    const snap = await db.ref('broadcasts').once('value');
+    const v = snap.val() || {};
+    res.json({ ok: true, data: {
+      transient:  v.transient  || null,
+      persistent: v.persistent || null,
+      requests:   v.requests   || {}
+    }});
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put('/admin/broadcasts/transient', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const text = String(req.body?.text || '').slice(0, 300).trim();
+  const duration = Math.max(1, Math.min(300, Math.round(Number(req.body?.duration) || 8)));
+  if (!text) return res.status(400).json({ ok: false, error: 'empty-text' });
+  const ts = now();
+  try {
+    await db.ref('broadcasts/transient').set({
+      id: String(ts), text, duration,
+      createdAt: ts, expiresAt: ts + duration * 1000, active: true
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete('/admin/broadcasts/transient', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    await db.ref('broadcasts/transient/active').set(false);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put('/admin/broadcasts/persistent', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const text = String(req.body?.text || '').slice(0, 300).trim();
+  const active = req.body?.active !== false && !!text;
+  try {
+    await db.ref('broadcasts/persistent').set({ text, active, updatedAt: now() });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete('/admin/broadcasts/persistent', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  try {
+    await db.ref('broadcasts/persistent').set({ text: '', active: false, updatedAt: now() });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put('/admin/broadcasts/requests/:key', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const key = String(req.params.key || '');
+  if (!ADMIN_BROADCAST_REQUEST_KEYS.has(key)) return res.status(400).json({ ok: false, error: 'bad-key' });
+  const text = String(req.body?.text || '').slice(0, 300).trim();
+  const active = req.body?.active !== false && !!text;
+  try {
+    await db.ref('broadcasts/requests/' + key).set({ text, active, updatedAt: now() });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---------- Admin: per-user event (publish + WS push) ----------
+app.post('/admin/user-event', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
+  const uid = safeUid(req.body?.uid);
+  const type = String(req.body?.type || '').slice(0, 64);
+  if (!uid || !type || !ADMIN_BROADCAST_REQUEST_KEYS.has(type)) {
+    return res.status(400).json({ ok: false, error: 'missing-params' });
+  }
+  let message = String(req.body?.message || '').slice(0, 1000);
+  if (!message) {
+    try {
+      const cfg = (await db.ref('broadcasts/requests/' + type).once('value')).val() || {};
+      if (cfg.active === true && cfg.text) message = String(cfg.text).slice(0, 1000);
+    } catch {}
+  }
+  if (!message) message = DEFAULT_REQUEST_MESSAGES[type] || '';
+  if (!message) return res.status(400).json({ ok: false, error: 'no-message' });
+
+  const ts = now();
+  const eventKey = 'evt_' + ts + '_' + crypto.randomBytes(4).toString('hex');
+  const payload = {
+    type,
+    requestType: req.body?.requestType ? String(req.body.requestType).slice(0, 32) : null,
+    decision:    req.body?.decision    ? String(req.body.decision).slice(0, 32)    : null,
+    message,
+    txId:        req.body?.txId        ? String(req.body.txId).slice(0, 128)       : '',
+    read: false,
+    createdAt: ts,
+    expiresAt: ts + 7 * 24 * 60 * 60 * 1000
+  };
+  try {
+    await db.ref('broadcasts/user_events/' + uid + '/' + eventKey).set(payload);
+    const set = conns.get(uid);
+    if (set) for (const ws of set) {
+      if (ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'user-event', key: eventKey, ...payload })); } catch {}
+      }
+    }
+    res.json({ ok: true, key: eventKey });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get('/health', async (_, res) => {
   const roomInfo = {};
   for (const room of Object.values(rooms)) {
@@ -1647,7 +1833,6 @@ async function gracefulShutdown(signal) {
       clearBotTimers(room);
     }
   } catch (e) { console.error('[SHUTDOWN] persist failed', e); }
-  // Release all live Firebase wallet listeners.
   for (const uid of [...walletListeners.keys()]) {
     try { detachWalletListener(uid); } catch {}
   }
