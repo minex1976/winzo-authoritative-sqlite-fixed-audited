@@ -71,23 +71,22 @@ const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
 
-// --- Fake-account detection thresholds (tunable) ---
 const ANALYSIS_CONFIG = {
-  NEW_ACCOUNT_AGE_MS: 60 * 60 * 1000,           // "new" = <1h old
-  BURST_WINDOW_MS: 5 * 60 * 1000,               // 5-minute window
-  BURST_PICK_THRESHOLD: 60,                     // ≥60 picks in 5 min = bot-like
-  BURST_DEPOSIT_THRESHOLD: 5,                   // ≥5 deposits in 5 min
-  BURST_WITHDRAW_THRESHOLD: 3,                  // ≥3 withdrawals in 5 min
-  REFERRAL_SIGNUP_WINDOW_MS: 10 * 60 * 1000,    // 10 min
-  REFERRAL_SIGNUP_THRESHOLD: 5,                 // ≥5 signups from same referrer in 10 min
-  ZERO_PICK_LOSSES: 20,                          // ≥20 losses without a pick = suspicious
-  PLAY_WALLET_DRAIN_MS: 2 * 60 * 1000,          // drain 100% of a 30 Birr bonus in <2 min
+  NEW_ACCOUNT_AGE_MS: 60 * 60 * 1000,
+  BURST_WINDOW_MS: 5 * 60 * 1000,
+  BURST_PICK_THRESHOLD: 60,
+  BURST_DEPOSIT_THRESHOLD: 5,
+  BURST_WITHDRAW_THRESHOLD: 3,
+  REFERRAL_SIGNUP_WINDOW_MS: 10 * 60 * 1000,
+  REFERRAL_SIGNUP_THRESHOLD: 5,
+  ZERO_PICK_LOSSES: 20,
+  PLAY_WALLET_DRAIN_MS: 2 * 60 * 1000,
   BOT_NAME_PATTERN: /^__bot_/,
   FAKE_TELEGRAM_ID_MIN: 1,
   FAKE_TELEGRAM_ID_MAX: 9_999_999_999,
-  MAX_ACCOUNT_AGE_FOR_ANALYSIS_MS: 30 * 24 * 60 * 60 * 1000, // analyse last 30d
-  FLAG_SCORE_BLOCK: 60,                          // score ≥60 → auto-block
-  FLAG_SCORE_SUSPECT: 30,                        // score ≥30 → flag for review
+  MAX_ACCOUNT_AGE_FOR_ANALYSIS_MS: 30 * 24 * 60 * 60 * 1000,
+  FLAG_SCORE_BLOCK: 60,
+  FLAG_SCORE_SUSPECT: 30,
 };
 
 const ADMIN_BROADCAST_REQUEST_KEYS = new Set([
@@ -146,14 +145,6 @@ class Mutex {
 // ============================================================================
 // Telegram initData cryptographic verification
 // ============================================================================
-/**
- * Verifies the HMAC-SHA256 signature Telegram attaches to every WebApp
- * initData string. Returns a structured result so the caller can
- * distinguish server misconfiguration from an attacker's forged payload.
- *
- * @returns {{ok:true, user:object, authDate:number, params:URLSearchParams}
- *          |{ok:false, reason:string}}
- */
 function validateInitData(initData, maxAge = 86400) {
   if (!BOT_TOKEN) return { ok: false, reason: 'server-misconfigured (BOT_TOKEN missing)' };
   if (!initData || typeof initData !== 'string') return { ok: false, reason: 'missing-initData' };
@@ -201,30 +192,6 @@ function validateInitData(initData, maxAge = 86400) {
 // ============================================================================
 // Fake-account detection engine
 // ============================================================================
-/**
- * Score-based heuristic analysis. Each signal contributes a weight;
- * the sum is the account's "risk score".
- *
- * Signals (all are "procedures I was not explicitly asked for" that
- * professional fraud teams use):
- *
- *   1.  Telegram ID out of plausible range
- *   2.  Telegram ID never seen in /telegram_users before AND the account
- *       was created with a non-canonical uid
- *   3.  Username mismatch between /users/<uid> and /telegram_users/<tg>
- *   4.  Missing display_name / username / telegram_username
- *   5.  Account created before its Telegram mapping existed
- *   6.  Rapid pick bursts (bot-like gameplay)
- *   7.  Rapid deposit bursts (card testing / SMS flooding)
- *   8.  Rapid withdrawal bursts
- *   9.  Referral pyramid: same referrer created many accounts in a short window
- *  10.  Wallet bonus drained immediately without any plays
- *  11.  Zero-pick losses (playing but never picking, farming raffles)
- *  12.  Already flagged in a previous analysis run
- *  13.  Ip-origin concentration (same IP has >N uids)
- *  14.  Missing Telegram mapping despite having telegram_id
- *  15.  Withdrawal amount > 10× the largest deposit ever made
- */
 async function analyzeAccount(uid, options = {}) {
   const cfg = ANALYSIS_CONFIG;
   const signals = [];
@@ -238,7 +205,6 @@ async function analyzeAccount(uid, options = {}) {
   const isBot = cfg.BOT_NAME_PATTERN.test(uid);
   if (isBot) return { uid, isBot: true, score: 0, signals: [] };
 
-  // ---- Signal 1: Telegram ID plausibility ----
   if (telegramId != null) {
     if (telegramId < cfg.FAKE_TELEGRAM_ID_MIN || telegramId > cfg.FAKE_TELEGRAM_ID_MAX) {
       score += 40;
@@ -246,7 +212,6 @@ async function analyzeAccount(uid, options = {}) {
     }
   }
 
-  // ---- Signal 2 & 14: Telegram mapping existence ----
   let tgMapping = null;
   if (telegramId != null) {
     const mapSnap = await db.ref('telegram_users/' + telegramId).once('value');
@@ -257,27 +222,23 @@ async function analyzeAccount(uid, options = {}) {
     }
   }
 
-  // ---- Signal 3: username consistency ----
   if (tgMapping && tgMapping.username && u.username &&
       safeUser(tgMapping.username) !== safeUser(u.username)) {
     score += 15;
     signals.push({ code: 'username-mismatch', weight: 15, detail: `user=${u.username} map=${tgMapping.username}` });
   }
 
-  // ---- Signal 4: missing identity fields ----
   if (!u.display_name && !u.username && telegramId == null) {
     score += 20;
     signals.push({ code: 'no-identity-fields', weight: 20, detail: 'display_name, username, telegram_id all empty' });
   }
 
-  // ---- Signal 5: account created before its mapping ----
   const createdAt = Number(u.created_at) || 0;
   if (createdAt && tgMapping && tgMapping.updated_at && Number(tgMapping.updated_at) < createdAt - 60_000) {
     score += 10;
     signals.push({ code: 'mapping-older-than-account', weight: 10, detail: 'telegram mapping predates account' });
   }
 
-  // ---- Load the account's transactions once (used by several signals) ----
   const txSnap = await db.ref('transactions').once('value');
   const allTx = txSnap.exists() ? (txSnap.val() || {}) : {};
   const myTx = [];
@@ -287,7 +248,6 @@ async function analyzeAccount(uid, options = {}) {
     myTx.push({ id, ...tx });
   }
 
-  // ---- Signal 6/7/8: burst analysis ----
   const deposits = myTx.filter(t => t.type === 'deposit' && t.status !== 'rejected');
   const withdrawals = myTx.filter(t => t.type === 'withdraw' && t.status !== 'rejected');
   const burstCount = (list, threshold) => {
@@ -309,7 +269,6 @@ async function analyzeAccount(uid, options = {}) {
     signals.push({ code: 'withdraw-burst', weight: 25, detail: `${withdrawals.length} withdrawals in window` });
   }
 
-  // ---- Signal 9: referral pyramid ----
   if (u.referred_by) {
     const referred = await db.ref('users').orderByChild('referred_by').equalTo(u.referred_by).once('value');
     const times = [];
@@ -331,7 +290,6 @@ async function analyzeAccount(uid, options = {}) {
     }
   }
 
-  // ---- Signal 10: bonus drained without play ----
   const play = toFiniteNumber(u.play_wallet, 0);
   const pending = toFiniteNumber(u.pending_withdrawal, 0);
   if (!deposits.length && play <= 0 && pending > 0) {
@@ -339,23 +297,11 @@ async function analyzeAccount(uid, options = {}) {
     signals.push({ code: 'bonus-drained-no-deposit', weight: 20, detail: `pending=${pending}` });
   }
 
-  // ---- Signal 11: zero-pick farming (inferred from wallet_ledger) ----
-  const ledger = u.wallet_ledger || {};
-  const ledgerEntries = Object.values(ledger).filter(e => e && e.type === 'deposit');
-  if (ledgerEntries.length >= cfg.ZERO_PICK_LOSSES) {
-    // This is a rough heuristic; a proper implementation would compare against
-    // the pick history. Since the ledger only records deposits, use the
-    // number of distinct deposit refs as a lower bound.
-  }
-
-  // ---- Signal 12: already flagged ----
   if (u.blocked === true) {
     score += 50;
     signals.push({ code: 'previously-blocked', weight: 50, detail: u.block_reason || 'previously flagged' });
   }
 
-  // ---- Signal 13: same-IP concentration ----
-  // The server stores `last_ip` on the user whenever it sees a fresh auth.
   if (u.last_ip) {
     const sameIp = await db.ref('users').orderByChild('last_ip').equalTo(u.last_ip).once('value');
     let count = 0;
@@ -366,7 +312,6 @@ async function analyzeAccount(uid, options = {}) {
     }
   }
 
-  // ---- Signal 15: withdraw exceeds deposit by a lot ----
   const totalDep = deposits.reduce((s, t) => s + toFiniteNumber(t.amount, 0), 0);
   const totalWdr = withdrawals.reduce((s, t) => s + toFiniteNumber(t.amount, 0), 0);
   if (totalWdr > 0 && totalDep > 0 && totalWdr > totalDep * 10) {
@@ -406,18 +351,21 @@ async function runFullAnalysis(reason = 'manual') {
   }
   results.sort((a, b) => b.score - a.score);
 
+  const flagged = results.filter(r => r.level !== 'clean');
   const batch = {
     at: now(),
-    reason,
+    reason: String(reason || 'manual'),
     total: results.length,
     clean: results.filter(r => r.level === 'clean').length,
     suspect: results.filter(r => r.level === 'suspect').length,
     block: results.filter(r => r.level === 'block').length,
-    results: results.filter(r => r.level !== 'clean')
+    flagged_count: flagged.length,
+    hasResults: flagged.length > 0,
+    results: flagged
   };
+
   const key = 'batch_' + batch.at;
   await db.ref('analysis/recent/' + key).set(batch);
-  // trim to last 30 batches
   const snap = await db.ref('analysis/recent').once('value');
   const keys = [];
   snap.forEach(c => keys.push(c.key));
@@ -442,7 +390,6 @@ async function blockAccount(uid, reason, signals) {
     block_signals: JSON.stringify((signals || []).slice(0, 20)),
     updated_at: now()
   });
-  // Notify the user over their live socket, if any.
   const set = conns.get(clean);
   if (set) for (const ws of set) {
     if (ws.readyState === 1) {
@@ -663,10 +610,7 @@ async function transactionRequest(uid, data) {
   const amount = Number(data.amount);
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
-
-  if (await isBlocked(uid)) {
-    return { ok: false, reason: 'account-blocked' };
-  }
+  if (await isBlocked(uid)) return { ok: false, reason: 'account-blocked' };
 
   const clientRequestId = String(data.clientRequestId || '').slice(0, 128);
   const requestKey = clientRequestId ? safeUid(uid) + ':' + safeUid(clientRequestId) : '';
@@ -1569,7 +1513,6 @@ async function handle(ws, m) {
 
     const uid = resolved.uid;
 
-    // Reject blocked accounts
     if (await isBlocked(uid)) {
       const snap = await db.ref('users/' + uid).once('value');
       const blocked = snap.exists() ? (snap.val() || {}) : {};
@@ -1954,7 +1897,7 @@ app.post('/admin/user-event', async (req, res) => {
 });
 
 // ============================================================================
-// Admin: user directory (aggregate view + win history + block status)
+// Admin: user directory (aggregate + win history + block status)
 // ============================================================================
 app.get('/admin/users', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
@@ -2098,14 +2041,27 @@ app.get('/admin/users/:uid/wins', async (req, res) => {
 });
 
 // ============================================================================
-// Admin: fake-account analysis endpoints
+// Admin: fake-account analysis endpoints (with `results: []` fix)
 // ============================================================================
 app.get('/admin/analysis', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });
   try {
     const snap = await db.ref('analysis/recent').once('value');
     const batches = [];
-    snap.forEach(c => batches.push(c.val() || {}));
+    snap.forEach(c => {
+      const v = c.val() || {};
+      batches.push({
+        at: Number(v.at) || 0,
+        reason: String(v.reason || 'manual'),
+        total: Number(v.total) || 0,
+        clean: Number(v.clean) || 0,
+        suspect: Number(v.suspect) || 0,
+        block: Number(v.block) || 0,
+        flagged_count: Number(v.flagged_count) || (Array.isArray(v.results) ? v.results.length : 0),
+        hasResults: v.hasResults === true || (Array.isArray(v.results) && v.results.length > 0),
+        results: Array.isArray(v.results) ? v.results : []
+      });
+    });
     batches.sort((a, b) => (b.at || 0) - (a.at || 0));
     res.json({ ok: true, batches: batches.slice(0, 10) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -2207,7 +2163,6 @@ loadRooms().then(() => {
   console.log(`Realtime Database: ${FIREBASE_DATABASE_URL}`);
   console.log(`Bots per round: ${BOT_MIN}–${BOT_MAX}`);
   console.log(`Results phase length: ${RESULTS_SECONDS}s`);
-  console.log(`Wallet updates: PUSH (per-user Firebase .on('value') listener)`);
   console.log(`Signature verification: ${BOT_TOKEN ? 'ENABLED' : 'DISABLED (BOT_TOKEN missing)'}`);
   console.log(`Fake-account analysis: enabled · thresholds: block≥${ANALYSIS_CONFIG.FLAG_SCORE_BLOCK}, suspect≥${ANALYSIS_CONFIG.FLAG_SCORE_SUSPECT}`);
 }).catch(err => { console.error('Failed to load rooms.', err); process.exit(1); });
