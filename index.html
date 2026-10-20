@@ -1475,9 +1475,7 @@
 
             const winnerNamesEl = document.getElementById('winningCardWinners');
             if (winnerNamesEl) {
-                const list = Array.isArray(winners)
-                    ? winners.map(w => String(w || '').trim()).filter(Boolean)
-                    : [];
+                const list = Array.isArray(winners) ? winners.map(w => String(w || '').trim()).filter(Boolean) : [];
                 if (list.length) {
                     const label = list.length > 1 ? '🏆 Winners' : 'The Winner is:';
                     winnerNamesEl.innerHTML = label + '<br>' + list.map(n => escapeHtmlText(n)).join('<br>');
@@ -1524,56 +1522,39 @@
             return new Promise(resolve => {
                 const overlay = document.getElementById('wheelAnimOverlay');
                 const wheelEl = document.getElementById('baWheel');
-                const statusEl = document.getElementById('baStatus');
-                if (!overlay || !wheelEl || !statusEl) { resolve(); return; }
+                const statusEl2 = document.getElementById('baStatus');
+                if (!overlay || !wheelEl || !statusEl2) { resolve(); return; }
 
                 const allPicks = new Set();
-                Object.values(engineState.players).forEach(p => {
-                    if (p && p.picks) p.picks.forEach(n => allPicks.add(n));
-                });
+                Object.values(engineState.players).forEach(p => { if (p && p.picks) p.picks.forEach(n => allPicks.add(n)); });
                 const uniqueNumbers = Array.from(allPicks);
-
-                if (!uniqueNumbers.includes(winningNumber)) {
-                    uniqueNumbers.push(winningNumber);
-                }
+                if (!uniqueNumbers.includes(winningNumber)) uniqueNumbers.push(winningNumber);
 
                 const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
                 const anglePerSegment = 360 / segmentCount;
-
                 const numbersForWheel = [];
-                for (let i = 0; i < segmentCount; i++) {
-                    numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
-                }
-
+                for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
                 let winningIndex = numbersForWheel.indexOf(winningNumber);
                 if (winningIndex === -1) winningIndex = 0;
 
-                const size = 300;
-                const center = size / 2;
-                const radius = center;
+                const size = 300; const center = size / 2; const radius = center;
                 let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
-
                 for (let i = 0; i < segmentCount; i++) {
                     const startAngle = i * anglePerSegment;
                     const endAngle = (i + 1) * anglePerSegment;
                     const midAngle = startAngle + anglePerSegment / 2;
-
                     const startRad = (startAngle - 90) * Math.PI / 180;
                     const endRad = (endAngle - 90) * Math.PI / 180;
                     const midRad = (midAngle - 90) * Math.PI / 180;
-
                     const x1 = center + radius * Math.cos(startRad);
                     const y1 = center + radius * Math.sin(startRad);
                     const x2 = center + radius * Math.cos(endRad);
                     const y2 = center + radius * Math.sin(endRad);
                     const textX = center + (radius * 0.65) * Math.cos(midRad);
                     const textY = center + (radius * 0.65) * Math.sin(midRad);
-
                     const color = i % 2 === 0 ? '#e62020' : '#ffffff';
                     const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
-
                     svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
-
                     const numText = numbersForWheel[i];
                     if (numText !== '') {
                         const fontSize = Math.max(10, Math.min(18, 300 / segmentCount));
@@ -1591,7 +1572,7 @@
                 const spins = 5;
                 const targetRotation = (spins * 360) - targetSegmentCenter;
 
-                statusEl.textContent = 'Get ready to win!';
+                statusEl2.textContent = 'Get ready to win!';
                 overlay.classList.add('active');
                 const readyAudio = document.getElementById('getReadyToWinAudio');
                 const readyBubble = document.getElementById('wheelReadyBubble');
@@ -1612,13 +1593,8 @@
                         const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
                         if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
                     };
-                    if (readyAudio) {
-                        readyAudio.ontimeupdate = syncCountdownToAudio;
-                    } else {
-                        [1, 2, 3].forEach((n, i) => {
-                            readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000));
-                        });
-                    }
+                    if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
+                    else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
                 };
                 const hideReadyBubble = () => {
                     readyCountdownTimers.forEach(clearTimeout);
@@ -1633,7 +1609,7 @@
                     spinStarted = true;
                     if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
                     hideReadyBubble();
-                    statusEl.textContent = 'Spinning the wheel...';
+                    statusEl2.textContent = 'Spinning the wheel...';
                     requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
                             wheelEl.classList.add('spinning');
@@ -1643,36 +1619,20 @@
                     });
                     setTimeout(() => {
                         stopWheelSpinSound();
-                        statusEl.textContent = '🎯 Winning number: ' + winningNumber;
-                        setTimeout(() => {
-                            overlay.classList.remove('active');
-                            resolve();
-                        }, 1500);
+                        statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
+                        setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
                     }, 8000);
                 };
                 if (readyAudio) {
                     try {
-                        readyAudio.pause();
-                        readyAudio.currentTime = 0;
-                        readyAudio.muted = false;
-                        readyAudio.volume = 1;
+                        readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
                         readyAudio.onended = beginSpin;
-                        readyAudio.onerror = () => { console.warn('[WINZO AUDIO] Ready announcement audio could not be decoded.'); beginSpin(); };
+                        readyAudio.onerror = () => { beginSpin(); };
                         setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
                         const readyPlayback = readyAudio.play();
-                        if (readyPlayback && typeof readyPlayback.catch === 'function') {
-                            readyPlayback.catch(err => {
-                                console.warn('[WINZO AUDIO] Ready announcement playback was blocked:', err);
-                                beginSpin();
-                            });
-                        }
-                    } catch (err) {
-                        console.warn('[WINZO AUDIO] Ready announcement playback failed:', err);
-                        beginSpin();
-                    }
-                } else {
-                    beginSpin();
-                }
+                        if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
+                    } catch (err) { beginSpin(); }
+                } else beginSpin();
             });
         }
 
@@ -1710,20 +1670,13 @@
             playWheelAnimation(winners, n, r).then(() => {
                 wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
                 if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== r) return;
-
                 renderWinningCardBody(n, winAmount, winners);
                 if (winnersModal) winnersModal.classList.add('active');
                 showWinnerCelebration(r, winners);
-                if (winners.filter(Boolean).length) {
-                    playEmbeddedWinnerAnnouncement(r);
-                    startFireworks();
-                } else {
-                    playNoWinnerEffectOnce(r);
-                }
+                if (winners.filter(Boolean).length) { playEmbeddedWinnerAnnouncement(r); startFireworks(); }
+                else playNoWinnerEffectOnce(r);
                 if (!isResultsCountdownRunning) startResultsCountdown();
-            }).catch(() => {
-                wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
-            });
+            }).catch(() => { wheelAnimationPlaying = false; window._wheelAnimStartedAt = null; });
         }
 
         function resetWinningNumberCard() {
@@ -1736,34 +1689,12 @@
             winnerCelebrationRounds.clear();
             const toastEl = document.getElementById('winnerCelebration');
             if (toastEl) toastEl.classList.remove('active');
-
             wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
             stopWheelSpinSound();
             const ov = document.getElementById('wheelAnimOverlay');
             if (ov) ov.classList.remove('active');
             const wheelEl = document.getElementById('baWheel');
-            if (wheelEl) {
-                wheelEl.classList.remove('spinning');
-                wheelEl.style.transform = 'rotate(0deg)';
-            }
-        }
-
-        function tryFetchAndShowCard(round) {
-            if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== Number(round)) { clearCardFetchRetry(); return; }
-            fetchLastResultFromServer(round).then(data => {
-                if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== Number(round)) { clearCardFetchRetry(); return; }
-                if (!data) {
-                    if (cardFetchRetryCount < 8) {
-                        cardFetchRetryCount++;
-                        cardFetchRetryTimer = setTimeout(() => { cardFetchRetryTimer = null; tryFetchAndShowCard(round); }, 300 + cardFetchRetryCount * 250);
-                    } else clearCardFetchRetry();
-                    return;
-                }
-                lastResultData = data;
-                displayedCardRound = round;
-                displayWinningNumberCard(round, Number(data.winningNumber), Array.isArray(data.winners) ? data.winners : [], Number(data.winAmount) || 0);
-                clearCardFetchRetry();
-            });
+            if (wheelEl) { wheelEl.classList.remove('spinning'); wheelEl.style.transform = 'rotate(0deg)'; }
         }
 
         function applyCardState() {
@@ -1788,33 +1719,13 @@
                 clearCardFetchRetry();
                 return;
             }
-            if (lastResultData && Number(lastResultData.round) === round) {
-                setCardLoadingState();
-                displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
-                return;
-            }
             setCardLoadingState();
-        }
-
-        function handleAuthoritativeResult(r) {
-            if (!r || r.round == null || r.winningNumber == null) return;
-            const incoming = Number(r.round);
-            if (!isFinite(incoming) || incoming <= 0) return;
-            const current = Number(engineState.roundNumber);
-            if (incoming > current || incoming < current - 1) return;
-            lastResultData = r;
-            if (incoming === current) applyCardState();
         }
 
         function attachLastResultListener() {}
         function detachLastResultListener() {}
 
-        function syncWalletFromServer() {
-            if (currentUser && client) client.walletRefresh();
-        }
-        function refreshPendingTransactionStatus() {
-            if (currentUser && client) client.walletRefresh();
-        }
+        function syncWalletFromServer() { if (currentUser && client) client.walletRefresh(); }
         function updateWalletUI() {
             if (!currentUser) return;
             if (mainWalletEl) mainWalletEl.textContent = walletData.main;
@@ -1832,16 +1743,11 @@
         function updateWelcomeUI() { if (currentUser && welcomeBalance) welcomeBalance.textContent = walletData.play; }
         function walletDiagnostics() {
             return {
-                uid: currentUser,
-                displayName: currentDisplayName,
-                telegramId: telegramUser?.id || null,
-                telegramUsername: telegramUser?.username || null,
-                main: safeNum(walletData.main),
-                play: safeNum(walletData.play),
-                pending: safeNum(walletData.pending),
-                refEarn: safeNum(walletData.refEarn),
-                server: SERVER_WS_URL,
-                updatedAt: walletData.updatedAt || 0
+                uid: currentUser, displayName: currentDisplayName,
+                telegramId: telegramUser?.id || null, telegramUsername: telegramUser?.username || null,
+                main: safeNum(walletData.main), play: safeNum(walletData.play),
+                pending: safeNum(walletData.pending), refEarn: safeNum(walletData.refEarn),
+                server: SERVER_WS_URL, updatedAt: walletData.updatedAt || 0
             };
         }
         window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
@@ -1859,8 +1765,8 @@
             if (key) notificationSeenKeys.add(key);
             if (isSticky) { showStickyOverlay(data.message || '', data.broadcastId || key || ('global_' + (data.timestamp || Date.now())), Number(data.timestamp) || 0); return; }
             if (data.type === 'broadcast') { enqueueBroadcastPopup(data, key || ('broadcast_' + Date.now())); return; }
-            let status = data.status;
-            let isTxResult = data.type === 'transaction_result' || status === 'approved' || status === 'rejected';
+            const status = data.status;
+            const isTxResult = data.type === 'transaction_result' || status === 'approved' || status === 'rejected';
             if (isTxResult) enqueueTransactionPopup(Object.assign({}, data, { status: status || 'approved' }), key || data.txId || ('tx_' + Date.now()));
             else if (data.message) {
                 if (data.type === 'notification' && String(data.message).includes('You won')) return;
@@ -1878,7 +1784,6 @@
             currentBroadcastNotificationKey = item.key;
             if (broadcastTitleEl) broadcastTitleEl.textContent = 'Message from Winzo';
             if (broadcastMsgEl) broadcastMsgEl.textContent = item.data.message || '';
-            try { playTone(660, 0.22, 'sine', 0.20); } catch (e) {}
             broadcastModal.classList.add('active');
         }
         if (broadcastOkBtn) {
@@ -1901,10 +1806,7 @@
             updateStatus('⏸ Game paused by admin.');
         }
         function hideStickyOverlay() {
-            if (!gamePausedBySticky && !activeStickyBroadcast) {
-                if (stickyOverlay) stickyOverlay.classList.remove('active');
-                return;
-            }
+            if (!gamePausedBySticky && !activeStickyBroadcast) { if (stickyOverlay) stickyOverlay.classList.remove('active'); return; }
             activeStickyBroadcast = null; gamePausedBySticky = false;
             if (stickyOverlay) stickyOverlay.classList.remove('active');
             updateStatus('▶️ Game resumed.');
@@ -1932,7 +1834,6 @@
             if (icon) icon.textContent = isApproved ? '✅' : '❌';
             if (title) title.textContent = isApproved ? 'Request Approved' : 'Request Rejected';
             if (msg) msg.textContent = isApproved ? 'Your request is approved' : ((item.data.reason || '').trim() || 'Your request was rejected by admin.');
-            try { playTone(isApproved ? 880 : 330, 0.28, 'sine', 0.22); } catch (e) {}
             void modal.offsetWidth; modal.classList.add('active');
         }
         (function bindTxResultOk(){
@@ -1993,14 +1894,8 @@
             amount = Number(amount);
             name = safeProductionName(name);
             phone = safeProductionName(phone);
-            if (!Number.isFinite(amount) || amount <= 0 || !name || !phone) {
-                if (withdrawError) withdrawError.textContent = 'Please fill in all fields.';
-                return false;
-            }
-            if (safeNum(walletData.main) < amount) {
-                if (withdrawError) withdrawError.textContent = 'Insufficient main balance.';
-                return false;
-            }
+            if (!Number.isFinite(amount) || amount <= 0 || !name || !phone) { if (withdrawError) withdrawError.textContent = 'Please fill in all fields.'; return false; }
+            if (safeNum(walletData.main) < amount) { if (withdrawError) withdrawError.textContent = 'Insufficient main balance.'; return false; }
             if (withdrawError) withdrawError.textContent = '';
             if (withdrawModal) withdrawModal.classList.remove('active');
             return requestTransaction('withdraw', amount, '', null, { name, phone });
@@ -2009,10 +1904,7 @@
             if (!currentUser) return false;
             amount = Number(amount);
             if (!amount || amount <= 0) { alert('Enter a valid amount.'); return false; }
-            if (safeNum(walletData.main) - safeNum(walletData.pending) < amount) {
-                alert('Insufficient available main balance.');
-                return false;
-            }
+            if (safeNum(walletData.main) - safeNum(walletData.pending) < amount) { alert('Insufficient available main balance.'); return false; }
             if (client) client.transfer(amount);
             return true;
         }
@@ -2041,13 +1933,13 @@
                 const text = result.data.text || '';
                 const seen = new Set(); const refCandidates = [];
                 const tokens = text.replace(/[\u2010-\u2015]/g, '-').replace(/[\r\n]+/g, ' ').match(/[A-Z0-9]{1,24}/gi) || [];
-                tokens.forEach(t => { let v = t.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (v.length === 10 && /[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } });
+                tokens.forEach(t => { const v = t.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (v.length === 10 && /[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } });
                 for (let i = 0; i < tokens.length; i++) {
                     let joined = '';
                     for (let j = i; j < Math.min(tokens.length, i + 5); j++) {
                         joined += tokens[j];
                         if (joined.length > 10) break;
-                        if (joined.length === 10) { let v = joined.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (/[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } }
+                        if (joined.length === 10) { const v = joined.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (/[A-Z]/.test(v) && /\d/.test(v) && !seen.has(v)) { seen.add(v); refCandidates.push(v); } }
                     }
                 }
                 let amount = null;
@@ -2114,8 +2006,7 @@
                     const v = t.toUpperCase();
                     if (v.length < 8 || v.length > 24 || !/[A-Z]/.test(v) || !/\d/.test(v) || /^\d+$/.test(v)) continue;
                     if (/^(ETB|VAT|SMS|HTTP|HTTPS|WWW)$/.test(v)) continue;
-                    result.reference = v;
-                    break;
+                    result.reference = v; break;
                 }
             }
             const am = raw.match(/(\d+(?:[,\s]\d{3})*(?:\.\d{1,2})?)\s*(?:ብር|Birr|ETB|Br\b)/i);
@@ -2164,11 +2055,7 @@
             telegramDetectedUsername = null;
             telegramDetectedDisplayName = null;
             currentDisplayName = null;
-            if (authUsername) {
-                authUsername.value = '';
-                authUsername.placeholder = 'Telegram detected name';
-                authUsername.readOnly = true;
-            }
+            if (authUsername) { authUsername.value = ''; authUsername.placeholder = 'Telegram detected name'; authUsername.readOnly = true; }
             stopNotificationListener(); stopStickyBroadcastListener(); stopResilienceEngine();
             attemptTelegramDetection();
         }
@@ -2266,15 +2153,9 @@
 
         function resolveLoginUsername() {
             const displayName = authUsername ? authUsername.value.trim() : '';
-            if (!DEV_MODE && !(tg && tg.initData)) {
-                if (authError) authError.textContent = 'Please open Winzo from the Telegram Mini App.';
-                return null;
-            }
+            if (!DEV_MODE && !(tg && tg.initData)) { if (authError) authError.textContent = 'Please open Winzo from the Telegram Mini App.'; return null; }
             if (DEV_MODE && !displayName) { if (authError) authError.textContent = 'Enter a development username.'; return null; }
-            if (!DEV_MODE && !telegramUser) {
-                if (authError) authError.textContent = 'Telegram user could not be detected. Please reopen Winzo from Telegram.';
-                return null;
-            }
+            if (!DEV_MODE && !telegramUser) { if (authError) authError.textContent = 'Telegram user could not be detected. Please reopen Winzo from Telegram.'; return null; }
             return displayName || telegramDetectedDisplayName || telegramDetectedUsername || '';
         }
         async function beginSession(displayName) {
@@ -2367,9 +2248,7 @@
         }
         function switchRoom() {
             if (currentUser) {
-                if (getMyPicks().length) {
-                    if (!confirm('You have active picks. Switching rooms will clear them. Continue?')) return;
-                }
+                if (getMyPicks().length) { if (!confirm('You have active picks. Switching rooms will clear them. Continue?')) return; }
                 if (client) client.leave();
             }
             hideMoreLoginTip();
@@ -2414,10 +2293,7 @@
             tick();
             timerInterval = setInterval(tick, 500);
         }
-        function stopTimer() {
-            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-            isTimerRunning = false;
-        }
+        function stopTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } isTimerRunning = false; }
         function startResultsCountdown() {
             if (isResultsCountdownRunning) return;
             isResultsCountdownRunning = true;
@@ -2427,16 +2303,10 @@
             resultsCountdownInterval = setInterval(() => {
                 remaining -= 1;
                 if (timerDisplay) timerDisplay.textContent = Math.max(0, remaining);
-                if (remaining <= 0) {
-                    stopResultsCountdown();
-                    if (winnersModal) winnersModal.classList.remove('active');
-                }
+                if (remaining <= 0) { stopResultsCountdown(); if (winnersModal) winnersModal.classList.remove('active'); }
             }, 1000);
         }
-        function stopResultsCountdown() {
-            if (resultsCountdownInterval) { clearInterval(resultsCountdownInterval); resultsCountdownInterval = null; }
-            isResultsCountdownRunning = false;
-        }
+        function stopResultsCountdown() { if (resultsCountdownInterval) { clearInterval(resultsCountdownInterval); resultsCountdownInterval = null; } isResultsCountdownRunning = false; }
 
         function updateUIFromState() {
             if (updatePending) return;
@@ -2523,9 +2393,7 @@
         function hideWaitingModal() { if (waitingModal) waitingModal.classList.remove('active'); }
         if (closeWaitingBtn) closeWaitingBtn.onclick = () => hideWaitingModal();
         if (transactionCloseBtn) {
-            transactionCloseBtn.onclick = () => {
-                if (transactionModal) transactionModal.classList.remove('active');
-            };
+            transactionCloseBtn.onclick = () => { if (transactionModal) transactionModal.classList.remove('active'); };
         }
 
         function handlePickOk(number) {
@@ -2546,18 +2414,19 @@
             renderNumberPicker(); updatePickStatus(); updateTotalBetDisplay();
             const play = safeNum(walletData.play);
             const msgs = {
-                'taken':         `❌ Number ${num} was just taken!`,
-                'insufficient':  `⚠️ Insufficient play balance. Current: ${play} Birr.`,
-                'user-not-found':`⚠️ Account not found on server. Please reconnect.`,
-                'debit-error':   `⚠️ Server error while deducting balance. Try again.`,
-                'max-picks':     `❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`,
+                'taken': `❌ Number ${num} was just taken!`,
+                'insufficient': `⚠️ Insufficient play balance. Current: ${play} Birr.`,
+                'user-not-found': `⚠️ Account not found on server. Please reconnect.`,
+                'debit-error': `⚠️ Server error while deducting balance. Try again.`,
+                'max-picks': `❌ You can pick up to ${MAX_PICKS_PER_ROUND} numbers only.`,
                 'not-selection': `⛔ Cannot pick numbers now.`,
-                'duplicate':     `❌ Already picked.`,
-                'not-picked':    `↩️ Not in your picks.`,
-                'not-owner':     `⚠️ This number isn't yours.`,
+                'duplicate': `❌ Already picked.`,
+                'not-picked': `↩️ Not in your picks.`,
+                'not-owner': `⚠️ This number isn't yours.`,
                 'refund-failed': `⚠️ Could not release. Try again.`,
-                'range':         `⚠️ Invalid number.`,
-                'not-authed':    `🔑 Please log in.`,
+                'range': `⚠️ Invalid number.`,
+                'not-authed': `🔑 Please log in.`,
+                'account-blocked': `⛔ Your account is blocked.`
             };
             updateStatus(msgs[reason] || `⚠️ ${reason}`);
         }
@@ -2603,44 +2472,27 @@
             numPicker.addEventListener('touchstart', function(e) {
                 if (e.touches.length !== 1) return;
                 const touch = e.touches[0];
-                touchStartX = touch.clientX;
-                touchStartY = touch.clientY;
-                touchStartTime = Date.now();
-                touchMoved = false;
+                touchStartX = touch.clientX; touchStartY = touch.clientY;
+                touchStartTime = Date.now(); touchMoved = false;
                 activeTouchTarget = e.target.closest('.num-btn[data-num]') || null;
             }, { passive: true });
-
             numPicker.addEventListener('touchmove', function(e) {
                 if (e.touches.length !== 1) return;
                 const touch = e.touches[0];
-                const dx = Math.abs(touch.clientX - touchStartX);
-                const dy = Math.abs(touch.clientY - touchStartY);
-                if (dx > SWIPE_THRESHOLD || dy > SWIPE_THRESHOLD) {
-                    touchMoved = true;
-                }
+                if (Math.abs(touch.clientX - touchStartX) > SWIPE_THRESHOLD || Math.abs(touch.clientY - touchStartY) > SWIPE_THRESHOLD) touchMoved = true;
             }, { passive: true });
-
             numPicker.addEventListener('touchend', function(e) {
                 const duration = Date.now() - touchStartTime;
-                if (touchMoved || duration > TAP_MAX_DURATION) {
-                    touchMoved = false; activeTouchTarget = null;
-                    return;
-                }
+                if (touchMoved || duration > TAP_MAX_DURATION) { touchMoved = false; activeTouchTarget = null; return; }
                 const touch = e.changedTouches[0];
                 const target = document.elementFromPoint(touch.clientX, touch.clientY);
                 const btn = target ? target.closest('.num-btn[data-num]') : activeTouchTarget;
-                activeTouchTarget = null;
-                touchMoved = false;
+                activeTouchTarget = null; touchMoved = false;
                 if (!btn) return;
                 e.preventDefault();
                 handleNumberPick({ target: btn });
             }, { passive: false });
-
-            numPicker.addEventListener('touchcancel', function() {
-                touchMoved = false;
-                activeTouchTarget = null;
-            }, { passive: true });
-
+            numPicker.addEventListener('touchcancel', function() { touchMoved = false; activeTouchTarget = null; }, { passive: true });
             numPicker.addEventListener('click', function(e) {
                 if (e.pointerType === 'touch') return;
                 if (e._winzoHandled) return;
@@ -2663,14 +2515,11 @@
                 this.refCode = refCode || null;
                 this.roomId = roomId || null;
                 this.devUsername = String(devUsername || this.devUsername || currentUser || '').trim();
-                if (!this.initData && isTelegram) {
-                    this.initData = await waitForTelegramInitData(5000);
-                }
+                if (!this.initData && isTelegram) this.initData = await waitForTelegramInitData(5000);
                 if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch (e) {} }
                 this.connecting = true;
-                try {
-                    this.ws = new WebSocket(SERVER_WS_URL);
-                } catch (err) {
+                try { this.ws = new WebSocket(SERVER_WS_URL); }
+                catch (err) {
                     window.WINZO_RECORD_ERROR('WS-CONSTRUCT', err);
                     this.connecting = false;
                     this.onConnection && this.onConnection(false);
@@ -2713,7 +2562,11 @@
                     else if (m.type === 'sticky-broadcast') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
-                    else if (m.type === 'error')        { this.onError && this.onError(m); if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} } }
+                    else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
+                    else if (m.type === 'error') {
+                        this.onError && this.onError(m);
+                        if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} }
+                    }
                 };
                 this.ws.onclose = (ev) => {
                     if (generation !== this.connectionGeneration) return;
@@ -2725,9 +2578,7 @@
                     setTimeout(() => this.connect(this.initData, this.refCode, this.roomId, this.devUsername), this.backoff);
                     this.backoff = Math.min(this.backoff * 2, 15000);
                 };
-                this.ws.onerror = (err) => {
-                    window.WINZO_RECORD_ERROR('WS-ERROR', err);
-                };
+                this.ws.onerror = (err) => window.WINZO_RECORD_ERROR('WS-ERROR', err);
                 clearInterval(this._ka);
                 this._ka = setInterval(() => this.rawSend({ type: 'ping' }), 25000);
             }
@@ -2757,9 +2608,7 @@
             if (client) client.join(currentRoom);
             setConnectionStatus(!!isNetworkConnected, (isNetworkConnected ? 'Connected to ' : 'Connecting to ') + currentBet + ' Birr room');
             startResilienceEngine();
-            setTimeout(() => {
-                if (generation === roomConnectionGeneration) renderNumberPicker();
-            }, 100);
+            setTimeout(() => { if (generation === roomConnectionGeneration) renderNumberPicker(); }, 100);
         }
         function syncGameState(data) {
             if (!data || typeof data !== 'object') return;
@@ -2779,9 +2628,7 @@
             }
             engineState.players = players;
             engineState.playerNames = playerNames;
-            engineState.activePlayersCount = Number.isFinite(Number(data.onlineCount))
-                ? Number(data.onlineCount)
-                : playerNames.length;
+            engineState.activePlayersCount = Number.isFinite(Number(data.onlineCount)) ? Number(data.onlineCount) : playerNames.length;
             engineState.gamePhase = phase;
             engineState.roundNumber = round;
             phaseDeadline = Number(data.endsAt || data.selectionEndsAt) || 0;
@@ -2792,14 +2639,9 @@
             engineState.winners = Array.isArray(data.winners) ? data.winners : [];
             engineState.prizePool = Number(data.prizePool) || 0;
             engineState.allTakenNumbers = new Set(
-                Object.keys(data.numbersTaken || {})
-                    .filter(k => data.numbersTaken[k] === true)
-                    .map(Number).filter(n => n >= 1 && n <= 200)
+                Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 200)
             );
-            if (roundChanged) {
-                displayedCardRound = null; lastResultData = null;
-                clearCardFetchRetry();
-            }
+            if (roundChanged) { displayedCardRound = null; lastResultData = null; clearCardFetchRetry(); }
             if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
             updateTotalBetDisplay();
             if (phase === 'selection') {
@@ -2808,11 +2650,8 @@
                 else hideWaitingModal();
             } else { stopTimer(); hideWaitingModal(); }
             updateUIFromState();
-            if (phase === 'results') {
-                if (!engineState.winnersModalShown) {
-                    engineState.winnersModalShown = true;
-                }
-            } else engineState.winnersModalShown = false;
+            if (phase === 'results') { if (!engineState.winnersModalShown) engineState.winnersModalShown = true; }
+            else engineState.winnersModalShown = false;
             applyCardState();
             updatePrizeDisplay(); updatePickStatus(); renderNumberPicker(); updateTotalBetDisplay();
         }
@@ -2854,6 +2693,45 @@
             transactionStatus.textContent = '⏳ Pending admin approval...';
             return Promise.resolve(true);
         }
+
+        window.handleUserEventMessage = function (m) {
+            if (!m || typeof m !== 'object') return;
+            if (!m.type) return;
+            if (m.read === true) return;
+            const key = String(m.key || '');
+            if (!key) return;
+            if (Number(m.expiresAt) && Number(m.expiresAt) < Date.now()) return;
+            const modalEl = document.getElementById('winzoUserEventModal');
+            const iconEl = document.getElementById('wueIcon');
+            const titleEl = document.getElementById('wueTitle');
+            const msgEl = document.getElementById('wueMessage');
+            const okBtn = document.getElementById('wueOk');
+            if (!modalEl || !okBtn) return;
+            const TITLE_MAP = {
+                deposit_approval: 'Deposit Approved',
+                deposit_rejection: 'Deposit Rejected',
+                withdraw_approval: 'Withdrawal Approved',
+                withdraw_rejection: 'Withdrawal Rejected',
+                deposit_no_sms: 'Deposit Not Processed',
+                deposit_used_ref: 'Reference Already Used'
+            };
+            const pickIcon = t => {
+                t = String(t || '');
+                if (t.endsWith('_approval')) return '🎉';
+                if (t.endsWith('_rejection') || t === 'deposit_no_sms' || t === 'deposit_used_ref') return '⚠️';
+                return '📢';
+            };
+            if (iconEl) iconEl.textContent = pickIcon(m.type);
+            if (titleEl) titleEl.textContent = TITLE_MAP[m.type] || 'Notification';
+            if (msgEl) msgEl.textContent = String(m.message || '');
+            modalEl.classList.add('is-visible');
+            okBtn.onclick = () => {
+                modalEl.classList.remove('is-visible');
+                if (window.client && typeof window.client.send === 'function') {
+                    try { window.client.send({ type: 'user-event-read', key }); } catch (_) {}
+                }
+            };
+        };
 
         function init() {
             if (authLoginBtn) authLoginBtn.onclick = handleLogin;
@@ -2997,9 +2875,7 @@
                     updateWalletUI(); updateWelcomeUI();
                     renderNumberPicker();
                 },
-                onTransactionCreated: (m) => {
-                    transactionStatus.textContent = '⏳ Pending admin approval...';
-                },
+                onTransactionCreated: () => { transactionStatus.textContent = '⏳ Pending admin approval...'; },
                 onTransactionStatus: (m) => {
                     const approved = m.status === 'approved';
                     transactionStatus.textContent = approved ? (m.txType === 'withdraw' ? '✅ Withdrawal approved.' : '✅ Deposit approved.') : '❌ Transaction rejected.';
@@ -3009,6 +2885,20 @@
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
                 onUserEvent: (m) => { if (window.handleUserEventMessage) window.handleUserEventMessage(m); },
+                onAccountBlocked: (m) => {
+                    if (window.handleUserEventMessage) {
+                        window.handleUserEventMessage({
+                            type: 'deposit_rejection',
+                            key: 'blocked_' + (m.at || Date.now()),
+                            message: 'Your account has been blocked.\n\nReason: ' + (m.reason || 'policy violation') +
+                                     '\n\nIf you believe this is a mistake, contact customer service.',
+                            createdAt: Date.now(),
+                            expiresAt: Date.now() + 60_000,
+                            read: false
+                        });
+                    }
+                    if (client) client.disconnect();
+                },
                 onError: (m) => updateStatus('⚠️ ' + (m.message || 'server error')),
             });
             window.client = client;
@@ -3018,7 +2908,6 @@
         if (DEV_MODE) {
             console.info('WINZO client booted (server-authoritative mode)');
             console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
-            console.info('Dev tip: window.WINZO_ERRORS collects runtime errors.');
         }
         init();
     </script>
@@ -3032,9 +2921,6 @@
       </div>
     </div>
     <script>
-    /* Public broadcasts (transient + persistent) read directly from Firebase.
-       Firebase rules make ONLY these two paths publicly readable.
-       The rest of /broadcasts — including user_events and requests — is server-only. */
     (function () {
       'use strict';
       const DB_ROOT = 'https://render-e9e2d-default-rtdb.firebaseio.com';
@@ -3053,15 +2939,10 @@
 
       function onGameScreen() {
         const game = document.getElementById('gameScreen');
-        return !!game && getComputedStyle(game).display !== 'none' &&
-          game.getClientRects().length > 0;
+        return !!game && getComputedStyle(game).display !== 'none' && game.getClientRects().length > 0;
       }
       function show(kind, text, id) {
-        if (!onGameScreen() || !text) {
-          layer.classList.remove('is-visible');
-          visibleKind = '';
-          return;
-        }
+        if (!onGameScreen() || !text) { layer.classList.remove('is-visible'); visibleKind = ''; return; }
         title.textContent = kind === 'persistent' ? '📌 Important Notice' : '📢 Message from Winzo';
         message.textContent = text;
         close.style.display = kind === 'persistent' ? 'none' : 'inline-block';
@@ -3070,21 +2951,13 @@
         visibleKind = kind;
       }
       function render() {
-        if (!onGameScreen()) {
-          layer.classList.remove('is-visible');
-          visibleKind = '';
-          return;
-        }
+        if (!onGameScreen()) { layer.classList.remove('is-visible'); visibleKind = ''; return; }
         const p = latest.persistent || {};
-        if (p.active === true && String(p.text || '').trim()) {
-          show('persistent', String(p.text).trim(), 'persistent_' + (p.updatedAt || 'active'));
-          return;
-        }
+        if (p.active === true && String(p.text || '').trim()) { show('persistent', String(p.text).trim(), 'persistent_' + (p.updatedAt || 'active')); return; }
         const t = latest.transient || {};
         const expiresAt = Number(t.expiresAt) || (Number(t.createdAt || 0) + Number(t.duration || 0) * 1000);
         const id = String(t.id || t.createdAt || '');
-        if (t.active === true && String(t.text || '').trim() && expiresAt > Date.now() &&
-            id !== dismissedTransientId) {
+        if (t.active === true && String(t.text || '').trim() && expiresAt > Date.now() && id !== dismissedTransientId) {
           show('transient', String(t.text).trim(), id);
           shownTransientId = id;
           return;
@@ -3109,9 +2982,7 @@
             lastErrorAt = Date.now();
             console.warn('[Winzo broadcast] Firebase read failed; retrying:', (err && err.message) || err);
           }
-        } finally {
-          pollBusy = false;
-        }
+        } finally { pollBusy = false; }
       }
       close.addEventListener('click', function () {
         if (visibleKind === 'transient') dismissedTransientId = layer.dataset.broadcastId || shownTransientId;
@@ -3132,84 +3003,5 @@
         <button class="wue-ok" id="wueOk" type="button">OK</button>
       </div>
     </div>
-    <script>
-    /* Per-user admin events delivered over the game WebSocket.
-       The server pushes `user-event` messages; the client queues them,
-       displays each in the modal, and acks dismissal so the server marks it read. */
-    (function () {
-      'use strict';
-      const modalEl = document.getElementById('winzoUserEventModal');
-      const iconEl  = document.getElementById('wueIcon');
-      const titleEl = document.getElementById('wueTitle');
-      const msgEl   = document.getElementById('wueMessage');
-      const okBtn   = document.getElementById('wueOk');
-      if (!modalEl || !okBtn) return;
-
-      const TITLE_MAP = {
-        deposit_approval:   'Deposit Approved',
-        deposit_rejection:  'Deposit Rejected',
-        withdraw_approval:  'Withdrawal Approved',
-        withdraw_rejection: 'Withdrawal Rejected',
-        deposit_no_sms:     'Deposit Not Processed',
-        deposit_used_ref:   'Reference Already Used'
-      };
-      const queue = [];
-      let showing = false;
-      let current = null;
-
-      function pickIcon(t) {
-        t = String(t || '');
-        if (t.endsWith('_approval')) return '🎉';
-        if (t.endsWith('_rejection') || t === 'deposit_no_sms' || t === 'deposit_used_ref') return '⚠️';
-        return '📢';
-      }
-      function openModal(ev) {
-        iconEl.textContent  = pickIcon(ev.type);
-        titleEl.textContent = TITLE_MAP[ev.type] || 'Notification';
-        msgEl.textContent   = String(ev.message || '');
-        modalEl.classList.add('is-visible');
-        setTimeout(() => { try { okBtn.focus(); } catch (_) {} }, 60);
-      }
-      function closeModal() { modalEl.classList.remove('is-visible'); }
-      function showNext() {
-        if (showing || !queue.length) return;
-        showing = true;
-        current = queue.shift();
-        openModal(current);
-      }
-      function handleOk() {
-        const ev = current;
-        current = null;
-        showing = false;
-        closeModal();
-        if (ev && ev.key && window.client && typeof window.client.send === 'function') {
-          try { window.client.send({ type: 'user-event-read', key: ev.key }); } catch (_) {}
-        }
-        setTimeout(showNext, 160);
-      }
-
-      okBtn.addEventListener('click', handleOk);
-      document.addEventListener('keydown', (e) => {
-        if (!current) return;
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault(); e.stopPropagation(); handleOk();
-        }
-      }, true);
-      modalEl.addEventListener('click', (e) => { if (e.target === modalEl) e.stopPropagation(); });
-
-      window.handleUserEventMessage = function (m) {
-        if (!m || typeof m !== 'object') return;
-        if (!m.type) return;
-        if (m.read === true) return;
-        const key = String(m.key || '');
-        if (!key) return;
-        if (Number(m.expiresAt) && Number(m.expiresAt) < Date.now()) return;
-        if (queue.some(q => q.key === key)) return;
-        if (current && current.key === key) return;
-        queue.push({ ...m, key });
-        showNext();
-      };
-    })();
-    </script>
 </body>
 </html>
