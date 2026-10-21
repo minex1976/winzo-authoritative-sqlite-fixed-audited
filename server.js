@@ -145,7 +145,7 @@ class Mutex {
 // ============================================================================
 // Telegram initData cryptographic verification
 // ============================================================================
-function validateInitData(initData, maxAge = 86400) {
+function validateInitData(initData, maxAge = 300) {
   if (!BOT_TOKEN) return { ok: false, reason: 'server-misconfigured (BOT_TOKEN missing)' };
   if (!initData || typeof initData !== 'string') return { ok: false, reason: 'missing-initData' };
 
@@ -302,13 +302,13 @@ async function analyzeAccount(uid, options = {}) {
     signals.push({ code: 'previously-blocked', weight: 50, detail: u.block_reason || 'previously flagged' });
   }
 
-  if (u.last_ip) {
-    const sameIp = await db.ref('users').orderByChild('last_ip').equalTo(u.last_ip).once('value');
+  if (u.last_ip_hash) {
+    const sameIp = await db.ref('users').orderByChild('last_ip_hash').equalTo(u.last_ip_hash).once('value');
     let count = 0;
     sameIp.forEach(() => count++);
     if (count >= 5) {
       score += 15;
-      signals.push({ code: 'ip-concentration', weight: 15, detail: `${count} accounts share IP` });
+      signals.push({ code: 'ip-concentration', weight: 15, detail: `${count} accounts share a salted IP hash` });
     }
   }
 
@@ -441,7 +441,8 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     if (extra.telegram_id != null && (!current.telegram_id || Number(current.telegram_id) !== Number(extra.telegram_id))) patch.telegram_id = Number(extra.telegram_id);
     if (extra.telegram_username !== undefined && String(current.telegram_username || '') !== String(extra.telegram_username || '')) patch.telegram_username = extra.telegram_username || null;
     if (extra.display_name && String(current.display_name || '') !== String(extra.display_name)) patch.display_name = String(extra.display_name).slice(0, 128);
-    if (extra.last_ip && current.last_ip !== extra.last_ip) patch.last_ip = extra.last_ip;
+    if (extra.last_ip) patch.last_ip_hash = hashWithRotatingSalt(normalizedClientIp(extra.last_ip));
+    if (current.last_ip) patch.last_ip = null; // purge legacy raw IP on next authenticated session
     if (!current.username) patch.username = clean;
     if (!current.wallet_updated_at) patch.wallet_updated_at = Number(current.updated_at || now());
     if (Object.keys(patch).length) {
@@ -458,11 +459,16 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     telegram_username: extra.telegram_username || null,
     main_wallet: 0,
     play_wallet: bot ? BOT_START_WALLET : 30,
+    signup_bonus_remaining: bot ? 0 : 30,
+    signup_bonus_original: bot ? 0 : 30,
+    withdrawal_hold_until: bot ? 0 : t + DAY,
+    withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
     pending_withdrawal: 0,
     referral_earnings: 0,
     wallet_updated_at: t,
     referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
-    last_ip: extra.last_ip || null,
+    last_ip: null,
+    last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : (extra.last_ip_hash || null),
     created_at: t,
     updated_at: t
   };
@@ -632,6 +638,10 @@ async function transactionRequest(uid, data) {
   const userRef = db.ref('users/' + uid);
   const userSnap = await userRef.once('value');
   if (!userSnap.exists()) return { ok: false, reason: 'user-not-found' };
+  if (type === 'withdraw') {
+    const hold = withdrawalHoldReason(userSnap.val() || {});
+    if (hold.blocked) return { ok: false, reason: `withdrawal-hold:${hold.reason}:${hold.until}` };
+  }
 
   const txRef = db.ref('transactions').push();
   const id = txRef.key;
@@ -796,6 +806,10 @@ async function adminDecision(id, decision, reason = '') {
     const freshSnap = await userRef.once('value');
     if (!freshSnap.exists()) return { ok: false, reason: 'wallet-user-not-found' };
     const fresh = freshSnap.val() || {};
+    if (tx.type === 'withdraw' && decision === 'approved') {
+      const hold = withdrawalHoldReason(fresh);
+      if (hold.blocked) return { ok: false, reason: `withdrawal-hold:${hold.reason}:${hold.until}` };
+    }
 
     const existingLedger = fresh.wallet_ledger && fresh.wallet_ledger[id];
     if (existingLedger) {
@@ -1059,6 +1073,37 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   const marker = await markerRef.once('value');
   if (marker.exists()) return false;
   await ensureUser(ref);
+  const [refSnap, winnerSnap] = await Promise.all([
+    db.ref('users/' + safeUid(ref)).once('value'),
+    db.ref('users/' + safeUid(winnerUid)).once('value')
+  ]);
+  const refUser = refSnap.val() || {}, winnerUser = winnerSnap.val() || {};
+  const refFp = String(refUser.device_fingerprint || ''), winnerFp = String(winnerUser.device_fingerprint || '');
+  const refName = safeUser(refUser.telegram_username || refUser.username || '');
+  const winnerName = safeUser(winnerUser.telegram_username || winnerUser.username || '');
+  let chainUid = safeUid(winnerUid), referralFraud = false;
+  for (let depth = 0; depth < 5 && chainUid; depth++) {
+    const chainSnap = await db.ref('users/' + chainUid).once('value');
+    const chainUser = chainSnap.val() || {};
+    const chainFp = String(chainUser.device_fingerprint || '');
+    const chainName = safeUser(chainUser.telegram_username || chainUser.username || '');
+    if ((refFp && chainFp && refFp === chainFp) || (refName && chainName && refName === chainName)) {
+      referralFraud = true;
+      await db.ref('users/' + safeUid(ref)).update({ fraud_status: 'referral-fraud', referral_fraud_at: now() });
+      await db.ref('users/' + safeUid(winnerUid)).update({ fraud_status: 'referral-fraud', referral_fraud_at: now() });
+      await db.ref('abuse_signals/events').push({ type: 'referral-fraud', refUid: safeUid(ref), referredUid: safeUid(winnerUid), at: now(), reason: refFp && chainFp && refFp === chainFp ? 'shared-fingerprint' : 'shared-username' });
+      break;
+    }
+    chainUid = safeUid(chainUser.referred_by || '');
+  }
+  if (referralFraud) return false; // pending commission is never credited
+  if (winnerFp) {
+    const fpKey = safeKey(winnerFp);
+    const payoutRef = db.ref('abuse_signals/referral_fingerprint_payouts/' + fpKey);
+    const payoutSnap = await payoutRef.once('value');
+    const payoutRows = payoutSnap.val() || {};
+    if (Object.values(payoutRows).some(x => Number(x.at || 0) > now() - 90 * DAY)) return false;
+  }
   let success = false;
   await db.ref('users/' + ref).transaction(u => {
     if (!u) return u;
@@ -1070,6 +1115,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
     return u;
   });
   if (success) {
+    if (winnerFp) await db.ref('abuse_signals/referral_fingerprint_payouts/' + safeKey(winnerFp) + '/' + safeKey(winnerUid)).set({ uid: safeUid(winnerUid), refUid: safeUid(ref), at: now(), amount });
     await markerRef.set({ username: ref, type: 'referral_marker', read: true, timestamp: now() });
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from ${winnerUid}'s win.` });
     await sendWallet(ref);
@@ -1165,6 +1211,7 @@ async function debit(uid, amount, roomId, round) {
       const balance = toFiniteNumber(u.play_wallet ?? u.playWallet ?? u.play_balance ?? u.playBalance ?? 0, 0);
       if (balance < amt) return u;
       u.play_wallet = balance - amt;
+      if (Number.isFinite(Number(u.signup_bonus_remaining))) u.signup_bonus_remaining = Math.max(0, Number(u.signup_bonus_remaining) - Math.min(amt, Math.max(0, Number(u.signup_bonus_remaining))));
       u.updated_at = now();
       u.wallet_updated_at = u.updated_at;
       return u;
@@ -1497,6 +1544,7 @@ async function handle(ws, m) {
     }
 
     const telegramUser = verification.user;
+    const preExisting = !!(await readUserByUid('tg_' + Number(telegramUser.id))) || !!(await findUserByTelegramId(Number(telegramUser.id)));
     let resolved = await resolveTelegramUser(telegramUser, m.ref || null);
 
     if (!resolved && DEV_ALLOW_ANY && !BOT_TOKEN && m.devUsername && /^[A-Za-z0-9_]{1,32}$/.test(m.devUsername)) {
@@ -1525,14 +1573,25 @@ async function handle(ws, m) {
       return;
     }
 
-    const clientIp = ws._socket?.remoteAddress || null;
+    const clientIp = websocketClientIp(ws) || null;
     await ensureUser(uid, m.ref || null, false, {
       telegram_id: telegramUser.id,
       telegram_username: safeUser(telegramUser.username || ''),
       display_name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || telegramUser.username || uid,
       last_ip: clientIp
     });
+    if (m.deviceFingerprint) await db.ref('users/' + safeUid(uid)).update({ device_fingerprint: String(m.deviceFingerprint).slice(0,128) });
+    if (preExisting || DEV_ALLOW_ANY) {
+      await recordAuthTelemetry({ uid, telegramUser, fingerprint: m.deviceFingerprint || '', ip: clientIp || '', userAgent: m.userAgent || '', fingerprintMismatch: !!m.fingerprintMismatch }).catch(err => console.warn('[AUTH-TELEMETRY]', err.message));
+    }
 
+    let bonusDecision = { grant: true, reasons: [], pendingVerification: false };
+    if (!preExisting && !DEV_ALLOW_ANY) {
+      bonusDecision = await grantSignupBonusGate({ uid, telegramUser, initData: m.initData || '', fingerprint: m.deviceFingerprint || '', ip: ws._socket?.remoteAddress || '', userAgent: m.userAgent || '', fingerprintMismatch: !!m.fingerprintMismatch });
+    } else if (preExisting) {
+      const status = await db.ref('abuse_signals/account_status/' + safeUid(uid)).once('value');
+      if (status.val() === 'fraud-confirmed') await db.ref('users/' + uid).update({ signup_bonus_eligible: false });
+    }
     clearTimeout(ws.authTimer);
     ws.authenticatedAt = now();
     ws.uid = uid;
@@ -1545,7 +1604,9 @@ async function handle(ws, m) {
     if (!set) { set = new Set(); conns.set(uid, set); }
     set.add(ws);
 
-    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: ws.telegramId, telegramUsername: ws.telegramUsername || null });
+    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: ws.telegramId, telegramUsername: ws.telegramUsername || null,
+      signupBonusGranted: !preExisting && bonusDecision.grant, signupBonusDenied: !preExisting && !bonusDecision.grant,
+      signupBonusReason: bonusDecision.reasons?.[0] || null, signupBonusMessage: !preExisting && !bonusDecision.grant ? 'Sign-up bonus is one per device.' : null, withdrawalHoldUntil: Number((await db.ref('users/' + uid + '/withdrawal_hold_until').once('value')).val() || 0), pendingVerification: !!bonusDecision.pendingVerification });
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
     attachWalletListener(uid);
 
@@ -1699,6 +1760,365 @@ function isAdmin(req) {
   const suppliedKey = String(req.get('x-admin-key') || '');
   return ADMIN_KEY && constantTimeEqual(suppliedKey, ADMIN_KEY);
 }
+
+
+// --- Anti-fraud controls (server-only; clients must have deny-all rules) ---
+const BONUS_AMOUNT = 30;
+const DAY = 86400000;
+const initReplayCache = new Map();
+const TELEGRAM_AGE_LOOKUP_URL = String(process.env.TELEGRAM_AGE_LOOKUP_URL || '').trim();
+const IPINFO_TOKEN = String(process.env.IPINFO_TOKEN || '').trim();
+const IP_HASH_SALT = String(process.env.IP_HASH_SALT || '').trim();
+
+function normalizedClientIp(ip) {
+  let value = String(ip || '').trim();
+  if (value.startsWith('::ffff:')) value = value.slice(7);
+  if (value === '::1') return '127.0.0.1';
+  return value;
+}
+function hashWithRotatingSalt(value, dayOffset = 0) {
+  const d = new Date(Date.now() - dayOffset * DAY).toISOString().slice(0, 10);
+  const salt = `${IP_HASH_SALT || 'winzo-ip-salt-not-configured'}|${d}`;
+  return hashText(`${salt}|${String(value || '')}`);
+}
+async function lookupNetworkRisk(ip) {
+  const cleanIp = normalizedClientIp(ip);
+  if (!IPINFO_TOKEN || !cleanIp || cleanIp === 'unknown' || cleanIp === '127.0.0.1') return { asn: null, isProxy: false, provider: null };
+  try {
+    const response = await fetch(`https://ipinfo.io/${encodeURIComponent(cleanIp)}/json?token=${encodeURIComponent(IPINFO_TOKEN)}`, { signal: AbortSignal.timeout(1800) });
+    if (!response.ok) return { asn: null, isProxy: false, provider: 'ipinfo-unavailable' };
+    const data = await response.json();
+    const asn = String(data.org || '').match(/AS\d+/i)?.[0]?.toUpperCase() || null;
+    const privacy = data.privacy || {};
+    const org = String(data.org || '').toLowerCase();
+    const isProxy = !!(privacy.vpn || privacy.proxy || privacy.tor || privacy.hosting || /\b(vpn|proxy|hosting|tor exit)\b/.test(org));
+    return { asn, isProxy, provider: 'ipinfo' };
+  } catch { return { asn: null, isProxy: false, provider: 'ipinfo-timeout' }; }
+}
+async function lookupTelegramAccountAge(telegramUser) {
+  // Telegram initData has no account-created timestamp. An optional trusted provider may supply an estimate.
+  if (!TELEGRAM_AGE_LOOKUP_URL) return { known: false, ageHours: null, createdAt: null, provider: null };
+  try {
+    const url = new URL(TELEGRAM_AGE_LOOKUP_URL);
+    if (url.protocol !== 'https:') return { known: false, ageHours: null, createdAt: null, provider: 'invalid-provider-url' };
+    url.searchParams.set('telegram_id', String(telegramUser.id));
+    const response = await fetch(url, { headers: process.env.TELEGRAM_AGE_LOOKUP_KEY ? { authorization: `Bearer ${process.env.TELEGRAM_AGE_LOOKUP_KEY}` } : {}, signal: AbortSignal.timeout(1800) });
+    if (!response.ok) return { known: false, ageHours: null, createdAt: null, provider: 'age-provider-unavailable' };
+    const data = await response.json();
+    let createdAt = Number(data.accountCreatedAt || data.createdAt || data.created_at || 0);
+    if (createdAt > 0 && createdAt < 1e12) createdAt *= 1000;
+    let ageHours = Number(data.accountAgeHours ?? data.ageHours);
+    if (!Number.isFinite(ageHours) && createdAt > 0) ageHours = (Date.now() - createdAt) / 3600000;
+    if (!Number.isFinite(ageHours) || ageHours < 0 || ageHours > 24 * 365 * 30) return { known: false, ageHours: null, createdAt: null, provider: 'invalid-age-response' };
+    return { known: true, ageHours, createdAt: createdAt || null, provider: 'configured-provider' };
+  } catch { return { known: false, ageHours: null, createdAt: null, provider: 'age-provider-timeout' }; }
+}
+function getChatIdFromInitData(initData) {
+  try { const raw = new URLSearchParams(String(initData || '')).get('chat'); return raw ? String(JSON.parse(raw)?.id || '') : ''; } catch { return ''; }
+}
+function withdrawalHoldReason(user) {
+  if (String(user?.fraud_status || '') === 'fraud-confirmed' || String(user?.account_status || '') === 'fraud-confirmed') return { blocked: true, until: 0, reason: 'fraud-confirmed-manual-review' };
+  const until = Number(user?.withdrawal_hold_until || 0);
+  if (until > now()) return { blocked: true, until, reason: user.withdrawal_hold_reason || 'new-account-24h-hold' };
+  if (String(user?.fraud_status || '') === 'fraud-confirmed' || String(user?.account_status || '') === 'pending-verification') {
+    if (String(user?.account_status || '') === 'pending-verification' && Number(user?.verification_hold_until || 0) > now()) return { blocked: true, until: Number(user.verification_hold_until), reason: 'pending-verification' };
+  }
+  return { blocked: false, until: 0, reason: '' };
+}
+function hashText(v) { return crypto.createHash('sha256').update(String(v)).digest('hex'); }
+function safeKey(v) { return String(v || '').replace(/[.#$\[\]\/]/g, '_').slice(0, 180) || 'unknown'; }
+function requestIp(req) { return String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim(); }
+function websocketClientIp(ws) {
+  if (process.env.TRUST_PROXY_HEADERS === 'true') {
+    const forwarded = String(ws?._req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+    if (forwarded) return normalizedClientIp(forwarded);
+  }
+  return normalizedClientIp(ws?._socket?.remoteAddress || '');
+}
+function ipPrefix(ip) {
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return ip.split('.').slice(0,3).join('.') + '.0/24';
+  if (ip.includes(':')) return ip.split(':').slice(0,4).join(':') + '::/64';
+  return 'unknown';
+}
+async function recordAuthTelemetry({uid, telegramUser, fingerprint, ip, userAgent = '', fingerprintMismatch = false}) {
+  const t = now();
+  const cleanIp = normalizedClientIp(ip);
+  const prefix = cleanIp && !['127.0.0.1', '::'].includes(cleanIp) ? ipPrefix(cleanIp) : '';
+  const fp = String(fingerprint || '').slice(0,128);
+  await db.ref('abuse_signals/telemetry/' + safeUid(uid)).update({
+    uid: safeUid(uid), telegramId: Number(telegramUser?.id || 0), seenAt: t,
+    ipPrefixHash: prefix ? hashWithRotatingSalt(prefix) : null,
+    ipHash: cleanIp ? hashWithRotatingSalt(cleanIp) : null,
+    userAgentHash: userAgent ? hashText(String(userAgent).slice(0,512)) : null,
+    fingerprintHash: fp ? hashText(fp) : null
+  });
+  if (fingerprintMismatch) await db.ref('abuse_signals/events').push({uid:safeUid(uid),telegramId:Number(telegramUser?.id||0),at:t,reasons:['fingerprint-mismatch'],score:0,fingerprintHash:fp?hashText(fp):null});
+}
+
+async function grantSignupBonusGate({uid, telegramUser, initData, fingerprint, ip, userAgent = '', fingerprintMismatch = false}) {
+  const userRef = db.ref('users/' + safeUid(uid));
+  const userSnap = await userRef.once('value');
+  const u = userSnap.val() || {};
+  const reasons = [];
+  const t = now();
+  const signalsRef = db.ref('abuse_signals');
+  const initHash = hashText(initData || '');
+  for (const [k, expiry] of initReplayCache) if (expiry < t) initReplayCache.delete(k);
+  let priorReplay = initReplayCache.has(initHash);
+  if (!priorReplay) {
+    // Persistent rolling hash cache prevents replay after process restarts; raw initData is never stored.
+    const replayRef = signalsRef.child('initdata_hashes/' + initHash);
+    const replayTx = await replayRef.transaction(current => {
+      if (current && Number(current.expiresAt || 0) > t) return;
+      return { uid, telegramId: Number(telegramUser.id), firstSeenAt: t, expiresAt: t + 10 * 60 * 1000 };
+    });
+    priorReplay = !replayTx.committed;
+    if (!priorReplay) initReplayCache.set(initHash, t + 10 * 60 * 1000);
+  }
+  if (priorReplay) reasons.push('replay-detected');
+
+  const fp = String(fingerprint || '').slice(0,128);
+  const fpKey = safeKey(fp);
+  let fpExisting = null;
+  if (fp) {
+    const f = await signalsRef.child('fingerprints/' + fpKey).once('value');
+    fpExisting = f.val();
+    if (fpExisting && Number(fpExisting.firstSeenAt || 0) > t - 90 * DAY && Number(fpExisting.telegramId) !== Number(telegramUser.id) && fpExisting.bonusClaimed) reasons.push('fingerprint-dupe');
+  }
+  const statusSnap = await signalsRef.child('account_status/' + safeUid(uid)).once('value');
+  const status = statusSnap.val();
+  if (status === 'fraud-confirmed' || status === 'no-bonus-eligible' || String(u.fraud_status || '') === 'fraud-confirmed' || u.signup_bonus_eligible === false) reasons.push('no-bonus-eligible');
+
+  const cleanIp = normalizedClientIp(ip);
+  const prefix = cleanIp && !['127.0.0.1', '::'].includes(cleanIp) ? ipPrefix(cleanIp) : '';
+  const prefixKey = prefix ? hashWithRotatingSalt(prefix) : '';
+  const previousPrefixKey = prefix ? hashWithRotatingSalt(prefix, 1) : '';
+  const ipRef = prefixKey ? signalsRef.child('ip_bonus/' + prefixKey) : null;
+  let recentIp = 0;
+  if (prefixKey) {
+    const [ipSnap, previousIpSnap] = await Promise.all([signalsRef.child('ip_bonus/' + prefixKey).once('value'), signalsRef.child('ip_bonus/' + previousPrefixKey).once('value')]);
+    const ipData = { ...(ipSnap.val() || {}), ...(previousIpSnap.val() || {}) };
+    recentIp = Object.values(ipData).filter(x => Number(x.at || 0) > t - DAY).length;
+  }
+  if (recentIp >= 3) reasons.push('rate-limited', 'rate-limited-ip');
+
+  const [network, ageInfo] = await Promise.all([lookupNetworkRisk(cleanIp), lookupTelegramAccountAge(telegramUser)]);
+  const asnKey = network.asn ? hashWithRotatingSalt(network.asn) : '';
+  if (asnKey) {
+    const previousAsnKey = hashWithRotatingSalt(network.asn, 1);
+    const [asnSnap, previousAsnSnap] = await Promise.all([signalsRef.child('asn_bonus/' + asnKey).once('value'), signalsRef.child('asn_bonus/' + previousAsnKey).once('value')]);
+    const recentAsn = Object.values({ ...(asnSnap.val() || {}), ...(previousAsnSnap.val() || {}) }).filter(x => Number(x.at || 0) > t - DAY).length;
+    if (recentAsn >= 5) reasons.push('rate-limited', 'rate-limited-asn');
+  }
+  if (network.isProxy) reasons.push('proxy-vpn-asn');
+
+  if (ageInfo.known && ageInfo.ageHours < 24) reasons.push('pending-age');
+  const chatId = getChatIdFromInitData(initData);
+  if (chatId) {
+    const chatRef = signalsRef.child('chat_bindings/' + safeKey(chatId));
+    const chatSnap = await chatRef.once('value');
+    const binding = chatSnap.val();
+    if (binding && Number(binding.telegramId) !== Number(telegramUser.id) && Number(binding.firstSeenAt || 0) > t - 90 * DAY) reasons.push('chat-id-dupe');
+    if (!binding || Number(binding.telegramId) === Number(telegramUser.id)) await chatRef.set({ telegramId: Number(telegramUser.id), uid, firstSeenAt: binding?.firstSeenAt || t, lastSeenAt: t });
+  }
+
+  const score = (reasons.includes('fingerprint-dupe') ? 3 : 0)
+    + (network.isProxy ? 2 : 0)
+    + (ageInfo.known && ageInfo.ageHours < 24 ? 1 : 0)
+    + (!telegramUser.username ? 1 : 0)
+    + (!telegramUser.language_code ? 1 : 0)
+    + (priorReplay ? 5 : 0);
+  if (score >= 5) reasons.push('suspicious');
+  const grant = !reasons.some(r => ['replay-detected','fingerprint-dupe','rate-limited','rate-limited-ip','rate-limited-asn','no-bonus-eligible','chat-id-dupe','suspicious'].includes(r));
+
+  // Stable hashed telemetry only; raw IP and raw User-Agent are not persisted.
+  const uaHash = userAgent ? hashText(String(userAgent).slice(0,512)) : null;
+  const ipHash = cleanIp ? hashWithRotatingSalt(cleanIp) : null;
+  await signalsRef.child('telemetry/' + safeUid(uid)).update({
+    uid, telegramId: Number(telegramUser.id), seenAt: t,
+    ipPrefixHash: prefixKey, ipHash, asnHash: asnKey || null, asn: network.asn || null,
+    proxyVpn: !!network.isProxy, userAgentHash: uaHash,
+    fingerprintHash: fp ? hashText(fp) : null
+  });
+  if (fingerprintMismatch) await signalsRef.child('events').push({ uid, telegramId: Number(telegramUser.id), at: t, reasons: ['fingerprint-mismatch'], score: 0, fingerprintHash: fp ? hashText(fp) : null });
+
+  if (fp && (!fpExisting || grant)) await signalsRef.child('fingerprints/' + fpKey).set({ fingerprint: fp, telegramId: Number(telegramUser.id), uid, firstSeenAt: fpExisting?.firstSeenAt || t, lastSeenAt: t, bonusClaimed: !!(fpExisting?.bonusClaimed || grant) });
+  if (grant) {
+    if (ipRef) await ipRef.child(safeKey(uid)).set({ uid, at: t });
+    if (asnKey) await signalsRef.child('asn_bonus/' + asnKey + '/' + safeKey(uid)).set({ uid, at: t });
+    await signalsRef.child('bonus_claims/' + safeKey(uid)).set({ uid, telegramId: Number(telegramUser.id), at: t, fingerprintHash: fp ? hashText(fp) : null });
+  } else {
+    await signalsRef.child('events').push({ uid, telegramId: Number(telegramUser.id), at: t, reasons, score, ipHash, ipPrefixHash: prefixKey, asnHash: asnKey || null, fingerprintHash: fp ? hashText(fp) : null });
+    // New account creation seeds 30 play Birr. Reverse only when the entire unspent signup bonus is provable.
+    if (!u.signup_bonus_processed && Number(u.play_wallet ?? 0) === BONUS_AMOUNT && !Number(u.main_wallet || 0)) {
+      await userRef.update({ play_wallet: 0, signup_bonus_remaining: 0, signup_bonus_processed: true, signup_bonus_denied: true, signup_bonus_reasons: reasons, updated_at: t });
+    }
+  }
+  const userPatch = {
+    signup_bonus_processed: true,
+    signup_bonus_claimed_at: grant ? t : (u.signup_bonus_claimed_at || null),
+    signup_bonus_denied: !grant,
+    signup_bonus_reasons: grant ? [] : reasons,
+    device_fingerprint: fp || null,
+    withdrawal_hold_until: Math.max(Number(u.withdrawal_hold_until || 0), t + DAY),
+    withdrawal_hold_reason: ageInfo.known && ageInfo.ageHours < 24 ? 'pending-age' : (u.withdrawal_hold_reason || 'new-account-24h-hold'),
+    telegram_account_age_hours: ageInfo.known ? Math.floor(ageInfo.ageHours) : null,
+    telegram_account_created_at_estimate: ageInfo.createdAt || null,
+    network_risk_provider: network.provider || null,
+    signup_risk_score: score
+  };
+  if (ageInfo.known && ageInfo.ageHours < 24) {
+    userPatch.account_status = 'pending-verification';
+    userPatch.verification_hold_until = t + Math.max(0, (24 - ageInfo.ageHours) * 3600000);
+    await signalsRef.child('account_status/' + safeUid(uid)).set('pending-verification');
+  }
+  if (grant) userPatch.signup_bonus_remaining = Number(u.signup_bonus_remaining ?? BONUS_AMOUNT);
+  else userPatch.signup_bonus_remaining = 0;
+  await userRef.update(userPatch);
+  return { grant, reasons, score, pendingVerification: !!(ageInfo.known && ageInfo.ageHours < 24), accountAgeKnown: ageInfo.known, asnKnown: !!network.asn };
+}
+
+async function runFraudAudit() {
+  const usersSnap = await db.ref('users').once('value');
+  const users = usersSnap.val() || {};
+  const whitelistAtStart = (await db.ref('abuse_signals/whitelist').once('value')).val() || {};
+  const records = Object.entries(users).filter(([uid,u]) => u && typeof u === 'object' && !/^__bot_/.test(uid) && !whitelistAtStart[uid]);
+  const activeUidSet = new Set(records.map(([uid]) => uid));
+  const batches = {}, loops = {}, sharedPhones = {}, sharedRefs = {}, bursts = {}, score = new Map();
+  const reasons = new Map();
+  const add = (uid, pts, code, detail) => {
+    if (!reasons.has(uid)) reasons.set(uid, []);
+    reasons.get(uid).push({ code, weight: pts, detail }); score.set(uid, (score.get(uid)||0)+pts);
+  };
+  const byId = records.map(([uid,u])=>({uid,u,id:Number(u.telegram_id),time:Number(u.created_at||u.createdAt||u.firstSeenAt||0)})).filter(x=>Number.isFinite(x.id)&&x.id>0);
+  byId.sort((a,b)=>a.id-b.id);
+  for(let i=0;i<byId.length;i++){
+    let group=[byId[i]];
+    for(let j=i+1;j<byId.length && byId[j].id-byId[i].id<=500;j++) if(Math.abs(byId[j].time-byId[i].time)<=30*60000) group.push(byId[j]);
+    if(group.length>=3){
+      const id='batch_'+hashText(group.map(x=>x.uid).sort().join('|')).slice(0,18);
+      batches[id]={uids:group.map(x=>x.uid),uidsRange:[group[0].id,group[group.length-1].id],timeRange:[Math.min(...group.map(x=>x.time)),Math.max(...group.map(x=>x.time))]};
+      group.forEach(x=>add(x.uid,3,'ID-batch',id));
+    }
+  }
+  const edges={};
+  for(const [uid,u] of records){ const r=safeUid(u.referred_by||u.referredBy||''); if(r) edges[uid]=r; }
+  for (const treeName of ['referralData','referralTree']) {
+    const tree = (await db.ref(treeName).once('value')).val() || {};
+    for (const [key, value] of Object.entries(tree)) {
+      if (typeof value === 'string') { const child=safeUid(key), parent=safeUid(value); if (child && parent && activeUidSet.has(child)) edges[child]=parent; }
+      else if (value && typeof value === 'object') {
+        const child=safeUid(value.referredUid||value.referred_uid||value.uid||key);
+        const parent=safeUid(value.referrerUid||value.referrer_uid||value.referrer||value.referredBy||value.referred_by||'');
+        if (child && parent && activeUidSet.has(child)) edges[child]=parent;
+        for (const [childKey, childValue] of Object.entries(value)) {
+          if (childValue && typeof childValue === 'object') {
+            const c=safeUid(childValue.uid||childValue.referredUid||childKey), r=safeUid(childValue.referrerUid||childValue.referrer||childValue.referredBy||key);
+            if(c&&r&&activeUidSet.has(c)) edges[c]=r;
+          }
+        }
+      }
+    }
+  }
+  for(const start of Object.keys(edges)){
+    let path=[], cur=start;
+    for(let depth=0;depth<6 && edges[cur];depth++){
+      if(path.includes(cur)){ const cyc=path.slice(path.indexOf(cur)).concat(cur); const id='loop_'+hashText(cyc.join('|')).slice(0,18); loops[id]={chain:cyc,type:'cycle'}; cyc.forEach(uid=>add(uid,3,'referral-loop',id)); break; }
+      path.push(cur); cur=edges[cur];
+    }
+  }
+  const refsBy={};
+  for(const [uid,u] of records){const r=safeUid(u.referred_by||u.referredBy||''); if(r)(refsBy[r] ||= []).push({uid,time:Number(u.created_at||0)});}
+  for(const [r,arr] of Object.entries(refsBy)){const sorted=arr.slice().sort((a,b)=>a.time-b.time); for(let i=0;i<sorted.length;i++){const win=sorted.filter(x=>x.time>=sorted[i].time&&x.time-sorted[i].time<=2*3600000); if(win.length>=5){const id='star_'+hashText(r+win.map(x=>x.uid).join('|')).slice(0,18);loops[id]={chain:[r,...win.map(x=>x.uid)],type:'star'}; win.forEach(x=>add(x.uid,3,'referral-loop',id));break;}}}
+  const txSnap=await db.ref('transactions').once('value'), tx=txSnap.val()||{};
+  const phoneGroups={}, refGroups={};
+  for(const [id,t] of Object.entries(tx)){
+    if(!t||typeof t!=='object')continue;
+    const uid=safeUid(t.wallet_uid||t.uid||'');
+    if(t.type==='withdraw'){const phone=String(t.phoneNumber||t.phone_number||t.phone||'').trim();if(phone)(phoneGroups[phone] ||= []).push({uid,amount:Number(t.amount||0)});}
+    if(t.type==='deposit'){const ref=String(t.reference||t.referenceCode||t.ref||'').trim();if(ref)(refGroups[ref] ||= []).push({uid,amount:Number(t.amount||0)});}
+  }
+  for(const [phone,arr] of Object.entries(phoneGroups)){const uids=[...new Set(arr.map(x=>x.uid).filter(Boolean))];if(uids.length>=2){const key=safeKey(phone);sharedPhones[key]={phone,uids:uids.map(uid=>({uid,amount:arr.filter(x=>x.uid===uid).reduce((n,x)=>n+x.amount,0)}))};uids.forEach(uid=>add(uid,2,'shared-phone',key));}}
+  for (const [ref, arr] of Object.entries(refGroups)) {
+    const uids = [...new Set(arr.map(x => x.uid).filter(Boolean))];
+    if (uids.length >= 2) { const key=safeKey(ref); sharedRefs[key] = { reference:ref, uids }; uids.forEach(uid => add(uid,2,'shared-reference',key)); }
+  }
+  for(const tree of ['used_references','deposit_reference_claims']){const snap=await db.ref(tree).once('value');const obj=snap.val()||{};for(const [ref,val] of Object.entries(obj)){const claims=Array.isArray(val)?val:Object.entries(val||{}).map(([uid,v])=>({uid: v?.uid||uid}));const uids=[...new Set(claims.map(x=>typeof x==='string'?x:safeUid(x.uid||x.wallet_uid||'')).filter(Boolean))];if(uids.length>=2){const key=safeKey(ref);const combined=[...new Set([...(sharedRefs[key]?.uids||[]),...uids])];sharedRefs[key]={reference:ref,uids:combined};uids.forEach(uid=>add(uid,2,'shared-reference',key));}}}
+  const times=records.map(([uid,u])=>({uid,time:Number(u.created_at||u.createdAt||u.firstSeenAt||0)})).filter(x=>x.time>0).sort((a,b)=>a.time-b.time);
+  for(let i=0;i<times.length;i++){const win=[];for(let j=i;j<times.length&&times[j].time-times[i].time<=60000;j++)win.push(times[j]);if(win.length>=3){const id='burst_'+hashText(win.map(x=>x.uid).join('|')).slice(0,18);bursts[id]={uids:win.map(x=>x.uid),timeRange:[win[0].time,win[win.length-1].time]};win.forEach(x=>add(x.uid,1,'signup-burst',id));}}
+  // Best-effort IP-prefix and User-Agent hash clusters from server-side telemetry.
+  const telemetrySnap = await db.ref('abuse_signals/telemetry').once('value');
+  const telemetry = telemetrySnap.val() || {};
+  const ipClusters = {}, uaClusters = {};
+  for (const [uid, row] of Object.entries(telemetry)) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.ipPrefixHash) (ipClusters[row.ipPrefixHash] ||= []).push(uid);
+    if (row.userAgentHash) (uaClusters[row.userAgentHash] ||= []).push(uid);
+  }
+  const ipClusterRecords = {}, uaClusterRecords = {};
+  for (const [cluster, members] of Object.entries(ipClusters)) {
+    const uids = [...new Set(members)];
+    if (uids.length >= 3) { ipClusterRecords[cluster] = { ipPrefixHash: cluster, uids, note: 'Hashed IP-prefix cluster; legitimate shared Wi-Fi may also match.' }; uids.forEach(uid => add(uid, 1, 'shared-ip-cluster', cluster)); }
+  }
+  for (const [cluster, members] of Object.entries(uaClusters)) {
+    const uids = [...new Set(members)];
+    if (uids.length >= 5) uaClusterRecords[cluster] = { userAgentHash: cluster, uids, note: 'Hashed User-Agent cluster; common browsers/devices may legitimately match.' };
+  }
+  const review=db.ref('abuse_review');
+  const [whiteSnap, bonusSnap]=await Promise.all([db.ref('abuse_signals/whitelist').once('value'),db.ref('abuse_signals/reversals').once('value')]);
+  const whitelist=whiteSnap.val()||{}, reversals=bonusSnap.val()||{};
+  const updates={};
+  for(const [path,obj] of [['batches',batches],['referral_loops',loops],['shared_phones',sharedPhones],['shared_references',sharedRefs],['bursts',bursts],['ip_clusters',ipClusterRecords],['user_agent_clusters',uaClusterRecords]]) for(const [k,v] of Object.entries(obj)) updates[path+'/'+k]=v;
+  const ranked=[...score.entries()].filter(([uid])=>!whitelist[uid]).sort((a,b)=>b[1]-a[1]).slice(0,500);
+  for(const [uid,val] of ranked){const u=users[uid]||{};const userTx=Object.values(tx).filter(t=>safeUid(t?.wallet_uid||t?.uid||'')===uid);updates['flagged/'+uid]={uid,score:val,reasons:reasons.get(uid)||[],firstSeenAt:Number(u.created_at||u.createdAt||0),username:u.username||u.telegram_username||uid,totalBonusClaimed:Number(u.signup_bonus_claimed?30:(u.signup_bonus_claimed_at?30:0)),totalWithdrawn:userTx.filter(t=>t.type==='withdraw'&&t.status!=='rejected').reduce((n,t)=>n+Number(t.amount||0),0),referredBy:u.referred_by||null,referredCount:(refsBy[uid]||[]).length,wallet:{main:Number(u.main_wallet||0),play:Number(u.play_wallet||0),pending:Number(u.pending_withdrawal||0)},evidence:{telegramId:u.telegram_id,createdAt:u.created_at,telemetry:telemetry[uid]||null, sharedIpUaNote:'IP clusters use salted hashes and may include shared Wi-Fi; User-Agent clusters are hashes and common browsers may match.'}};}
+  for (const section of ['batches','referral_loops','shared_phones','shared_references','bursts','ip_clusters','user_agent_clusters','flagged']) await review.child(section).remove();
+  if(Object.keys(updates).length) await review.update(updates);
+  return {ok:true, counts:{batches:Object.keys(batches).length,referral_loops:Object.keys(loops).length,shared_phones:Object.keys(sharedPhones).length,shared_references:Object.keys(sharedRefs).length,bursts:Object.keys(bursts).length,ip_clusters:Object.keys(ipClusterRecords).length,user_agent_clusters:Object.keys(uaClusterRecords).length,flagged:ranked.length}};
+}
+
+app.post('/admin/fraud/audit', async (req,res)=>{ if(!isAdmin(req)) return res.status(403).json({ok:false,error:'forbidden'}); try{res.json(await runFraudAudit());}catch(e){console.error('[FRAUD-AUDIT]',e);res.status(500).json({ok:false,error:'audit-failed'});} });
+app.get('/admin/fraud/flags', async (req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false,error:'forbidden'});try{const snap=await db.ref('abuse_review/flagged').once('value');const flags=snap.val()||{};const rev=await db.ref('abuse_signals/reversals').once('value');const list=Object.values(flags).sort((a,b)=>(b.score||0)-(a.score||0));const reversed=Object.values(rev.val()||{}).filter(x=>x.status==='completed').reduce((n,x)=>n+Number(x.reversedAmount||0),0);res.json({ok:true,flags:list,totalFlagged:list.length,totalDisputedBonus:list.length*BONUS_AMOUNT,reversed});}catch(e){res.status(500).json({ok:false,error:'read-failed'});}});
+app.post('/admin/fraud/confirm', async(req,res)=>{
+  if(!isAdmin(req)) return res.status(403).json({ok:false,error:'forbidden'});
+  const uid=safeUid(req.body?.uid), reason=String(req.body?.reason||'').trim();
+  if(!uid||!reason) return res.status(400).json({ok:false,error:'uid-and-reason-required'});
+  try {
+    const userRef=db.ref('users/'+uid), snap=await userRef.once('value');
+    if(!snap.exists()) return res.status(404).json({ok:false,error:'user-not-found'});
+    const u=snap.val()||{}, revRef=db.ref('abuse_signals/reversals/'+uid);
+    if((await revRef.once('value')).exists()) return res.status(409).json({ok:false,error:'already-reversed'});
+    const bonusRemaining=Number(u.signup_bonus_remaining);
+    // Never subtract a mixed legacy play balance when bonus provenance is unknown.
+    if(!Number.isFinite(bonusRemaining)) return res.status(409).json({ok:false,error:'bonus-provenance-unavailable; no wallet changed; legacy account requires manual ledger review'});
+    if(bonusRemaining < BONUS_AMOUNT || Number(u.play_wallet||0) < BONUS_AMOUNT) return res.status(409).json({ok:false,error:'full-unspent-30-birr-bonus-not-available; no wallet changed'});
+    const priorFlag=(await db.ref('abuse_review/flagged/'+uid).once('value')).val()||{};
+    const t=now();
+    const reversal={uid,reversedAt:t,reversedAmount:BONUS_AMOUNT,requestedAmount:BONUS_AMOUNT,bonusSource:'signup_bonus_remaining',adminKey:'[redacted]',adminKeyId:hashText(ADMIN_KEY).slice(0,12),reason:reason.slice(0,500),status:'recorded-before-wallet-update'};
+    // Required order: durable reversal record first, then wallet transaction, then action trail.
+    await revRef.set(reversal);
+    const walletTx=await userRef.transaction(current=>{
+      if(!current) return current;
+      if(Number(current.signup_bonus_remaining) < BONUS_AMOUNT || Number(current.play_wallet||0) < BONUS_AMOUNT) return;
+      current.play_wallet=Number(current.play_wallet||0)-BONUS_AMOUNT;
+      current.signup_bonus_remaining=Number(current.signup_bonus_remaining)-BONUS_AMOUNT;
+      current.fraud_status='fraud-confirmed'; current.signup_bonus_eligible=false;
+      current.updated_at=t; current.wallet_updated_at=t;
+      return current;
+    });
+    if(!walletTx?.committed){
+      await revRef.update({status:'wallet-update-failed',walletUpdateFailedAt:now()});
+      return res.status(409).json({ok:false,error:'wallet-update-failed; reversal attempt recorded; no wallet was changed'});
+    }
+    await db.ref('abuse_signals/account_status/'+uid).set('fraud-confirmed');
+    await db.ref('abuse_signals/whitelist/'+uid).set({at:now(),reason:'fraud-confirmed; login allowed; no future bonus',fingerprintHash:u.device_fingerprint?hashText(u.device_fingerprint):null});
+    await revRef.update({status:'completed',completedAt:now()});
+    await db.ref('abuse_signals/actions/'+now()+'_'+uid+'_'+crypto.randomBytes(3).toString('hex')).set({action:'confirm-fraud',adminKey:'[redacted]',adminKeyId:hashText(ADMIN_KEY).slice(0,12),priorSuspicion:priorFlag.score||0,timestamp:now(),reason:reason.slice(0,500),reversedAmount:BONUS_AMOUNT});
+    await sendWallet(uid).catch(()=>{});
+    return res.json({ok:true,reversedAmount:BONUS_AMOUNT});
+  } catch(e) { console.error('[FRAUD-CONFIRM]',e); return res.status(500).json({ok:false,error:'action-failed'}); }
+});
+app.post('/admin/fraud/whitelist', async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false,error:'forbidden'});const uid=safeUid(req.body?.uid),reason=String(req.body?.reason||'false-positive').slice(0,500);if(!uid)return res.status(400).json({ok:false,error:'uid-required'});try{const u=(await db.ref('users/'+uid).once('value')).val()||{};const flag=(await db.ref('abuse_review/flagged/'+uid).once('value')).val()||{};await db.ref('abuse_signals/whitelist/'+uid).set({at:now(),fingerprint:u.device_fingerprint||null,reason});await db.ref('abuse_review/flagged/'+uid).remove();await db.ref('abuse_signals/actions/'+now()+'_'+uid+'_'+crypto.randomBytes(3).toString('hex')).set({action:'false-positive',adminKey:'[redacted]',adminKeyId:hashText(ADMIN_KEY).slice(0,12),priorSuspicion:flag.score||0,timestamp:now(),reason});res.json({ok:true});}catch(e){res.status(500).json({ok:false,error:'action-failed'});}});
 
 app.get('/admin/pending', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'forbidden' });

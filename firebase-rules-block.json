@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "abuse_signals": {
+      ".read": false,
+      ".write": false
+    },
+    "abuse_review": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
