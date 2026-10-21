@@ -2528,26 +2528,17 @@
                 this.authenticated = false;
                 this.connectionGeneration = (this.connectionGeneration || 0) + 1;
                 const generation = this.connectionGeneration;
-                this.ws.onopen = async () => {
+                this.ws.onopen = () => {
                     this.connecting = false;
                     this.backoff = 800;
                     this.onConnection && this.onConnection(false);
-                    const tgApp = window.Telegram && window.Telegram.WebApp;
-                    let freshInitData = tgApp && typeof tgApp.initData === 'string' ? tgApp.initData : '';
-                    for (let attempt = 0; !freshInitData && attempt < 3; attempt++) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        freshInitData = tgApp && typeof tgApp.initData === 'string' ? tgApp.initData : '';
-                    }
-                    const authMsg = { type: 'auth', initData: freshInitData, ref: this.refCode, deviceFingerprint: await winzoDeviceFingerprint(), userAgent: (navigator.userAgent || '').slice(0, 512), fingerprintMismatch: !!window.__winzoFingerprintMismatch };
-                    window.__winzoFingerprintMismatch = false;
+                    const authMsg = { type: 'auth', initData: this.initData, ref: this.refCode };
                     if (DEV_MODE && !this.initData && this.devUsername) authMsg.devUsername = this.devUsername;
                     this.rawSend(authMsg);
                 };
                 this.ws.onmessage = ev => {
                     let m; try { m = JSON.parse(ev.data); } catch { return; }
                     if (m.type === 'authed') {
-                        if (m.signupBonusDenied) winzoBonusNotice(m.signupBonusMessage || 'Sign-up bonus is one per device.');
-                        else if (m.signupBonusGranted && !sessionStorage.getItem('winzo_bonus_notice_shown')) { winzoBonusNotice('One bonus per device. Multiple accounts will not receive the sign-up bonus.'); sessionStorage.setItem('winzo_bonus_notice_shown','1'); }
                         this.authenticated = true;
                         this.onAuth && this.onAuth(m.uid, m.displayName);
                         this.onConnection && this.onConnection(true);
@@ -2929,49 +2920,7 @@
         <button class="wab-close" id="wabClose" type="button">OK</button>
       </div>
     </div>
-    
-        // Anti-fraud telemetry: stable per-browser/device signal, never treated as authoritative by itself.
-        async function winzoDeviceFingerprint() {
-            const key = 'winzo_device_fp';
-            let persistent = localStorage.getItem(key);
-            if (!persistent) {
-                persistent = (crypto.randomUUID ? crypto.randomUUID() : ('wz-' + Date.now() + '-' + Math.random().toString(36).slice(2)));
-                localStorage.setItem(key, persistent);
-            }
-            const material = [
-                navigator.userAgent || '', screen.width || 0, screen.height || 0, screen.colorDepth || 0,
-                Intl.DateTimeFormat().resolvedOptions().timeZone || '', navigator.language || '',
-                navigator.hardwareConcurrency || 0, navigator.deviceMemory || 0, persistent
-            ].join('|');
-            const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
-            const digest = Array.from(new Uint8Array(bytes)).map(x => x.toString(16).padStart(2,'0')).join('');
-            const cacheKey = 'winzo_device_fp_hash';
-            const old = localStorage.getItem(cacheKey);
-            const stamp = Number(localStorage.getItem('winzo_device_fp_at') || 0);
-            if (old && Date.now() - stamp < 30 * 60 * 1000) return old;
-            if (old && old !== digest) {
-                try {
-                    const telemetry = JSON.parse(localStorage.getItem('winzo_fp_telemetry') || '[]');
-                    telemetry.push({event:'fingerprint-mismatch', at:Date.now(), previousHash:old, currentHash:digest});
-                    window.__winzoFingerprintMismatch = true;
-                    localStorage.setItem('winzo_fp_telemetry', JSON.stringify(telemetry.slice(-20)));
-                } catch (_) {}
-            }
-            localStorage.setItem(cacheKey, digest);
-            localStorage.setItem('winzo_device_fp_at', String(Date.now()));
-            return digest;
-        }
-        function winzoBonusNotice(message) {
-            if (!message || document.getElementById('winzo-bonus-notice')) return;
-            const el = document.createElement('div');
-            el.id = 'winzo-bonus-notice';
-            el.textContent = message;
-            el.style.cssText = 'position:fixed;z-index:999999;left:50%;bottom:24px;transform:translateX(-50%);max-width:90vw;padding:12px 16px;background:#24133d;color:#ffdf79;border:1px solid #ffcc44;border-radius:14px;font:600 13px system-ui;box-shadow:0 8px 30px #0008;text-align:center';
-            document.body.appendChild(el);
-            setTimeout(() => el.remove(), 5000);
-        }
-
-<script>
+    <script>
     (function () {
       'use strict';
       const DB_ROOT = 'https://render-e9e2d-default-rtdb.firebaseio.com';
