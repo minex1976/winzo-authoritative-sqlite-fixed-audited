@@ -3,16 +3,8 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
-import fs from 'fs';
-import admin from 'firebase-admin';
 
 const { Pool } = pg;
-
-// ============================================================================
-// ⚠️ FIREBASE MIGRATION CONFIG ⚠️
-// ============================================================================
-const FIREBASE_DB_URL = "https://render-e9e2d-default-rtdb.firebaseio.com"; 
-// ============================================================================
 
 // --- Database Initialization ---
 const pool = new Pool({
@@ -51,7 +43,7 @@ const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom',
 const DAY = 86400000;
 
 // ============================================================================
-// Database Schema Bootstrap
+// Database Schema Bootstrap (Creates tables automatically)
 // ============================================================================
 async function initDb() {
   const client = await pool.connect();
@@ -1026,67 +1018,6 @@ app.get('/admin/users', async (req, res) => {
     res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
-
-// ============================================================================
-// 🚨 TEMPORARY FIREBASE DIRECT MIGRATION ROUTE 🚨
-// ============================================================================
-app.get('/firebase-direct-migrate', async (req, res) => {
-  try {
-    if (!fs.existsSync('./serviceAccountKey.json')) {
-      return res.send('❌ Error: serviceAccountKey.json not found in repository root.');
-    }
-
-    res.write('Initializing Firebase...\n');
-    const serviceAccount = JSON.parse(fs.readFileSync('./serviceAccountKey.json', 'utf8'));
-    
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        databaseURL: FIREBASE_DB_URL
-      });
-    }
-
-    res.write('Fetching data from Firebase...\n');
-    const snapshot = await admin.database().ref('/').once('value');
-    const data = snapshot.val();
-
-    if (!data) return res.end('No data found in Firebase.');
-
-    res.write('Migrating to PostgreSQL...\n');
-    const client = await pool.connect();
-    await client.query('BEGIN');
-
-    // Migrate Users
-    if (data.users) {
-      for (const [uid, u] of Object.entries(data.users)) {
-        await client.query(`
-          INSERT INTO users (username, display_name, telegram_id, main_wallet, play_wallet, pending_withdrawal, referral_earnings, created_at, updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (username) DO NOTHING
-        `, [uid, u.display_name || uid, u.telegram_id || null, Number(u.main_wallet||0), Number(u.play_wallet||0), Number(u.pending_withdrawal||0), Number(u.referral_earnings||0), Number(u.created_at||Date.now()), Number(u.updated_at||Date.now())]);
-      }
-      res.write(`✅ Users Migrated: ${Object.keys(data.users).length}\n`);
-    }
-
-    // Migrate Transactions
-    if (data.transactions) {
-      for (const [id, t] of Object.entries(data.transactions)) {
-        await client.query(`
-          INSERT INTO transactions (id, username, wallet_uid, type, amount, status, timestamp, reference)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING
-        `, [id, t.username || '', t.wallet_uid || t.uid || t.username || '', t.type || '', Number(t.amount||0), t.status || 'pending', Number(t.timestamp||Date.now()), t.reference || '']);
-      }
-      res.write(`✅ Transactions Migrated: ${Object.keys(data.transactions).length}\n`);
-    }
-
-    await client.query('COMMIT');
-    client.release();
-    res.end('🎉 SUCCESS! Migration Complete. Go back to GitHub and delete the migration code & serviceAccountKey.json immediately.');
-  } catch (error) {
-    console.error(error);
-    res.status(500).send('❌ Migration Failed: ' + error.message);
-  }
-});
-// ============================================================================
 
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
