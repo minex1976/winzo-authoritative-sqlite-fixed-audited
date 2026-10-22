@@ -3,13 +3,13 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
-import fs from 'fs'; // Added for migration
-import admin from 'firebase-admin'; // Added for migration
+import fs from 'fs';
+import admin from 'firebase-admin';
 
 const { Pool } = pg;
 
 // ============================================================================
-// ⚠️ TEMPORARY MIGRATION CONFIG - UPDATE THIS URL ⚠️
+// ⚠️ FIREBASE MIGRATION CONFIG ⚠️
 // ============================================================================
 const FIREBASE_DB_URL = "https://render-e9e2d-default-rtdb.firebaseio.com"; 
 // ============================================================================
@@ -26,18 +26,12 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-pool.connect((err, client, release) => {
-  if (err) return console.error('❌ Database connection error', err.stack);
-  console.log('✅ Connected to AletCloud PostgreSQL');
-  release();
-});
-
 // --- Configuration ---
 const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
-const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || 'https://minex1976.github.io,https://web.telegram.org')
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '*')
   .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
@@ -53,27 +47,8 @@ const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
 
-const ANALYSIS_CONFIG = {
-  NEW_ACCOUNT_AGE_MS: 60 * 60 * 1000,
-  BURST_WINDOW_MS: 5 * 60 * 1000,
-  BURST_PICK_THRESHOLD: 60,
-  BURST_DEPOSIT_THRESHOLD: 5,
-  BURST_WITHDRAW_THRESHOLD: 3,
-  REFERRAL_SIGNUP_WINDOW_MS: 10 * 60 * 1000,
-  REFERRAL_SIGNUP_THRESHOLD: 5,
-  ZERO_PICK_LOSSES: 20,
-  PLAY_WALLET_DRAIN_MS: 2 * 60 * 1000,
-  BOT_NAME_PATTERN: /^__bot_/,
-  FAKE_TELEGRAM_ID_MIN: 1,
-  FAKE_TELEGRAM_ID_MAX: 9_999_999_999,
-  MAX_ACCOUNT_AGE_FOR_ANALYSIS_MS: 30 * 24 * 60 * 60 * 1000,
-  FLAG_SCORE_BLOCK: 60,
-  FLAG_SCORE_SUSPECT: 30,
-};
-
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
-const BONUS_AMOUNT = 30;
 
 // ============================================================================
 // Database Schema Bootstrap
@@ -118,18 +93,10 @@ async function initDb() {
           uid VARCHAR(64), client_request_id VARCHAR(128), tx_id VARCHAR(128), type VARCHAR(32), amount NUMERIC, created_at BIGINT,
           PRIMARY KEY (uid, client_request_id)
       );
-      CREATE TABLE IF NOT EXISTS broadcasts (
-          id VARCHAR(128) PRIMARY KEY, type VARCHAR(32), text TEXT, duration INT, active BOOLEAN, created_at BIGINT, expires_at BIGINT, updated_at BIGINT
-      );
-      CREATE TABLE IF NOT EXISTS user_events (
-          id VARCHAR(128) PRIMARY KEY, uid VARCHAR(64), type VARCHAR(32), request_type VARCHAR(32), decision VARCHAR(32),
-          message TEXT, tx_id VARCHAR(128), read BOOLEAN DEFAULT FALSE, created_at BIGINT, expires_at BIGINT
-      );
     `);
     console.log('✅ Database Schema Verified.');
   } catch (e) {
     console.error('❌ Schema init failed:', e);
-    process.exit(1);
   } finally {
     client.release();
   }
@@ -151,7 +118,6 @@ function constantTimeEqual(a, b) {
   return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
 }
 function hashText(v) { return crypto.createHash('sha256').update(String(v)).digest('hex'); }
-function safeKey(v) { return String(v || '').replace(/[.#$\[\]\/]/g, '_').slice(0, 180) || 'unknown'; }
 function normalizedClientIp(ip) {
   let value = String(ip || '').trim();
   if (value.startsWith('::ffff:')) value = value.slice(7);
@@ -265,20 +231,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   } finally {
     client.release();
   }
-}
-
-async function readUserByUid(uid) {
-  const clean = safeUid(uid);
-  if (!clean) return null;
-  const res = await pool.query('SELECT * FROM users WHERE username = $1', [clean]);
-  return res.rows.length > 0 ? { uid: clean, data: res.rows[0] } : null;
-}
-
-async function findUserByTelegramId(telegramId) {
-  const id = Number(telegramId);
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
-  const res = await pool.query('SELECT * FROM users WHERE telegram_id = $1', [id]);
-  return res.rows.length > 0 ? { uid: res.rows[0].username, data: res.rows[0] } : null;
 }
 
 async function resolveTelegramUser(user, referredBy = null) {
@@ -484,7 +436,7 @@ async function adminDecision(id, decision, reason = '') {
 }
 
 // ============================================================================
-// Automatic deposit verification
+// Automatic deposit verification (Polling)
 // ============================================================================
 function isTrustedSmsSender(record) {
   const raw = [record.from, record.sender, record.address, record.originator, record.source].filter(Boolean).map(v => String(v).toLowerCase()).join(' ');
@@ -1048,6 +1000,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreSQL.'));
+app.get('/health', (_, res) => res.status(200).send('OK')); // AletCloud Health Check
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 
@@ -1072,13 +1025,6 @@ app.get('/admin/users', async (req, res) => {
     const usersRes = await pool.query('SELECT * FROM users ORDER BY updated_at DESC');
     res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-app.get('/health', async (_, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ ok: true, service: 'winzo-authoritative-server', database: 'postgres', websocket: true, uptime: process.uptime() });
-  } catch (e) { res.status(503).json({ ok: false, database: 'unavailable', error: e.message }); }
 });
 
 // ============================================================================
@@ -1147,6 +1093,25 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
 });
 
+// Boot: Listen immediately so AletCloud health check passes
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on :${PORT}`);
+  
+  // Initialize DB and load rooms AFTER the server is listening
+  initDb().then(() => loadRooms()).then(() => {
+    startAutomaticDepositMonitor();
+    for (const room of Object.values(rooms)) {
+      if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
+      if (room.phase === 'selection') normalizeRoundBots(room);
+      room.persist();
+      scheduleBots(room);
+    }
+    console.log('✅ Background initialization complete.');
+  }).catch(err => { 
+    console.error('Failed to initialize background tasks.', err); 
+  });
+});
+
 async function gracefulShutdown(signal) {
   console.log(`[SHUTDOWN] ${signal}`);
   for (const room of Object.values(rooms)) { clearBotTimers(room); }
@@ -1156,15 +1121,3 @@ async function gracefulShutdown(signal) {
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Boot
-initDb().then(() => loadRooms()).then(() => {
-  startAutomaticDepositMonitor();
-  server.listen(PORT, '0.0.0.0', () => console.log(`Server listening on :${PORT}`));
-  for (const room of Object.values(rooms)) {
-    if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
-    if (room.phase === 'selection') normalizeRoundBots(room);
-    room.persist();
-    scheduleBots(room);
-  }
-}).catch(err => { console.error('Failed to boot.', err); process.exit(1); });
