@@ -3,8 +3,16 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
+import fs from 'fs'; // Added for migration
+import admin from 'firebase-admin'; // Added for migration
 
 const { Pool } = pg;
+
+// ============================================================================
+// ⚠️ TEMPORARY MIGRATION CONFIG - UPDATE THIS URL ⚠️
+// ============================================================================
+const FIREBASE_DB_URL = "https://render-e9e2d-default-rtdb.firebaseio.com"; 
+// ============================================================================
 
 // --- Database Initialization ---
 const pool = new Pool({
@@ -29,8 +37,7 @@ const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
-const DEV_ALLOW_ANY = NODE_ENV !== 'production' && process.env.DEV_ALLOW_ANY === 'true';
-const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || 'https://minex1976.github.io,https://web.telegram.org')
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || 'https://minex1976.github.io,https://web.telegram.org')
   .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
@@ -64,40 +71,12 @@ const ANALYSIS_CONFIG = {
   FLAG_SCORE_SUSPECT: 30,
 };
 
-const ADMIN_BROADCAST_REQUEST_KEYS = new Set([
-  'deposit_approval','deposit_rejection',
-  'withdraw_approval','withdraw_rejection',
-  'deposit_no_sms','deposit_used_ref'
-]);
-
-const DEFAULT_REQUEST_MESSAGES = {
-  deposit_approval:   'ትአዛዝዎ በትክክል ተፈፅሟል! የዊንዞ ደንበኛ ስለሆኑ እናመሰግናለን።',
-  deposit_rejection:  'ውድ ደንበኛችን፣ ጥያቄዎት አልተስተናገደም።',
-  withdraw_approval:  'ውድ ደንበኛችን፣ የወጪ ጥያቄዎ ተከናውኗል።',
-  withdraw_rejection: 'የወጪ ጥያቄዎ አልተስተናገደም።',
-  deposit_no_sms:     'ውድ ደንበኛችን፣ ጥያቄዎ አልተስተናገደም። ትክክለኛውን መረጃ ያስገቡና በድጋሚ የሞክሩ።',
-  deposit_used_ref:   'ውድ ደንበኛችን፣ አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። ጥያቄውን ማስተናገድ አልተቻለም።'
-};
-
-const BOT_NAMES = [
-  'Dawit','Abel','Yonas','Biruk','Tesfaye','Mulugeta','Getachew','Henok','Ermias','Amanuel',
-  'Solomon','Fikru','Samuel','Kebede','Bereket','Natnael','Tadesse','Mekonnen','Tewodros','Gebre',
-  'Hailu','Abebe','Adane','Alemu','Amare','Andualem','Ayele','Bekele','Binyam','Daniel',
-  'Demeke','Dereje','Desalegn','Desta','Endale','Esubalew','Fikadu','Gebremedhin','Girmay','Girma',
-  'Habtamu','Hussen','Ibrahim','Kifle','Lemma','Melaku','Mengistu','Mesfin','Negash','Nega',
-  'Tsegaye','Wondimu','Worku','Yohannes','Yosef','Zerihun','Zewdu','Abdi','Adugna','Afework',
-  'Agumas','Alemayehu','Alula','Assefa','Ayalew','Balcha','Belete','Bogale','Chalachew','Dagne',
-  'Damtew','Dires','Ewnetu','Fantahun','Fisseha','Gashaw','Gedamu','Getu','Gizaw','Goitom',
-  'Goshu','Gudeta','Haile','Hiruy','Isayas','Kassa','Kefelegn','Kiflom','Lema','Melese',
-  'Mihret','Million','Molla','Mulatu','Negasi','Nigussie','Petros','Robel','Sisay','Tekle'
-];
-
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
 const BONUS_AMOUNT = 30;
 
 // ============================================================================
-// Database Schema Bootstrap (Ensures tables exist on startup)
+// Database Schema Bootstrap
 // ============================================================================
 async function initDb() {
   const client = await pool.connect();
@@ -302,13 +281,6 @@ async function findUserByTelegramId(telegramId) {
   return res.rows.length > 0 ? { uid: res.rows[0].username, data: res.rows[0] } : null;
 }
 
-async function findUserByStoredUsername(username) {
-  const clean = safeUser(username);
-  if (!clean) return null;
-  const res = await pool.query('SELECT * FROM users WHERE username = $1', [clean]);
-  return res.rows.length > 0 ? { uid: res.rows[0].username, data: res.rows[0] } : null;
-}
-
 async function resolveTelegramUser(user, referredBy = null) {
   if (!user?.id) return null;
   const telegramId = Number(user.id);
@@ -319,7 +291,6 @@ async function resolveTelegramUser(user, referredBy = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
     const mapRes = await client.query('SELECT * FROM telegram_users WHERE telegram_id = $1 FOR UPDATE', [telegramId]);
     if (mapRes.rows.length > 0 && mapRes.rows[0].uid) {
       const mappedUid = safeUid(mapRes.rows[0].uid);
@@ -344,11 +315,9 @@ async function resolveTelegramUser(user, referredBy = null) {
     }
     
     await client.query('COMMIT');
-    
     const created = await ensureUser(finalUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null });
     await pool.query('INSERT INTO telegram_users (telegram_id, uid, username, telegram_username, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (telegram_id) DO UPDATE SET uid=EXCLUDED.uid, username=EXCLUDED.username, updated_at=EXCLUDED.updated_at', 
       [telegramId, finalUid, created.username, telegramUsername, now()]);
-      
     return { uid: finalUid, user: created, telegramId, telegramUsername };
   } catch (e) {
     await client.query('ROLLBACK');
@@ -583,7 +552,6 @@ async function processIncomingSmsSnapshot(row) {
 }
 
 function startAutomaticDepositMonitor() {
-  // Poll every 5 seconds for unprocessed SMS
   setInterval(async () => {
     try {
       const res = await pool.query('SELECT * FROM incoming_sms WHERE processed = false LIMIT 10');
@@ -631,12 +599,10 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
 
     await client.query('INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING', [ref, now()]);
-    
     await client.query('UPDATE users SET main_wallet = main_wallet + $1, referral_earnings = referral_earnings + $1, wallet_updated_at = $2, updated_at = $2 WHERE username = $3', [amount, now(), ref]);
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, ref, 'referral_marker', now()]);
     
     await client.query('COMMIT');
-    
     await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from a win.` });
     await sendWallet(ref);
     return true;
@@ -1081,6 +1047,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreSQL.'));
+
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 
 app.get('/admin/pending', async (req, res) => {
@@ -1112,6 +1080,67 @@ app.get('/health', async (_, res) => {
     res.json({ ok: true, service: 'winzo-authoritative-server', database: 'postgres', websocket: true, uptime: process.uptime() });
   } catch (e) { res.status(503).json({ ok: false, database: 'unavailable', error: e.message }); }
 });
+
+// ============================================================================
+// 🚨 TEMPORARY FIREBASE DIRECT MIGRATION ROUTE 🚨
+// ============================================================================
+app.get('/firebase-direct-migrate', async (req, res) => {
+  try {
+    if (!fs.existsSync('./serviceAccountKey.json')) {
+      return res.send('❌ Error: serviceAccountKey.json not found in repository root.');
+    }
+
+    res.write('Initializing Firebase...\n');
+    const serviceAccount = JSON.parse(fs.readFileSync('./serviceAccountKey.json', 'utf8'));
+    
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: FIREBASE_DB_URL
+      });
+    }
+
+    res.write('Fetching data from Firebase...\n');
+    const snapshot = await admin.database().ref('/').once('value');
+    const data = snapshot.val();
+
+    if (!data) return res.end('No data found in Firebase.');
+
+    res.write('Migrating to PostgreSQL...\n');
+    const client = await pool.connect();
+    await client.query('BEGIN');
+
+    // Migrate Users
+    if (data.users) {
+      for (const [uid, u] of Object.entries(data.users)) {
+        await client.query(`
+          INSERT INTO users (username, display_name, telegram_id, main_wallet, play_wallet, pending_withdrawal, referral_earnings, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (username) DO NOTHING
+        `, [uid, u.display_name || uid, u.telegram_id || null, Number(u.main_wallet||0), Number(u.play_wallet||0), Number(u.pending_withdrawal||0), Number(u.referral_earnings||0), Number(u.created_at||Date.now()), Number(u.updated_at||Date.now())]);
+      }
+      res.write(`✅ Users Migrated: ${Object.keys(data.users).length}\n`);
+    }
+
+    // Migrate Transactions
+    if (data.transactions) {
+      for (const [id, t] of Object.entries(data.transactions)) {
+        await client.query(`
+          INSERT INTO transactions (id, username, wallet_uid, type, amount, status, timestamp, reference)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING
+        `, [id, t.username || '', t.wallet_uid || t.uid || t.username || '', t.type || '', Number(t.amount||0), t.status || 'pending', Number(t.timestamp||Date.now()), t.reference || '']);
+      }
+      res.write(`✅ Transactions Migrated: ${Object.keys(data.transactions).length}\n`);
+    }
+
+    await client.query('COMMIT');
+    client.release();
+    res.end('🎉 SUCCESS! Migration Complete. Go back to GitHub and delete the migration code & serviceAccountKey.json immediately.');
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('❌ Migration Failed: ' + error.message);
+  }
+});
+// ============================================================================
 
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
