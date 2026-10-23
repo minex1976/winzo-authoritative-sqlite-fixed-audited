@@ -22,12 +22,14 @@ const pool = new Pool({
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || 'change_this_to_a_long_random_string';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '*')
   .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authentication will fail.');
+if (SMS_WEBHOOK_SECRET === 'change_this_to_a_long_random_string') console.warn('WARNING: SMS_WEBHOOK_SECRET is using the default value! Please change it for security.');
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 3;
@@ -39,7 +41,6 @@ const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
 
-// FIXED: Added the BOT_NAMES array that was missing
 const BOT_NAMES = [
   "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara", 
   "Bereket", "Tigist", "Elias", "Liya", "Samuel", "Bethel", "Nahom", "Rediet",
@@ -437,7 +438,7 @@ async function adminDecision(id, decision, reason = '') {
 }
 
 // ============================================================================
-// Automatic deposit verification (Polling)
+// Automatic deposit verification (Polling & Webhook)
 // ============================================================================
 function isTrustedSmsSender(record) {
   const raw = [record.from, record.sender, record.address, record.originator, record.source].filter(Boolean).map(v => String(v).toLowerCase()).join(' ');
@@ -991,17 +992,67 @@ setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.termin
 // Express API Routes
 // ============================================================================
 const app = express();
+
+// 1. SMS Webhook (Needs raw body for HMAC verification)
+app.post('/api/sms/incoming', express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }), async (req, res) => {
+  const providedSignature = req.headers['x-sms-signature'];
+  if (!providedSignature) {
+    console.warn('[SECURITY] SMS webhook hit without signature');
+    return res.status(401).json({ ok: false, error: 'Missing signature' });
+  }
+
+  // Calculate expected HMAC SHA256 signature
+  const expectedSignature = crypto
+    .createHmac('sha256', SMS_WEBHOOK_SECRET)
+    .update(req.rawBody)
+    .digest('hex');
+
+  const a = Buffer.from(providedSignature);
+  const b = Buffer.from(expectedSignature);
+  
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    console.warn('[SECURITY] Invalid SMS signature detected');
+    return res.status(401).json({ ok: false, error: 'Invalid signature' });
+  }
+
+  try {
+    const { sender, text } = req.body;
+    if (!text) return res.status(400).json({ ok: false, error: 'Missing text' });
+
+    const id = crypto.randomUUID();
+    const timestamp = now();
+
+    await pool.query(
+      'INSERT INTO incoming_sms (id, sender, text, timestamp, processed) VALUES ($1, $2, $3, $4, false)',
+      [id, sender || 'Unknown', text, timestamp]
+    );
+
+    console.log(`[SMS] Received securely from ${sender}: ${text.substring(0, 30)}...`);
+
+    const smsRecord = { id, sender, text, timestamp };
+    const matchResult = await autoApproveMatchingDeposits(id, smsRecord);
+    
+    await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [id]);
+
+    res.json({ ok: true, received: true, matched: matchResult.ok });
+  } catch (e) {
+    console.error('[SMS API ERROR]', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 2. General API middleware (JSON body parser for other routes)
 app.use(express.json({ limit: '3mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, x-sms-signature');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
 app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreSQL.'));
-app.get('/health', (_, res) => res.status(200).send('OK')); // AletCloud Health Check
+app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 
@@ -1028,6 +1079,45 @@ app.get('/admin/users', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// Admin endpoint to manually trigger SMS scan
+app.post('/admin/auto-match', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const smsRes = await pool.query('SELECT * FROM incoming_sms WHERE processed = false');
+    let approved = 0, skipped = 0, errors = 0;
+    
+    for (const row of smsRes.rows) {
+      try {
+        const result = await autoApproveMatchingDeposits(row.id, row);
+        await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [row.id]);
+        if (result.ok) approved++;
+        else skipped++;
+      } catch (e) {
+        errors++;
+        await logAutoActivity('error', row.id, '', 0, '', e.message);
+      }
+    }
+    res.json({ ok: true, approved, skipped, errors, scanned: smsRes.rows.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Admin endpoint to fetch SMS list for the dashboard
+app.get('/admin/sms', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const smsRes = await pool.query('SELECT * FROM incoming_sms ORDER BY timestamp DESC LIMIT 50');
+    const data = {};
+    smsRes.rows.forEach(r => {
+      data[r.id] = { sender: r.sender, text: r.text, timestamp: Number(r.timestamp) };
+    });
+    res.json({ ok: true, data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
@@ -1038,7 +1128,6 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
   
   // Initialize DB and load rooms AFTER the server is listening.
-  // Wrapped in try/catch so a temporary DB blip doesn't kill the HTTP health check.
   (async () => {
     try {
       await initDb();
@@ -1053,7 +1142,6 @@ server.listen(PORT, '0.0.0.0', () => {
       console.log('✅ Background initialization complete.');
     } catch (err) {
       console.error('⚠️ Background initialization failed (DB may be slow or unreachable):', err);
-      // Don't crash — HTTP server stays up so AletCloud health check passes
     }
   })();
 });
