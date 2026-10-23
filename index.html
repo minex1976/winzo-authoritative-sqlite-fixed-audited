@@ -298,29 +298,6 @@
         @keyframes winnerToastIn { to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
         @keyframes winnerToastOut { to { opacity: 0; transform: translate(-50%, -14px) scale(0.96); visibility: hidden; } }
 
-        #winzoAdminBroadcastLayer {
-          position: fixed !important; inset: 0 !important; z-index: 2147483647 !important;
-          display: none; align-items: center; justify-content: center; padding: 18px;
-          background: rgba(5, 2, 14, .62); backdrop-filter: blur(5px);
-          pointer-events: auto; isolation: isolate;
-        }
-        #winzoAdminBroadcastLayer.is-visible { display: flex !important; }
-        #winzoAdminBroadcastLayer .wab-card {
-          width: min(100%, 430px); max-height: min(82vh, 680px); overflow: auto;
-          padding: 24px 20px; text-align: center; border-radius: 24px;
-          color: #f7efff; background: linear-gradient(145deg, #30204f, #111e39);
-          border: 2px solid #ffcf54;
-          box-shadow: 0 20px 70px rgba(0,0,0,.85), 0 0 35px rgba(255,204,68,.3);
-          overflow-wrap: anywhere;
-        }
-        #winzoAdminBroadcastLayer .wab-icon { font-size: 2.4rem; margin-bottom: 8px; }
-        #winzoAdminBroadcastLayer .wab-title { color:#ffd866; font-size:1.1rem; font-weight:900; margin-bottom:12px; }
-        #winzoAdminBroadcastLayer .wab-message { white-space:pre-wrap; word-break:break-word; line-height:1.6; font-size:1rem; }
-        #winzoAdminBroadcastLayer .wab-close {
-          margin-top:18px; border:0; border-radius:24px; padding:10px 26px; font-weight:800;
-          color:#211400; background:linear-gradient(135deg,#ffdf6b,#f5a623);
-        }
-
         #winzoUserEventModal {
           position: fixed !important;
           inset: 0 !important;
@@ -2910,89 +2887,6 @@
             console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
         }
         init();
-    </script>
-
-    <div id="winzoAdminBroadcastLayer" role="dialog" aria-modal="true" aria-live="assertive">
-      <div class="wab-card">
-        <div class="wab-icon">📢</div>
-        <div class="wab-title" id="wabTitle">Message from Winzo</div>
-        <div class="wab-message" id="wabMessage"></div>
-        <button class="wab-close" id="wabClose" type="button">OK</button>
-      </div>
-    </div>
-    <script>
-    (function () {
-      'use strict';
-      const DB_ROOT = 'https://render-e9e2d-default-rtdb.firebaseio.com';
-      const layer = document.getElementById('winzoAdminBroadcastLayer');
-      const title = document.getElementById('wabTitle');
-      const message = document.getElementById('wabMessage');
-      const close = document.getElementById('wabClose');
-      if (!layer || !title || !message || !close) return;
-
-      let latest = { transient: null, persistent: null };
-      let shownTransientId = '';
-      let dismissedTransientId = '';
-      let visibleKind = '';
-      let pollBusy = false;
-      let lastErrorAt = 0;
-
-      function onGameScreen() {
-        const game = document.getElementById('gameScreen');
-        return !!game && getComputedStyle(game).display !== 'none' && game.getClientRects().length > 0;
-      }
-      function show(kind, text, id) {
-        if (!onGameScreen() || !text) { layer.classList.remove('is-visible'); visibleKind = ''; return; }
-        title.textContent = kind === 'persistent' ? '📌 Important Notice' : '📢 Message from Winzo';
-        message.textContent = text;
-        close.style.display = kind === 'persistent' ? 'none' : 'inline-block';
-        layer.dataset.broadcastId = id || '';
-        layer.classList.add('is-visible');
-        visibleKind = kind;
-      }
-      function render() {
-        if (!onGameScreen()) { layer.classList.remove('is-visible'); visibleKind = ''; return; }
-        const p = latest.persistent || {};
-        if (p.active === true && String(p.text || '').trim()) { show('persistent', String(p.text).trim(), 'persistent_' + (p.updatedAt || 'active')); return; }
-        const t = latest.transient || {};
-        const expiresAt = Number(t.expiresAt) || (Number(t.createdAt || 0) + Number(t.duration || 0) * 1000);
-        const id = String(t.id || t.createdAt || '');
-        if (t.active === true && String(t.text || '').trim() && expiresAt > Date.now() && id !== dismissedTransientId) {
-          show('transient', String(t.text).trim(), id);
-          shownTransientId = id;
-          return;
-        }
-        layer.classList.remove('is-visible');
-        visibleKind = '';
-      }
-      async function poll() {
-        if (pollBusy) return;
-        pollBusy = true;
-        try {
-          const [trRes, peRes] = await Promise.all([
-            fetch(DB_ROOT + '/broadcasts/transient.json?cb=' + Date.now(),  { cache: 'no-store' }),
-            fetch(DB_ROOT + '/broadcasts/persistent.json?cb=' + Date.now(), { cache: 'no-store' })
-          ]);
-          if (!trRes.ok || !peRes.ok) throw new Error('HTTP ' + (trRes.status + '/' + peRes.status));
-          latest.transient  = (await trRes.json()) || null;
-          latest.persistent = (await peRes.json()) || null;
-          render();
-        } catch (err) {
-          if (Date.now() - lastErrorAt > 30000) {
-            lastErrorAt = Date.now();
-            console.warn('[Winzo broadcast] Firebase read failed; retrying:', (err && err.message) || err);
-          }
-        } finally { pollBusy = false; }
-      }
-      close.addEventListener('click', function () {
-        if (visibleKind === 'transient') dismissedTransientId = layer.dataset.broadcastId || shownTransientId;
-        layer.classList.remove('is-visible');
-        visibleKind = '';
-      });
-      document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
-      poll();
-      setInterval(poll, 2500);
-    })();
     </script>
 
     <div id="winzoUserEventModal" role="dialog" aria-modal="true" aria-labelledby="wueTitle" aria-describedby="wueMessage">
