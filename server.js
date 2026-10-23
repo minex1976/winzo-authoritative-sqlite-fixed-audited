@@ -6,7 +6,6 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-// --- Database Initialization ---
 const pool = new Pool({
   host: process.env.DB_HOST || 'winzo-sql-rw.db-956.svc.cluster.local',
   port: Number(process.env.DB_PORT || 5432),
@@ -18,7 +17,6 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-// --- Configuration ---
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
@@ -38,20 +36,17 @@ const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
 
-// ============================================================================
-// AUTO-DEPOSIT STRICTNESS TUNING
-// ============================================================================
-const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;         // Birr tolerance
+const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
 const MAX_REFERENCE_LENGTH = 128;
-const MIN_TELEBIRR_REF_LENGTH = 8;                  // stricter for pure-numeric refs
-const SMS_MAX_AGE_MS = 24 * 60 * 60 * 1000;         // 24h
-const DEPOSIT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+const MIN_TELEBIRR_REF_LENGTH = 8;
+const SMS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DEPOSIT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_DEPOSIT_AMOUNT = 1;
 const MAX_DEPOSIT_AMOUNT = 1_000_000;
-const DEPOSIT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 min
-const DEPOSIT_RATE_LIMIT_MAX = 5;                    // 5 deposit requests / 10 min
-const DUPLICATE_SMS_WINDOW_MS = 60 * 1000;           // identical SMS within 60s = duplicate
+const DEPOSIT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const DEPOSIT_RATE_LIMIT_MAX = 5;
+const DUPLICATE_SMS_WINDOW_MS = 60 * 1000;
 
 const BOT_NAMES = [
   "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara", 
@@ -61,12 +56,11 @@ const BOT_NAMES = [
   "Amanuel", "Sofia", "Zelalem", "Alem", "Beka", "Chala", "Desta", "Eyerus"
 ];
 
-// Strict trusted-sender allow-list (matched on normalized sender, not substring).
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
 
 // ============================================================================
-// Database Schema Bootstrap
+// Database Schema Bootstrap + Migrations
 // ============================================================================
 async function initDb() {
   const client = await pool.connect();
@@ -109,8 +103,6 @@ async function initDb() {
           uid VARCHAR(64), client_request_id VARCHAR(128), tx_id VARCHAR(128), type VARCHAR(32), amount NUMERIC, created_at BIGINT,
           PRIMARY KEY (uid, client_request_id)
       );
-
-      -- ✅ Reference codes are consumed at most once, ever.
       CREATE TABLE IF NOT EXISTS used_references (
           reference VARCHAR(128) PRIMARY KEY,
           sms_id VARCHAR(128),
@@ -120,15 +112,26 @@ async function initDb() {
           username VARCHAR(64),
           consumed_at BIGINT
       );
-
-      -- ✅ Deposit rate limiting (per user).
       CREATE TABLE IF NOT EXISTS deposit_attempts (
           id VARCHAR(128) PRIMARY KEY,
           username VARCHAR(64),
           created_at BIGINT
       );
+    `);
 
-      -- Helpful indexes.
+    // ✅ FIX: migrations for EXISTING databases — CREATE IF NOT EXISTS
+    // does nothing on tables that already exist, so add columns explicitly.
+    await client.query(`
+      ALTER TABLE incoming_sms ADD COLUMN IF NOT EXISTS matched_tx_id VARCHAR(128);
+      ALTER TABLE incoming_sms ADD COLUMN IF NOT EXISTS text_hash VARCHAR(64);
+      ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS reference VARCHAR(128);
+      ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(128);
+      ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
+      ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
+    `);
+    console.log('✅ Migrations applied.');
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_tx_pending_deposit
         ON transactions (status, type) WHERE status = 'pending' AND type = 'deposit';
       CREATE INDEX IF NOT EXISTS idx_tx_reference ON transactions (reference);
@@ -227,7 +230,7 @@ function validateInitData(initData, maxAge = 300) {
 }
 
 // ============================================================================
-// User management (unchanged from original — kept intact)
+// User management
 // ============================================================================
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
@@ -364,7 +367,6 @@ async function transactionRequest(uid, data) {
   if (!['deposit', 'withdraw'].includes(type)) return { ok: false, reason: 'bad-type' };
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { ok: false, reason: 'bad-amount' };
 
-  // ✅ Rate limit deposit requests per user.
   if (type === 'deposit') {
     if (amount < MIN_DEPOSIT_AMOUNT || amount > MAX_DEPOSIT_AMOUNT) return { ok: false, reason: 'amount-out-of-range' };
     const since = now() - DEPOSIT_RATE_LIMIT_WINDOW_MS;
@@ -372,9 +374,7 @@ async function transactionRequest(uid, data) {
       'SELECT COUNT(*)::int AS c FROM deposit_attempts WHERE username = $1 AND created_at > $2',
       [uid, since]
     );
-    if (recent.rows[0].c >= DEPOSIT_RATE_LIMIT_MAX) {
-      return { ok: false, reason: 'rate-limited' };
-    }
+    if (recent.rows[0].c >= DEPOSIT_RATE_LIMIT_MAX) return { ok: false, reason: 'rate-limited' };
     await pool.query('INSERT INTO deposit_attempts (id, username, created_at) VALUES ($1,$2,$3)',
       [crypto.randomUUID(), uid, now()]);
   }
@@ -388,7 +388,6 @@ async function transactionRequest(uid, data) {
     if (user.blocked) throw new Error('account-blocked');
     if (String(user.fraud_status || '').toLowerCase() === 'frozen') throw new Error('account-frozen');
 
-    // ✅ Reject deposits that reuse an already-consumed reference.
     if (type === 'deposit') {
       const rawRef = normalizePaymentReference(data.reference);
       if (rawRef) {
@@ -513,12 +512,8 @@ async function adminDecision(id, decision, reason = '') {
 }
 
 // ============================================================================
-// AUTOMATIC DEPOSIT VERIFICATION — STRICT MODE
+// Automatic deposit verification — STRICT MODE
 // ============================================================================
-
-/**
- * Strict sender normalization.
- */
 function normalizeSender(value) {
   return String(value || '')
     .toLowerCase()
@@ -527,10 +522,6 @@ function normalizeSender(value) {
     .trim();
 }
 
-/**
- * Returns true only if the sender is *exactly* on the trusted allow-list.
- * Uses token-level matching so "+25112712345" does NOT match "127".
- */
 function isTrustedSmsSender(record) {
   const raw = [record.from, record.sender, record.address, record.originator, record.source]
     .filter(Boolean)
@@ -553,11 +544,6 @@ function normalizePaymentReference(value) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, MAX_REFERENCE_LENGTH);
 }
 
-/**
- * Reject malformed references. Telebirr refs are alphanumeric, ~10–16 chars,
- * often starting with "FT". We're not strict about the prefix (other
- * providers may differ), but we enforce length and charset.
- */
 function isValidReference(ref) {
   if (!ref || typeof ref !== 'string') return false;
   if (ref.length < MIN_REFERENCE_LENGTH || ref.length > MAX_REFERENCE_LENGTH) return false;
@@ -588,15 +574,14 @@ function parsePaymentRecord(r) {
 }
 
 async function logAutoActivity(kind, smsId, reference, amount, txId, reason) {
-  await pool.query('INSERT INTO auto_activity (id, kind, sms_id, reference, amount, tx_id, reason, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', 
-    [crypto.randomUUID(), kind, String(smsId||''), reference || '', Number(amount)||0, txId || '', reason || '', now()]);
+  try {
+    await pool.query('INSERT INTO auto_activity (id, kind, sms_id, reference, amount, tx_id, reason, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', 
+      [crypto.randomUUID(), kind, String(smsId||''), reference || '', Number(amount)||0, txId || '', reason || '', now()]);
+  } catch (e) {
+    console.error('[AUTO-LOG]', e.message);
+  }
 }
 
-/**
- * Additional strictness: if the deposit request carried a phone number or
- * full name, we require at least the last-4 digits / a name token to appear
- * in the SMS text. This blocks the "one SMS unlocks any amount" attack.
- */
 function smsMatchesDepositIdentity(smsText, tx) {
   const text = String(smsText || '').toLowerCase();
   if (!text) return false;
@@ -605,7 +590,6 @@ function smsMatchesDepositIdentity(smsText, tx) {
   if (phone.length >= 4) {
     const tail = phone.slice(-4);
     if (!text.includes(tail)) {
-      // Also accept the full phone with or without country code.
       if (!text.includes(phone)) return false;
     }
   }
@@ -618,22 +602,6 @@ function smsMatchesDepositIdentity(smsText, tx) {
   return true;
 }
 
-/**
- * Attempt to auto-approve a single SMS against pending deposit requests.
- *
- * STRICT RULES:
- *  1. Sender must be strictly trusted.
- *  2. Reference must be present, valid, not previously consumed.
- *  3. SMS must be fresh (<= 24h).
- *  4. Amount must be > 0.
- *  5. There must be exactly one pending deposit with:
- *       - matching normalized reference,
- *       - amount within tolerance,
- *       - created within 7 days,
- *       - user not blocked/frozen,
- *       - phone/name match (if provided).
- *  6. Reference is reserved atomically *before* approval.
- */
 async function autoApproveMatchingDeposits(smsId, smsRecord) {
   const payment = parsePaymentRecord(smsRecord);
 
@@ -651,16 +619,12 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
     return { ok: false, reason: 'amount-out-of-range' };
   }
 
-  // Reference must not have been consumed previously.
   const used = await pool.query('SELECT tx_id FROM used_references WHERE reference = $1', [payment.reference]);
   if (used.rows.length > 0) {
     await logAutoActivity('skipped', smsId, payment.reference, payment.amount, used.rows[0].tx_id, 'reference-reused');
     return { ok: false, reason: 'reference-reused' };
   }
 
-  // Take a PostgreSQL advisory lock on this reference so two server instances
-  // or two SMS deliveries cannot race. The lock is released automatically at
-  // session end; we use a short-lived dedicated client.
   const lockKey = advisoryKeyForReference(payment.reference);
   const lockClient = await pool.connect();
   try {
@@ -670,13 +634,11 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
     }
 
     try {
-      // Re-check after acquiring the lock.
       const recheck = await pool.query('SELECT tx_id FROM used_references WHERE reference = $1', [payment.reference]);
       if (recheck.rows.length > 0) {
         return { ok: false, reason: 'reference-reused' };
       }
 
-      // Find matching pending deposits.
       const txRes = await pool.query(
         "SELECT * FROM transactions WHERE status = 'pending' AND type = 'deposit' AND timestamp > $1",
         [now() - DEPOSIT_MAX_AGE_MS]
@@ -704,7 +666,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
 
       const tx = candidates[0];
 
-      // Blocked / frozen check at match time.
       const owner = await pool.query('SELECT blocked, fraud_status, account_status FROM users WHERE username = $1', [tx.wallet_uid || tx.uid]);
       if (owner.rows.length === 0) {
         await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-missing');
@@ -720,13 +681,11 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
         return { ok: false, reason: 'owner-frozen' };
       }
 
-      // Identity cross-check (phone/name embedded in SMS).
       if (!smsMatchesDepositIdentity(payment.text, tx)) {
         await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'identity-mismatch');
         return { ok: false, reason: 'identity-mismatch' };
       }
 
-      // Atomically reserve the reference BEFORE approving.
       const reserve = await pool.query(
         `INSERT INTO used_references (reference, sms_id, tx_id, amount, sender, username, consumed_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -741,7 +700,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
 
       const result = await adminDecision(tx.id, 'approved', `Auto-approved: SMS ${String(smsId).slice(0, 80)} (ref ${payment.reference})`);
       if (!result.ok) {
-        // Roll back the reservation so a retry can succeed.
         await pool.query('DELETE FROM used_references WHERE reference = $1 AND tx_id = $2', [payment.reference, tx.id]);
         await logAutoActivity('error', smsId, payment.reference, payment.amount, tx.id, result.reason);
         return { ok: false, reason: result.reason };
@@ -759,24 +717,10 @@ async function autoApproveMatchingDeposits(smsId, smsRecord) {
 
 function advisoryKeyForReference(ref) {
   const h = crypto.createHash('sha256').update('ref:' + String(ref || '')).digest();
-  // pg_advisory_lock takes a bigint; take first 6 bytes to stay safe.
   const n = h.readUIntBE(0, 6);
   return Number(n);
 }
 
-/**
- * Process a single unprocessed SMS row.
- *
- * We only mark processed=true when we reach a *definitive* outcome:
- *  - approved (matched)
- *  - untrusted-sender
- *  - no-reference / invalid-reference
- *  - no-amount / amount-out-of-range
- *  - stale-sms
- *
- * Anything else (no-match, ambiguous-tx, reference-locked) stays unprocessed
- * so a later deposit request or poll can retry.
- */
 async function processIncomingSmsSnapshot(row) {
   if (row.processed) return;
   try {
@@ -784,18 +728,26 @@ async function processIncomingSmsSnapshot(row) {
     const definitive = res.ok || ['untrusted-sender', 'no-reference', 'invalid-reference',
       'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(res.reason);
     if (definitive) {
-      await pool.query(
-        'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
-        [res.ok ? res.txId : null, row.id]
-      );
+      try {
+        await pool.query(
+          'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
+          [res.ok ? res.txId : null, row.id]
+        );
+      } catch (updErr) {
+        try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [row.id]); } catch (_) {}
+      }
     }
   } catch (e) { console.error('[AUTO-DEPOSIT]', e); }
 }
 
 async function rescanPendingSms() {
-  const res = await pool.query('SELECT * FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 50');
-  for (const row of res.rows) {
-    await processIncomingSmsSnapshot(row);
+  try {
+    const res = await pool.query('SELECT * FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 50');
+    for (const row of res.rows) {
+      await processIncomingSmsSnapshot(row);
+    }
+  } catch (e) {
+    console.error('[RESCAN-SMS]', e.message);
   }
 }
 
@@ -863,7 +815,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
 }
 
 // ============================================================================
-// Game room (unchanged from original)
+// Game room
 // ============================================================================
 class Room {
   constructor(id, bet, row = null) {
@@ -1287,7 +1239,7 @@ setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.termin
 // ============================================================================
 const app = express();
 
-// 1. SMS Webhook — strict secret check + duplicate-SMS dedupe.
+// ✅ FIX: SMS webhook — forwarder-compatible contract.
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
   const providedSecret = req.headers['x-sms-secret'];
   if (!providedSecret || providedSecret !== SMS_WEBHOOK_SECRET) {
@@ -1296,29 +1248,43 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
   }
 
   try {
-    const { from, text } = req.body;
+    const { from, text } = req.body || {};
     if (!text) return res.status(400).json({ ok: false, error: 'Missing text' });
 
     const id = crypto.randomUUID();
     const timestamp = now();
-    const textHash = crypto.createHash('sha256').update(String(from || '') + '|' + String(text)).digest('hex');
+    const textHash = crypto.createHash('sha256')
+      .update(String(from || '') + '|' + String(text)).digest('hex');
 
-    // ✅ Dedupe: identical SMS from same sender within 60s is ignored.
-    const dupe = await pool.query(
-      'SELECT id FROM incoming_sms WHERE text_hash = $1 AND timestamp > $2 LIMIT 1',
-      [textHash, timestamp - DUPLICATE_SMS_WINDOW_MS]
-    );
-    if (dupe.rows.length > 0) {
-      await logAutoActivity('skipped', id, '', 0, '', 'duplicate-sms');
-      return res.json({ ok: true, received: true, duplicate: true, matched: false });
+    // Dedupe — wrapped so a missing column can't 500 the forwarder.
+    try {
+      const dupe = await pool.query(
+        'SELECT id FROM incoming_sms WHERE text_hash = $1 AND timestamp > $2 LIMIT 1',
+        [textHash, timestamp - DUPLICATE_SMS_WINDOW_MS]
+      );
+      if (dupe.rows.length > 0) {
+        await logAutoActivity('skipped', id, '', 0, '', 'duplicate-sms');
+        return res.json({ ok: true, received: true, duplicate: true, matched: false });
+      }
+    } catch (dedupeErr) {
+      console.warn('[SMS] dedupe skipped:', dedupeErr.message);
     }
 
-    await pool.query(
-      'INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1, $2, $3, $4, false, $5)',
-      [id, from || 'Unknown', text, timestamp, textHash]
-    );
+    // Insert with graceful fallback.
+    try {
+      await pool.query(
+        'INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)',
+        [id, from || 'Unknown', text, timestamp, textHash]
+      );
+    } catch (insertErr) {
+      console.warn('[SMS] extended insert failed, falling back:', insertErr.message);
+      await pool.query(
+        'INSERT INTO incoming_sms (id, sender, text, timestamp, processed) VALUES ($1,$2,$3,$4,false)',
+        [id, from || 'Unknown', text, timestamp]
+      );
+    }
 
-    console.log(`[SMS] Received securely from ${from}: ${text.substring(0, 30)}...`);
+    console.log(`[SMS] Received securely from ${from}: ${String(text).substring(0, 30)}...`);
 
     const smsRecord = { id, sender: from, text, timestamp };
     const matchResult = await autoApproveMatchingDeposits(id, smsRecord);
@@ -1326,20 +1292,29 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
     const definitive = matchResult.ok || ['untrusted-sender', 'no-reference', 'invalid-reference',
       'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(matchResult.reason);
     if (definitive) {
-      await pool.query(
-        'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
-        [matchResult.ok ? matchResult.txId : null, id]
-      );
+      try {
+        await pool.query(
+          'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
+          [matchResult.ok ? matchResult.txId : null, id]
+        );
+      } catch (updErr) {
+        try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [id]); } catch (_) {}
+      }
     }
 
-    res.json({ ok: true, received: true, matched: matchResult.ok, reason: matchResult.reason || null });
+    return res.json({
+      ok: true,
+      received: true,
+      matched: !!matchResult.ok,
+      reason: matchResult.reason || null,
+    });
   } catch (e) {
     console.error('[SMS API ERROR]', e);
-    res.status(500).json({ ok: false, error: e.message });
+    // ✅ Always 200 so the forwarder doesn't spin on retries.
+    return res.status(200).json({ ok: false, error: e.message });
   }
 });
 
-// 2. General API middleware
 app.use(express.json({ limit: '3mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -1415,7 +1390,6 @@ app.get('/admin/sms', async (req, res) => {
   }
 });
 
-// ✅ Admin endpoint: view used references (audit trail).
 app.get('/admin/used-references', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
@@ -1426,7 +1400,6 @@ app.get('/admin/used-references', async (req, res) => {
   }
 });
 
-// ✅ Admin endpoint: view auto-activity log.
 app.get('/admin/activity', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
