@@ -22,14 +22,13 @@ const pool = new Pool({
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
-const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || 'change_this_to_a_long_random_string';
+const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '9f8a7b6c5d4e3f2a1b0c1976'; // Matches your app
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '*')
   .split(',').map(v => v.trim()).filter(Boolean);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authentication will fail.');
-if (SMS_WEBHOOK_SECRET === 'change_this_to_a_long_random_string') console.warn('WARNING: SMS_WEBHOOK_SECRET is using the default value! Please change it for security.');
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 3;
@@ -993,43 +992,33 @@ setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.termin
 // ============================================================================
 const app = express();
 
-// 1. SMS Webhook (Needs raw body for HMAC verification)
-app.post('/api/sms/incoming', express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }), async (req, res) => {
-  const providedSignature = req.headers['x-sms-signature'];
-  if (!providedSignature) {
-    console.warn('[SECURITY] SMS webhook hit without signature');
-    return res.status(401).json({ ok: false, error: 'Missing signature' });
-  }
-
-  // Calculate expected HMAC SHA256 signature
-  const expectedSignature = crypto
-    .createHmac('sha256', SMS_WEBHOOK_SECRET)
-    .update(req.rawBody)
-    .digest('hex');
-
-  const a = Buffer.from(providedSignature);
-  const b = Buffer.from(expectedSignature);
+// 1. SMS Webhook (Simple Secret Header Verification)
+app.post('/api/sms/incoming', express.json(), async (req, res) => {
+  const providedSecret = req.headers['x-sms-secret'];
   
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    console.warn('[SECURITY] Invalid SMS signature detected');
-    return res.status(401).json({ ok: false, error: 'Invalid signature' });
+  if (!providedSecret || providedSecret !== SMS_WEBHOOK_SECRET) {
+    console.warn('[SECURITY] Unauthorized SMS attempt. Header received:', providedSecret);
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   try {
-    const { sender, text } = req.body;
+    // Read the exact keys sent by the app
+    const { from, text } = req.body;
     if (!text) return res.status(400).json({ ok: false, error: 'Missing text' });
 
     const id = crypto.randomUUID();
     const timestamp = now();
 
+    // Save to DB
     await pool.query(
       'INSERT INTO incoming_sms (id, sender, text, timestamp, processed) VALUES ($1, $2, $3, $4, false)',
-      [id, sender || 'Unknown', text, timestamp]
+      [id, from || 'Unknown', text, timestamp]
     );
 
-    console.log(`[SMS] Received securely from ${sender}: ${text.substring(0, 30)}...`);
+    console.log(`[SMS] Received securely from ${from}: ${text.substring(0, 30)}...`);
 
-    const smsRecord = { id, sender, text, timestamp };
+    // Immediately try to match it to a pending deposit
+    const smsRecord = { id, sender: from, text, timestamp };
     const matchResult = await autoApproveMatchingDeposits(id, smsRecord);
     
     await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [id]);
@@ -1041,11 +1030,11 @@ app.post('/api/sms/incoming', express.json({ verify: (req, res, buf) => { req.ra
   }
 });
 
-// 2. General API middleware (JSON body parser for other routes)
+// 2. General API middleware
 app.use(express.json({ limit: '3mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, x-sms-signature');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, x-sms-secret');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
