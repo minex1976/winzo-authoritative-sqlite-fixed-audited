@@ -19,7 +19,8 @@ const pool = new Pool({
 });
 
 // --- Configuration ---
-const PORT = Number(process.env.PORT || 10000);
+// FIXED: Default to 3000 so AletCloud health check passes
+const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -1026,21 +1027,27 @@ server.on('upgrade', (req, socket, head) => {
 
 // Boot: Listen immediately so AletCloud health check passes
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on :${PORT}`);
+  console.log(`Server listening on 0.0.0.0:${PORT}`);
   
-  // Initialize DB and load rooms AFTER the server is listening
-  initDb().then(() => loadRooms()).then(() => {
-    startAutomaticDepositMonitor();
-    for (const room of Object.values(rooms)) {
-      if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
-      if (room.phase === 'selection') normalizeRoundBots(room);
-      room.persist();
-      scheduleBots(room);
+  // Initialize DB and load rooms AFTER the server is listening.
+  // Wrapped in try/catch so a temporary DB blip doesn't kill the HTTP health check.
+  (async () => {
+    try {
+      await initDb();
+      await loadRooms();
+      startAutomaticDepositMonitor();
+      for (const room of Object.values(rooms)) {
+        if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
+        if (room.phase === 'selection') normalizeRoundBots(room);
+        room.persist().catch(err => console.error('Room persist failed:', err));
+        scheduleBots(room);
+      }
+      console.log('✅ Background initialization complete.');
+    } catch (err) {
+      console.error('⚠️ Background initialization failed (DB may be slow or unreachable):', err);
+      // Don't crash — HTTP server stays up so AletCloud health check passes
     }
-    console.log('✅ Background initialization complete.');
-  }).catch(err => { 
-    console.error('Failed to initialize background tasks.', err); 
-  });
+  })();
 });
 
 async function gracefulShutdown(signal) {
