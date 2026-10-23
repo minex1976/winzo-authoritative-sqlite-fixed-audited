@@ -19,7 +19,6 @@ const pool = new Pool({
 });
 
 // --- Configuration ---
-// FIXED: Default to 3000 so AletCloud health check passes
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
@@ -39,6 +38,15 @@ const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
+
+// FIXED: Added the BOT_NAMES array that was missing
+const BOT_NAMES = [
+  "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara", 
+  "Bereket", "Tigist", "Elias", "Liya", "Samuel", "Bethel", "Nahom", "Rediet",
+  "Biniam", "Feven", "Girma", "Mimi", "Henok", "Tsion", "Fikru", "Eden",
+  "Dagmawi", "Ruth", "Natnael", "Mahlet", "Yosef", "Rahel", "Tewodros", "Marta",
+  "Amanuel", "Sofia", "Zelalem", "Alem", "Beka", "Chala", "Desta", "Eyerus"
+];
 
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
