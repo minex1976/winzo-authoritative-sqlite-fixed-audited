@@ -133,12 +133,18 @@
         .waiting-modal h3 { color: #f0e6ff; font-size: 1rem; margin-bottom: 2px; }
         .waiting-modal p { color: #b8a0d0; font-size: 0.8rem; line-height: 1.4; margin-bottom: 6px; }
         .waiting-modal .close-waiting { background: rgba(120, 80, 200, 0.15); border: none; color: #b8a0d0; padding: 4px 14px; border-radius: 30px; font-size: 0.7rem; cursor: pointer; }
-        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(20, 10, 40, 0.95); border: 2px solid #ffcc44; border-radius: 18px; padding: 16px 24px; max-width: 90%; z-index: 3000; text-align: center; display: none; }
-        .toast.active { display: block; }
-        .toast .icon { font-size: 2rem; display: block; margin-bottom: 4px; }
-        .toast h3 { color: #f0e6ff; font-size: 1.1rem; margin-bottom: 2px; }
-        .toast p { color: #b8a0d0; font-size: 0.85rem; line-height: 1.4; }
-        .tx-result-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.78); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 5000; padding: 20px; }
+
+        /* ✅ UPDATED: wide, short, horizontal notification toast. Sits above every modal
+           except the top-most user-event dialog (2147483647). Duration extended in JS to 8s. */
+        .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(20, 10, 40, 0.97); border: 2px solid #ffcc44; border-radius: 16px; padding: 10px 16px; z-index: 2147483600; display: none; box-shadow: 0 8px 28px rgba(0,0,0,.6), 0 0 24px rgba(255,204,68,.32); width: max-content; max-width: calc(100vw - 24px); align-items: center; gap: 12px; }
+        .toast.active { display: flex; animation: toastIn .28s cubic-bezier(.34,1.56,.64,1); }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+        .toast .icon { font-size: 1.6rem; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+        .toast .toast-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+        .toast h3 { color: #ffcc44; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.5px; margin: 0; text-transform: uppercase; }
+        .toast p { color: #f0e6ff; font-size: 0.85rem; line-height: 1.35; margin: 0; font-weight: 600; white-space: normal; word-break: break-word; }
+
+        .tx-result-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.78); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 2147483500; padding: 20px; }
         .tx-result-modal.active { display: flex; }
         .tx-result-modal .tx-result-card { background: linear-gradient(160deg, rgba(42, 26, 74, 0.98), rgba(26, 42, 74, 0.98)); border-radius: 28px; padding: 30px 24px 24px; max-width: 340px; width: 100%; text-align: center; border: 2px solid rgba(180, 120, 255, 0.28); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75); animation: txResultIn 0.42s cubic-bezier(0.34, 1.56, 0.64, 1); }
         @keyframes txResultIn { 0% { transform: scale(0.7) translateY(20px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
@@ -151,7 +157,7 @@
         .tx-result-msg { color: #d4c0f0; font-size: 0.92rem; line-height: 1.5; margin: 0 0 20px; white-space: pre-wrap; word-break: break-word; }
         .tx-result-ok { background: linear-gradient(135deg, #ffcc44, #f5a623); border: none; border-radius: 30px; padding: 11px 44px; font-weight: 800; font-size: 0.9rem; color: #1a0a2e; cursor: pointer; box-shadow: 0 4px 0 #b87a15; }
         .tx-result-ok:active { transform: translateY(4px); box-shadow: 0 1px 0 #b87a15; }
-        .broadcast-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.78); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 5100; padding: 20px; }
+        .broadcast-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.78); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 2147483400; padding: 20px; }
         .broadcast-modal.active { display: flex; }
         .broadcast-modal .broadcast-card { background: linear-gradient(160deg, rgba(42, 26, 74, 0.98), rgba(26, 42, 74, 0.98)); border-radius: 28px; padding: 30px 24px 24px; max-width: 380px; width: 100%; text-align: center; border: 2px solid rgba(255, 204, 68, 0.35); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75), 0 0 45px rgba(255, 204, 68, 0.22); animation: txResultIn 0.42s cubic-bezier(0.34, 1.56, 0.64, 1); }
         .broadcast-icon { font-size: 3rem; line-height: 1; margin-bottom: 10px; }
@@ -571,10 +577,13 @@
         <p>ሌላ ተጫዋች እስከሚገባ እባክዎትን ትንሽ ይጠብቁ!</p>
         <button class="close-waiting" id="closeWaitingBtn">✕ Dismiss</button>
     </div>
+    <!-- ✅ UPDATED: split icon and body so the toast can stretch horizontally -->
     <div class="toast" id="welcomeToast">
         <span class="icon">🎉</span>
-        <h3>Welcome to Winzo!</h3>
-        <p>You've been given <strong>30 Birr</strong> in your play wallet. Good luck!</p>
+        <div class="toast-body">
+            <h3>Welcome to Winzo!</h3>
+            <p>You've been given <strong>30 Birr</strong> in your play wallet. Good luck!</p>
+        </div>
     </div>
     <div class="tx-result-modal" id="transactionResultModal">
         <div class="tx-result-card">
@@ -1811,7 +1820,6 @@
             if (icon) icon.textContent = isApproved ? '✅' : '❌';
             if (title) title.textContent = isApproved ? 'Request Approved' : 'Request Rejected';
             if (msg) {
-                // ✅ FEATURE #1 & #3: prefer the server-provided Amharic message
                 const customMsg = (item.data.message && String(item.data.message).trim()) || '';
                 msg.textContent = customMsg || (isApproved
                     ? 'Your request is approved'
@@ -1848,11 +1856,10 @@
             if (msgEl) msgEl.textContent = String(message).replace(/<[^>]*>/g, '');
             welcomeToast.classList.add('active');
             clearTimeout(welcomeToast._hideTimer);
-            welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 5000);
+            // ✅ Extended duration so players have time to read the message
+            welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 8000);
         }
 
-        // ✅ FEATURE #4: dedicated modal for the "inactivity disconnected" message.
-        // Uses the existing winzoUserEventModal styling so it appears as a proper blocking dialog.
         function showAuthFailureMessage() {
             const modalEl = document.getElementById('winzoUserEventModal');
             const iconEl = document.getElementById('wueIcon');
@@ -2070,7 +2077,8 @@
             if (!DB.getToastShown()) {
                 if (welcomeToast) welcomeToast.classList.add('active');
                 DB.setToastShown();
-                setTimeout(() => { if (welcomeToast) welcomeToast.classList.remove('active'); }, 5000);
+                // ✅ Extended duration so players have time to read the welcome message
+                setTimeout(() => { if (welcomeToast) welcomeToast.classList.remove('active'); }, 8000);
             }
         }
         function showGameScreen() {
@@ -2508,13 +2516,11 @@
                 this.devUsername = '';
                 this.pendingTransactionImages = new Map();
                 this.connecting = false;
-                // ✅ FEATURE #4: tracking flags for auth-failure handling
                 this.everAuthenticated = false;
                 this._authFailureNotified = false;
                 this.lastAuthFailureReason = null;
             }
             async connect(initData, refCode, roomId, devUsername) {
-                // ✅ FEATURE #4: reset flags so a manual reconnect can re-surface the message
                 this._authFailureNotified = false;
                 this.lastAuthFailureReason = null;
                 this.initData = initData || '';
@@ -2572,7 +2578,6 @@
                     else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                     else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
                     else if (m.type === 'error') {
-                        // ✅ FEATURE #4: intercept auth failures so we can show the inactivity message
                         if (m.message === 'auth-failed') {
                             this.lastAuthFailureReason = m.reason || 'unknown';
                             this._handleAuthFailure(m.reason || 'unknown');
@@ -2589,8 +2594,6 @@
                     this.authenticated = false;
                     this.connecting = false;
                     this.onConnection && this.onConnection(false);
-                    // ✅ FEATURE #4: if the socket closed on 4001 before we were authenticated,
-                    // try to surface the inactivity message even if the error frame was lost.
                     if (ev.code === 4001 && !wasAuthenticated) {
                         if (this.lastAuthFailureReason === 'expired' || !this.lastAuthFailureReason) {
                             this._handleAuthFailure(this.lastAuthFailureReason || 'expired');
@@ -2605,7 +2608,6 @@
                 clearInterval(this._ka);
                 this._ka = setInterval(() => this.rawSend({ type: 'ping' }), 25000);
             }
-            // ✅ FEATURE #4: only "expired initData" is treated as the inactivity case.
             _handleAuthFailure(reason) {
                 if (reason !== 'expired') return;
                 if (this._authFailureNotified) return;
@@ -2918,7 +2920,6 @@
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
                 onUserEvent: (m) => { if (window.handleUserEventMessage) window.handleUserEventMessage(m); },
-                // ✅ FEATURE #4: display the Amharic inactivity / reopen message
                 onAuthFailed: (reason) => {
                     showAuthFailureMessage();
                 },
