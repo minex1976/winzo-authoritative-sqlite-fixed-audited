@@ -396,16 +396,31 @@ async function sendWallet(uid) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
+// ✅ FIXED: Handle both online (WS) and offline (DB) correctly
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
-  const payload = { type: 'notification', id, ...data, timestamp: Number(data.timestamp || now()) };
-  await pool.query('INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)', 
-    [id, username, data.type || 'notification', String(data.message || ''), data.status || null, data.txType || null, data.txId || null, payload.timestamp]);
+  const timestamp = Number(data.timestamp || now());
+  const dbType = data.type || 'notification';
+  
+  // Force the WebSocket type to 'notification' so the client listener catches it.
+  // Keep the original type in 'notificationType' so the client can style it.
+  const wsPayload = { 
+    ...data, 
+    type: 'notification', 
+    notificationType: dbType, 
+    id, 
+    timestamp 
+  };
+
+  await pool.query(
+    'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)', 
+    [id, username, dbType, String(data.message || ''), data.status || null, data.txType || null, data.txId || null, timestamp]
+  );
+  
   const set = conns.get(username);
-  if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
+  if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
 
-// ✅ FEATURE #1 & #3: Amharic success message when deposit is approved
 async function notifyTransaction(username, tx) {
   let message;
   if (tx.type === 'deposit' && tx.status === 'approved') {
@@ -544,8 +559,6 @@ async function transactionRequest(uid, data) {
     await trace(traceId, uid, 'tx.wallet-push', 'fail', { type, amount, txId, reason: e.message });
   }
 
-  // ✅ FEATURE #3: If rescan does NOT auto-approve this deposit, send the "wait" message.
-  // If it does auto-approve, notifyTransaction() will send the success message instead.
   if (type === 'deposit') {
     rescanPendingSms(traceId)
       .then(async () => {
@@ -1295,10 +1308,8 @@ async function handle(ws, m) {
 
   if (m.type === 'auth') {
     const verification = validateInitData(m.initData || '');
-    // ✅ FEATURE #4: expose the exact reason so the client can distinguish expired initData
     if (!verification.ok) {
       send(ws, { type: 'error', message: 'auth-failed', reason: verification.reason || 'unknown' });
-      // Expired initData can never succeed on retry — close immediately with 4001
       if (verification.reason === 'expired') {
         try { ws.close(4001, 'auth-expired'); } catch {}
       }
@@ -1431,7 +1442,6 @@ async function handle(ws, m) {
     }
 
     if (!r.ok) {
-      // ✅ FEATURE #2: Amharic message when player reuses a reference
       if (r.reason === 'reference-already-used') {
         try {
           await addNotification(ws.uid, {
@@ -1564,6 +1574,33 @@ app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 
+// ✅ NEW: Endpoint for offline users to fetch missed notifications
+app.get('/user/notifications', async (req, res) => {
+  const uid = String(req.query.uid || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
+  try {
+    const r = await pool.query(
+      'SELECT id, type, message, status, tx_type, tx_id, timestamp, read FROM notifications WHERE username = $1 ORDER BY timestamp DESC LIMIT 50',
+      [uid]
+    );
+    res.json({
+      ok: true,
+      notifications: r.rows.map(n => ({
+        id: n.id,
+        type: n.type,
+        message: n.message,
+        status: n.status,
+        txType: n.tx_type,
+        txId: n.tx_id,
+        timestamp: Number(n.timestamp),
+        read: n.read
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/admin/pending', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try { res.json({ ok: true, transactions: await adminListTransactions() }); }
@@ -1639,6 +1676,7 @@ app.post('/admin/block-user', async (req, res) => {
   }
 });
 
+// ✅ FIXED: Admin send message uses standard notification payload
 app.post('/admin/send-message', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   const { userId, message } = req.body;
@@ -1647,7 +1685,8 @@ app.post('/admin/send-message', async (req, res) => {
     await addNotification(userId, {
       type: 'admin_message',
       message: String(message),
-      status: 'info'
+      status: 'info',
+      from: 'admin'
     });
     res.json({ ok: true });
   } catch (e) {
