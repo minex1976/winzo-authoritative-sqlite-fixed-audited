@@ -29,7 +29,6 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '9f8a7b6c5d4e3f2a1b0c1976';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
-// ✅ NEW: Configurable signup bonus (was hardcoded 30, now 15)
 const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
@@ -45,7 +44,6 @@ const BOT_START_WALLET = 1_000_000;
 const BOT_MIN = 3;
 const BOT_MAX = 6;
 
-// Auto-deposit strictness
 const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
 const MAX_REFERENCE_LENGTH = 128;
@@ -123,7 +121,6 @@ async function initDb() {
           id VARCHAR(128) PRIMARY KEY, username VARCHAR(64), created_at BIGINT
       );
 
-      -- ✅ NEW: Full request trace pipeline
       CREATE TABLE IF NOT EXISTS request_trace (
           trace_id VARCHAR(64) PRIMARY KEY,
           uid VARCHAR(64),
@@ -235,7 +232,6 @@ async function trace(traceId, uid, stage, status, opts = {}) {
   } catch (e) {
     console.error('[TRACE] insert failed:', e.message, { traceId, stage, status });
   }
-  // Also mirror to console for immediate visibility
   console.log(`[TRACE] ${traceId} stage=${stage} status=${status}` +
     (opts.reason ? ` reason=${opts.reason}` : '') +
     (opts.txId ? ` tx=${opts.txId}` : '') +
@@ -315,7 +311,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     }
     
     const t = now();
-    // ✅ CHANGED: Signup bonus now 15 Birr (configurable via SIGNUP_BONUS env)
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
       telegram_username: extra.telegram_username || null, main_wallet: 0,
@@ -410,10 +405,19 @@ async function addNotification(username, data) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
+// ✅ FEATURE #1 & #3: Amharic success message when deposit is approved
 async function notifyTransaction(username, tx) {
+  let message;
+  if (tx.type === 'deposit' && tx.status === 'approved') {
+    message = 'ትዕዛዙ ተፈፅሟል። ዊንዞን ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
+  } else if (tx.status === 'approved') {
+    message = `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.`;
+  } else {
+    message = 'Your request was rejected by admin.';
+  }
   await addNotification(username, {
     type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '',
-    message: tx.status === 'approved' ? `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.` : 'Your request was rejected by admin.'
+    message
   });
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '' }));
@@ -435,7 +439,6 @@ async function transactionRequest(uid, data) {
     detail: { imgLen, hasImage: imgLen > 0 }
   });
 
-  // Validate type / amount
   if (!['deposit', 'withdraw'].includes(type)) {
     await trace(traceId, uid, 'tx.validate', 'fail', { type, reason: 'bad-type' });
     return { ok: false, reason: 'bad-type', traceId };
@@ -445,7 +448,6 @@ async function transactionRequest(uid, data) {
     return { ok: false, reason: 'bad-amount', traceId };
   }
 
-  // Rate limit for deposits
   if (type === 'deposit') {
     if (amount < MIN_DEPOSIT_AMOUNT || amount > MAX_DEPOSIT_AMOUNT) {
       await trace(traceId, uid, 'tx.ratelimit', 'fail', { type, amount, reason: 'amount-out-of-range' });
@@ -482,7 +484,6 @@ async function transactionRequest(uid, data) {
     if (String(user.fraud_status || '').toLowerCase() === 'frozen') throw new Error('account-frozen');
     await trace(traceId, uid, 'tx.user-locked', 'ok', { type, amount });
 
-    // Reference / fraud checks
     if (type === 'deposit') {
       if (rawRef) {
         const prior = await client.query('SELECT tx_id FROM used_references WHERE reference = $1', [rawRef]);
@@ -536,7 +537,6 @@ async function transactionRequest(uid, data) {
     client.release();
   }
 
-  // ✅ Post-commit side effects are isolated — never fail the request
   try {
     await sendWallet(uid);
     await trace(traceId, uid, 'tx.wallet-push', 'ok', { type, amount, txId });
@@ -544,11 +544,28 @@ async function transactionRequest(uid, data) {
     await trace(traceId, uid, 'tx.wallet-push', 'fail', { type, amount, txId, reason: e.message });
   }
 
+  // ✅ FEATURE #3: If rescan does NOT auto-approve this deposit, send the "wait" message.
+  // If it does auto-approve, notifyTransaction() will send the success message instead.
   if (type === 'deposit') {
-    rescanPendingSms(traceId).catch(err => {
-      console.error('[TX-RESCAN]', err.message);
-      trace(traceId, uid, 'tx.rescan', 'fail', { txId, reason: err.message }).catch(() => {});
-    });
+    rescanPendingSms(traceId)
+      .then(async () => {
+        try {
+          const statusCheck = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
+          if (statusCheck.rows[0]?.status === 'pending') {
+            await addNotification(uid, {
+              type: 'notification',
+              message: 'ትዕዛዙ ተልኳል። እባክዎ ትንሽ ይጠብቁ።'
+            });
+            await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
+          }
+        } catch (e) {
+          console.error('[TX-WAIT-MSG]', e.message);
+        }
+      })
+      .catch(err => {
+        console.error('[TX-RESCAN]', err.message);
+        trace(traceId, uid, 'tx.rescan', 'fail', { txId, reason: err.message }).catch(() => {});
+      });
     await trace(traceId, uid, 'tx.rescan', 'ok', { txId });
   }
 
@@ -1278,11 +1295,19 @@ async function handle(ws, m) {
 
   if (m.type === 'auth') {
     const verification = validateInitData(m.initData || '');
-    if (!verification.ok) return send(ws, { type: 'error', message: 'auth-failed' });
+    // ✅ FEATURE #4: expose the exact reason so the client can distinguish expired initData
+    if (!verification.ok) {
+      send(ws, { type: 'error', message: 'auth-failed', reason: verification.reason || 'unknown' });
+      // Expired initData can never succeed on retry — close immediately with 4001
+      if (verification.reason === 'expired') {
+        try { ws.close(4001, 'auth-expired'); } catch {}
+      }
+      return;
+    }
     
     const telegramUser = verification.user;
     const resolved = await resolveTelegramUser(telegramUser, m.ref || null);
-    if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed' });
+    if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed', reason: 'identity-failed' });
 
     const uid = resolved.uid;
     const isBlockedRes = await pool.query('SELECT blocked, block_reason, blocked_at FROM users WHERE username = $1', [uid]);
@@ -1406,6 +1431,17 @@ async function handle(ws, m) {
     }
 
     if (!r.ok) {
+      // ✅ FEATURE #2: Amharic message when player reuses a reference
+      if (r.reason === 'reference-already-used') {
+        try {
+          await addNotification(ws.uid, {
+            type: 'notification',
+            message: 'አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። እባክዎ በድጋሚ ይሞክሩ። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን።'
+          });
+        } catch (e) {
+          console.error('[TX-USED-REF-MSG]', e.message);
+        }
+      }
       send(ws, { type: 'error', message: r.reason });
       send(ws, { type: 'transaction-rejected', reason: r.reason, traceId });
       return;
@@ -1454,7 +1490,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
       reference: '', detail: { smsId: id, sender: from, textLen: String(text).length }
     });
 
-    // Dedupe
     try {
       const dupe = await pool.query(
         'SELECT id FROM incoming_sms WHERE text_hash = $1 AND timestamp > $2 LIMIT 1',
@@ -1469,7 +1504,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
       console.warn('[SMS] dedupe skipped:', dedupeErr.message);
     }
 
-    // Insert with graceful fallback
     try {
       await pool.query(
         'INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)',
@@ -1611,11 +1645,6 @@ app.get('/admin/activity', async (req, res) => {
   }
 });
 
-// ============================================================================
-// 🔬 DIAGNOSTICS ENDPOINTS
-// ============================================================================
-
-/** Show ALL recent transactions regardless of status (for "lost request" forensics). */
 app.get('/admin/all-transactions', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
@@ -1639,7 +1668,6 @@ app.get('/admin/all-transactions', async (req, res) => {
   }
 });
 
-/** Look up a single trace or a user's full trace timeline. */
 app.get('/admin/trace', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
@@ -1679,11 +1707,10 @@ app.get('/admin/trace', async (req, res) => {
   }
 });
 
-/** Global diagnostic snapshot: counts, stuck requests, recent failures. */
 app.get('/admin/diagnostics', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
-    const since = now() - 60 * 60 * 1000; // last 1h
+    const since = now() - 60 * 60 * 1000;
 
     const [pendingTx, unprocessedSms, approvedRefs, traced24h, failedStages] = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS c FROM transactions WHERE status = 'pending'"),
@@ -1698,7 +1725,6 @@ app.get('/admin/diagnostics', async (req, res) => {
       ),
     ]);
 
-    // Stuck deposits: pending > 30 min with no matching used reference
     const stuck = await pool.query(
       `SELECT t.id, t.username, t.amount, t.reference, t.timestamp
        FROM transactions t
@@ -1709,13 +1735,11 @@ app.get('/admin/diagnostics', async (req, res) => {
       [now() - 30 * 60 * 1000]
     );
 
-    // Recent unprocessed SMS
     const smsQueue = await pool.query(
       `SELECT id, sender, LEFT(text, 80) AS preview, timestamp
        FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 20`
     );
 
-    // Recent failed stages (last 24h)
     const recentFails = await pool.query(
       `SELECT trace_id, uid, stage, status, reason, at
        FROM request_trace WHERE at > $1 AND status IN ('fail','error')
@@ -1742,7 +1766,6 @@ app.get('/admin/diagnostics', async (req, res) => {
   }
 });
 
-/** Re-process a single stuck SMS by id. */
 app.post('/admin/sms/reprocess', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
@@ -1759,7 +1782,6 @@ app.post('/admin/sms/reprocess', async (req, res) => {
   }
 });
 
-/** Manual override: force-approve a pending transaction with audit reason. */
 app.post('/admin/force-approve', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
