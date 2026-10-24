@@ -1588,6 +1588,102 @@ app.get('/admin/users', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+app.get('/admin/user-details', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const uid = String(req.query.uid || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
+  try {
+    const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [uid]);
+    if (userRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
+    const user = userRes.rows[0];
+    
+    const refsRes = await pool.query('SELECT username, display_name FROM users WHERE referred_by = $1', [uid]);
+    
+    res.json({
+      ok: true,
+      user: {
+        uid: user.username,
+        name: user.display_name,
+        telegram_id: user.telegram_id,
+        main: Number(user.main_wallet),
+        play: Number(user.play_wallet),
+        pending: Number(user.pending_withdrawal),
+        referral_earnings: Number(user.referral_earnings),
+        referred_by: user.referred_by,
+        blocked: user.blocked,
+        block_reason: user.block_reason,
+        created_at: Number(user.created_at),
+        referrals: refsRes.rows.map(r => ({ uid: r.username, name: r.display_name }))
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/admin/block-user', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const { userId, blocked, reason } = req.body;
+  if (!userId) return res.status(400).json({ ok: false, error: 'userId required' });
+  try {
+    const isBlocked = Boolean(blocked);
+    const blockReason = String(reason || 'Blocked by admin').slice(0, 256);
+    const blockAt = isBlocked ? Date.now() : null;
+    await pool.query(
+      'UPDATE users SET blocked = $1, block_reason = $2, blocked_at = $3, updated_at = $4 WHERE username = $5',
+      [isBlocked, isBlocked ? blockReason : null, blockAt, Date.now(), userId]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/admin/send-message', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const { userId, message } = req.body;
+  if (!userId || !message) return res.status(400).json({ ok: false, error: 'userId and message required' });
+  try {
+    await addNotification(userId, {
+      type: 'admin_message',
+      message: String(message),
+      status: 'info'
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/user-transactions', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const uid = String(req.query.uid || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
+  try {
+    const r = await pool.query(
+      `SELECT id, type, amount, status, timestamp, reference, reason, wallet_applied 
+       FROM transactions WHERE username = $1 OR wallet_uid = $1 
+       ORDER BY timestamp DESC LIMIT 100`,
+      [uid]
+    );
+    res.json({
+      ok: true,
+      transactions: r.rows.map(t => ({
+        id: t.id,
+        type: t.type,
+        amount: Number(t.amount),
+        status: t.status,
+        timestamp: Number(t.timestamp),
+        reference: t.reference,
+        reason: t.reason,
+        wallet_applied: Number(t.wallet_applied)
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/admin/auto-match', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
