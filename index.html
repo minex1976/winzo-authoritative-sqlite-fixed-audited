@@ -1810,7 +1810,13 @@
             const msg = document.getElementById('txResultMessage');
             if (icon) icon.textContent = isApproved ? '✅' : '❌';
             if (title) title.textContent = isApproved ? 'Request Approved' : 'Request Rejected';
-            if (msg) msg.textContent = isApproved ? 'Your request is approved' : ((item.data.reason || '').trim() || 'Your request was rejected by admin.');
+            if (msg) {
+                // ✅ FEATURE #1 & #3: prefer the server-provided Amharic message
+                const customMsg = (item.data.message && String(item.data.message).trim()) || '';
+                msg.textContent = customMsg || (isApproved
+                    ? 'Your request is approved'
+                    : ((item.data.reason || '').trim() || 'Your request was rejected by admin.'));
+            }
             void modal.offsetWidth; modal.classList.add('active');
         }
         (function bindTxResultOk(){
@@ -1843,6 +1849,22 @@
             welcomeToast.classList.add('active');
             clearTimeout(welcomeToast._hideTimer);
             welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 5000);
+        }
+
+        // ✅ FEATURE #4: dedicated modal for the "inactivity disconnected" message.
+        // Uses the existing winzoUserEventModal styling so it appears as a proper blocking dialog.
+        function showAuthFailureMessage() {
+            const modalEl = document.getElementById('winzoUserEventModal');
+            const iconEl = document.getElementById('wueIcon');
+            const titleEl = document.getElementById('wueTitle');
+            const msgEl = document.getElementById('wueMessage');
+            const okBtn = document.getElementById('wueOk');
+            if (!modalEl || !okBtn) return;
+            if (iconEl) iconEl.textContent = '⚠️';
+            if (titleEl) titleEl.textContent = 'Connection Lost';
+            if (msgEl) msgEl.textContent = 'ለረጅም ጊዜ ያለ እንቅስቃሴ በመቆየትዎ ከሰርቨር ጋር ያለው ግንኙነት ተቋርጧል። እንደገና Connect ለማድረግ ጌሙን ይዝጉና በድጋሚ ይክፈቱ።';
+            modalEl.classList.add('is-visible');
+            okBtn.onclick = () => modalEl.classList.remove('is-visible');
         }
 
         function openDepositModal() {
@@ -2486,8 +2508,15 @@
                 this.devUsername = '';
                 this.pendingTransactionImages = new Map();
                 this.connecting = false;
+                // ✅ FEATURE #4: tracking flags for auth-failure handling
+                this.everAuthenticated = false;
+                this._authFailureNotified = false;
+                this.lastAuthFailureReason = null;
             }
             async connect(initData, refCode, roomId, devUsername) {
+                // ✅ FEATURE #4: reset flags so a manual reconnect can re-surface the message
+                this._authFailureNotified = false;
+                this.lastAuthFailureReason = null;
                 this.initData = initData || '';
                 this.refCode = refCode || null;
                 this.roomId = roomId || null;
@@ -2517,6 +2546,8 @@
                     let m; try { m = JSON.parse(ev.data); } catch { return; }
                     if (m.type === 'authed') {
                         this.authenticated = true;
+                        this.everAuthenticated = true;
+                        this._authFailureNotified = false;
                         this.onAuth && this.onAuth(m.uid, m.displayName);
                         this.onConnection && this.onConnection(true);
                         this.rawSend({ type: 'wallet-refresh' });
@@ -2541,6 +2572,12 @@
                     else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                     else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
                     else if (m.type === 'error') {
+                        // ✅ FEATURE #4: intercept auth failures so we can show the inactivity message
+                        if (m.message === 'auth-failed') {
+                            this.lastAuthFailureReason = m.reason || 'unknown';
+                            this._handleAuthFailure(m.reason || 'unknown');
+                            return;
+                        }
                         this.onError && this.onError(m);
                         if (m.code === 'AUTH_REQUIRED' && this.ws) { try { this.ws.close(4001, 'authentication required'); } catch {} }
                     }
@@ -2548,9 +2585,18 @@
                 this.ws.onclose = (ev) => {
                     if (generation !== this.connectionGeneration) return;
                     clearInterval(this._ka);
+                    const wasAuthenticated = this.authenticated;
                     this.authenticated = false;
                     this.connecting = false;
                     this.onConnection && this.onConnection(false);
+                    // ✅ FEATURE #4: if the socket closed on 4001 before we were authenticated,
+                    // try to surface the inactivity message even if the error frame was lost.
+                    if (ev.code === 4001 && !wasAuthenticated) {
+                        if (this.lastAuthFailureReason === 'expired' || !this.lastAuthFailureReason) {
+                            this._handleAuthFailure(this.lastAuthFailureReason || 'expired');
+                        }
+                        return;
+                    }
                     if (ev.code === 1000 || ev.code === 4001 || ev.code === 4003) return;
                     setTimeout(() => this.connect(this.initData, this.refCode, this.roomId, this.devUsername), this.backoff);
                     this.backoff = Math.min(this.backoff * 2, 15000);
@@ -2558,6 +2604,16 @@
                 this.ws.onerror = (err) => window.WINZO_RECORD_ERROR('WS-ERROR', err);
                 clearInterval(this._ka);
                 this._ka = setInterval(() => this.rawSend({ type: 'ping' }), 25000);
+            }
+            // ✅ FEATURE #4: only "expired initData" is treated as the inactivity case.
+            _handleAuthFailure(reason) {
+                if (reason !== 'expired') return;
+                if (this._authFailureNotified) return;
+                this._authFailureNotified = true;
+                if (this.everAuthenticated) {
+                    this.onAuthFailed && this.onAuthFailed(reason);
+                }
+                if (this.ws) { try { this.ws.close(4001, 'auth-failed'); } catch {} }
             }
             rawSend(m) {
                 if (this.ws && this.ws.readyState === 1) { try { this.ws.send(JSON.stringify(m)); return true; } catch {} }
@@ -2862,6 +2918,10 @@
                 },
                 onNotification: (m, key) => handleIncomingNotificationData(m, key),
                 onUserEvent: (m) => { if (window.handleUserEventMessage) window.handleUserEventMessage(m); },
+                // ✅ FEATURE #4: display the Amharic inactivity / reopen message
+                onAuthFailed: (reason) => {
+                    showAuthFailureMessage();
+                },
                 onAccountBlocked: (m) => {
                     if (window.handleUserEventMessage) {
                         window.handleUserEventMessage({
