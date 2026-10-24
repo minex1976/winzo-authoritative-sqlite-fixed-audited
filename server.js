@@ -29,6 +29,9 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '9f8a7b6c5d4e3f2a1b0c1976';
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
+// ✅ NEW: Configurable signup bonus (was hardcoded 30, now 15)
+const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
+
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authentication will fail.');
 
@@ -312,10 +315,13 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     }
     
     const t = now();
+    // ✅ CHANGED: Signup bonus now 15 Birr (configurable via SIGNUP_BONUS env)
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
-      telegram_username: extra.telegram_username || null, main_wallet: 0, play_wallet: bot ? BOT_START_WALLET : 30,
-      signup_bonus_remaining: bot ? 0 : 30, signup_bonus_original: bot ? 0 : 30,
+      telegram_username: extra.telegram_username || null, main_wallet: 0,
+      play_wallet: bot ? BOT_START_WALLET : SIGNUP_BONUS,
+      signup_bonus_remaining: bot ? 0 : SIGNUP_BONUS,
+      signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
       withdrawal_hold_until: bot ? 0 : t + DAY, withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : (extra.last_ip_hash || null),
@@ -1606,7 +1612,7 @@ app.get('/admin/activity', async (req, res) => {
 });
 
 // ============================================================================
-// 🔬 DIAGNOSTICS ENDPOINTS (NEW)
+// 🔬 DIAGNOSTICS ENDPOINTS
 // ============================================================================
 
 /** Show ALL recent transactions regardless of status (for "lost request" forensics). */
@@ -1724,6 +1730,7 @@ app.get('/admin/diagnostics', async (req, res) => {
         unprocessedSms: unprocessedSms.rows[0].c,
         usedReferences: approvedRefs.rows[0].c,
         traced24h: traced24h.rows[0].c,
+        signupBonus: SIGNUP_BONUS,
       },
       failedStagesLastHour: failedStages.rows,
       stuckDeposits: stuck.rows.map(r => ({ ...r, amount: Number(r.amount), timestamp: Number(r.timestamp) })),
@@ -1777,6 +1784,7 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
+  console.log(`🎁 Signup bonus for new users: ${SIGNUP_BONUS} Birr`);
   (async () => {
     try {
       await initDb();
