@@ -135,6 +135,19 @@ async function initDb() {
           detail JSONB DEFAULT '{}'::jsonb,
           at BIGINT NOT NULL
       );
+
+      -- ✅ NEW: persistent record of human winners per round
+      CREATE TABLE IF NOT EXISTS game_winners (
+          id VARCHAR(128) PRIMARY KEY,
+          username VARCHAR(64) NOT NULL,
+          display_name VARCHAR(128),
+          room_id VARCHAR(64) NOT NULL,
+          round INT NOT NULL,
+          win_amount NUMERIC NOT NULL,
+          winning_number INT,
+          prize_pool NUMERIC,
+          created_at BIGINT NOT NULL
+      );
     `);
 
     await client.query(`
@@ -144,7 +157,13 @@ async function initDb() {
       ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(128);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
+      -- ✅ FIX: ensure referral_earnings exists on pre-existing databases
+      ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
     `);
+
+    // ✅ FIX: backfill NULLs so arithmetic never breaks
+    await client.query(`UPDATE users SET referral_earnings = 0 WHERE referral_earnings IS NULL;`);
+
     console.log('✅ Migrations applied.');
 
     await client.query(`
@@ -157,6 +176,10 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_request_trace_uid ON request_trace (uid, at DESC);
       CREATE INDEX IF NOT EXISTS idx_request_trace_tx ON request_trace (tx_id);
       CREATE INDEX IF NOT EXISTS idx_request_trace_stage ON request_trace (stage, status, at DESC);
+      -- ✅ NEW: fast lookups for winner history
+      CREATE INDEX IF NOT EXISTS idx_game_winners_username ON game_winners (username, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_game_winners_room ON game_winners (room_id, round);
+      CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by) WHERE referred_by IS NOT NULL;
     `);
     console.log('✅ Database Schema Verified.');
   } catch (e) {
@@ -396,14 +419,11 @@ async function sendWallet(uid) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-// ✅ FIXED: Handle both online (WS) and offline (DB) correctly
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const timestamp = Number(data.timestamp || now());
   const dbType = data.type || 'notification';
   
-  // Force the WebSocket type to 'notification' so the client listener catches it.
-  // Keep the original type in 'notificationType' so the client can style it.
   const wsPayload = { 
     ...data, 
     type: 'notification', 
@@ -969,6 +989,7 @@ async function claimPayout(uid, amount, roomId, round, kind) {
   }
 }
 
+// ✅ FIX (referral): more robust referral commission credit
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (!ref || ref === winnerUid || amount <= 0) return false;
   const key = `ref:${roomId}_${round}_${winnerUid}_${ref}`;
@@ -979,19 +1000,62 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
     const marker = await client.query('SELECT id FROM notifications WHERE id = $1', [key]);
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
 
-    await client.query('INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING', [ref, now()]);
-    await client.query('UPDATE users SET main_wallet = main_wallet + $1, referral_earnings = referral_earnings + $1, wallet_updated_at = $2, updated_at = $2 WHERE username = $3', [amount, now(), ref]);
+    // Ensure referrer row exists (may not have connected yet)
+    await client.query(
+      'INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING',
+      [ref, now()]
+    );
+    // Credit main wallet + referral_earnings (COALESCE guards against NULLs)
+    await client.query(
+      `UPDATE users
+          SET main_wallet = COALESCE(main_wallet,0) + $1,
+              referral_earnings = COALESCE(referral_earnings,0) + $1,
+              wallet_updated_at = $2,
+              updated_at = $2
+        WHERE username = $3`,
+      [amount, now(), ref]
+    );
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, ref, 'referral_marker', now()]);
     
     await client.query('COMMIT');
-    await addNotification(ref, { message: `🎁 You earned ${amount} Birr commission from a win.` });
+    await addNotification(ref, {
+      type: 'referral_commission',
+      message: `🎁 You earned ${amount} Birr commission from a win.`
+    });
     await sendWallet(ref);
+    console.log(`[REFERRAL] credited ${amount} Birr to ${ref} from winner ${winnerUid} (room=${roomId} round=${round})`);
     return true;
   } catch (e) {
     await client.query('ROLLBACK');
+    console.error('[REFERRAL] error:', e.message, { ref, amount, roomId, round, winnerUid });
     return false;
   } finally {
     client.release();
+  }
+}
+
+// ✅ NEW: Record human winner to persistent history table
+async function recordHumanWinner({ username, displayName, roomId, round, winAmount, winningNumber, prizePool }) {
+  try {
+    await pool.query(
+      `INSERT INTO game_winners (id, username, display_name, room_id, round, win_amount, winning_number, prize_pool, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        `win_${roomId}_${round}_${username}`,
+        username,
+        displayName || username,
+        roomId,
+        round,
+        winAmount,
+        winningNumber,
+        prizePool,
+        now()
+      ]
+    );
+    console.log(`[WINNER-RECORD] ${username} (${displayName}) won ${winAmount} in ${roomId} round ${round}`);
+  } catch (e) {
+    console.error('[WINNER-RECORD] failed:', e.message, { username, roomId, round, winAmount });
   }
 }
 
@@ -1158,8 +1222,42 @@ async function toSpinning(room) {
     for (const uid of winners) {
       if (share <= 0) break;
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-      if (!room.players.get(uid)?.isBot) {
+
+      const player = room.players.get(uid);
+      if (player?.isBot) continue; // bots: no record, no notification, no referral
+
+      const displayName = player?.displayName || uid;
+
+      // ✅ NEW: record human winner to persistent history table
+      await recordHumanWinner({
+        username: uid,
+        displayName,
+        roomId: room.id,
+        round: room.round,
+        winAmount: share,
+        winningNumber,
+        prizePool
+      });
+
+      // Notify human winner
+      try {
         await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` });
+      } catch (e) {
+        console.error('[WIN-NOTIFY]', e.message, { uid });
+      }
+
+      // ✅ FIX: credit referral commission (5% of winner's share) to their referrer
+      try {
+        const refRes = await pool.query('SELECT referred_by FROM users WHERE username = $1', [uid]);
+        const refBy = refRes.rows[0]?.referred_by;
+        if (refBy && refBy !== uid) {
+          const commission = Math.floor(share * REFERRAL_RATE);
+          if (commission > 0) {
+            await creditReferral(refBy, commission, room.id, room.round, uid);
+          }
+        }
+      } catch (e) {
+        console.error('[REFERRAL] credit failed:', e.message, { uid, share });
       }
     }
   }
@@ -1574,7 +1672,6 @@ app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 
-// ✅ NEW: Endpoint for offline users to fetch missed notifications
 app.get('/user/notifications', async (req, res) => {
   const uid = String(req.query.uid || '').trim();
   if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
@@ -1676,7 +1773,6 @@ app.post('/admin/block-user', async (req, res) => {
   }
 });
 
-// ✅ FIXED: Admin send message uses standard notification payload
 app.post('/admin/send-message', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   const { userId, message } = req.body;
@@ -1716,6 +1812,49 @@ app.get('/admin/user-transactions', async (req, res) => {
         reference: t.reference,
         reason: t.reason,
         wallet_applied: Number(t.wallet_applied)
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ✅ NEW: query recorded human winners
+app.get('/admin/winners', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const username = String(req.query.username || '').trim();
+    const roomId = String(req.query.roomId || '').trim();
+
+    const conds = [];
+    const vals = [];
+    let i = 1;
+    if (username) { conds.push(`username = $${i++}`); vals.push(username); }
+    if (roomId) { conds.push(`room_id = $${i++}`); vals.push(roomId); }
+
+    vals.push(limit);
+    const sql = `
+      SELECT id, username, display_name, room_id, round, win_amount, winning_number, prize_pool, created_at
+      FROM game_winners
+      ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''}
+      ORDER BY created_at DESC
+      LIMIT $${i}
+    `;
+    const r = await pool.query(sql, vals);
+    res.json({
+      ok: true,
+      count: r.rows.length,
+      winners: r.rows.map(w => ({
+        id: w.id,
+        username: w.username,
+        displayName: w.display_name,
+        roomId: w.room_id,
+        round: Number(w.round),
+        winAmount: Number(w.win_amount),
+        winningNumber: w.winning_number == null ? null : Number(w.winning_number),
+        prizePool: Number(w.prize_pool || 0),
+        createdAt: Number(w.created_at)
       }))
     });
   } catch (e) {
