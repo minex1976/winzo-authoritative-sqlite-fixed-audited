@@ -171,8 +171,8 @@
         .sticky-note { color: #9d8bb7; font-size: 0.72rem; letter-spacing: 0.6px; border-top: 1px solid rgba(180, 120, 255, 0.15); padding-top: 12px; }
         .sticky-spinner { width: 34px; height: 34px; margin: 0 auto 12px; border: 3px solid rgba(255, 130, 130, 0.15); border-top: 3px solid #ff6b6b; border-radius: 50%; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #fireworksCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3000; display: none; }
-        #fireworksCanvas.active { display: block; pointer-events: none; }
+        #fireworksCanvas { display: none !important; visibility: hidden !important; pointer-events: none !important; }
+        #fireworksCanvas.active { display: none !important; }
         .ocr-progress-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.7); justify-content: center; align-items: center; z-index: 200000 !important; padding: 20px; }
         .ocr-progress-modal.active { display: flex !important; z-index: 200000 !important; }
         .ocr-progress-modal .modal-content { max-width: 340px; text-align: center; padding: 30px 20px; }
@@ -516,6 +516,123 @@
       .title { font-size: 1rem; }
       .bet-switcher, .game-info-bar, .pick-status, .status-area { margin-top: 1px; margin-bottom: 2px; padding-top: 3px; padding-bottom: 3px; }
       .profile-area { min-height: 140px; }
+    }
+
+
+    /* AQUA CYBER: consistent styling for every overlay, result card, notification and spin wheel. */
+    :root { --aqua:#35f3e8; --aqua-soft:#9afff7; --cyan:#42cfff; --navy:#061522; --panel:#0b2436; --panel-deep:#071a2a; }
+    .modal-overlay, .deposit-modal, .withdraw-modal, .transaction-modal, .ocr-progress-modal,
+    .tx-result-modal, .broadcast-modal, #winzoUserEventModal {
+      background: rgba(0, 8, 15, .82) !important;
+      backdrop-filter: blur(9px) saturate(125%) !important;
+      -webkit-backdrop-filter: blur(9px) saturate(125%) !important;
+    }
+    .modal-content, .deposit-modal .modal-content, .withdraw-modal .modal-content,
+    .transaction-modal .modal-content, .ocr-progress-modal .modal-content {
+      color: #eafaff !important;
+      background: linear-gradient(155deg, rgba(10, 43, 62, .99), rgba(4, 18, 31, .99)) !important;
+      border: 1px solid rgba(53,243,232,.62) !important;
+      border-radius: 24px !important;
+      box-shadow: 0 20px 65px rgba(0,0,0,.72), 0 0 25px rgba(53,243,232,.12), inset 0 1px 0 rgba(255,255,255,.05) !important;
+    }
+    .modal-content h2, .modal-content h3, .transaction-modal h3,
+    .ocr-progress-modal .status-text { color: #eaffff !important; border-bottom-color: rgba(53,243,232,.24) !important; }
+    .modal-input, .referral-link { background: rgba(2,14,25,.92) !important; color:#efffff !important; border-color:rgba(66,207,255,.38) !important; }
+    .modal-input:focus, .referral-link:focus { border-color:var(--aqua) !important; box-shadow:0 0 0 3px rgba(53,243,232,.13) !important; }
+    .modal-btns .confirm, .referral-actions .share, .tx-result-ok, .broadcast-ok,
+    .modal-content .confirm, .modal-content button.confirm {
+      background:linear-gradient(135deg,#74fff2,#2bd8e9 55%,#149dc8) !important;
+      color:#04202b !important; border:1px solid #9afff7 !important;
+      box-shadow:0 3px 0 #08718d, 0 0 16px rgba(53,243,232,.12) !important;
+    }
+    .modal-btns .cancel, .transaction-modal .close-btn, .referral-actions .copy,
+    .waiting-modal .close-waiting {
+      background:rgba(66,207,255,.10) !important; color:#c8faff !important;
+      border:1px solid rgba(66,207,255,.26) !important;
+    }
+    .modal-error { color:#ff8796 !important; }
+    .balance-info, .paste-status, .paste-divider { color:#a5c6d8 !important; }
+    .balance-info .amount, .paste-label { color:#65f7ed !important; }
+    .paste-box { background:rgba(53,243,232,.055) !important; border-color:rgba(53,243,232,.28) !important; }
+    .paste-extract-btn { background:linear-gradient(135deg,#79ffe0,#28d6b0) !important; color:#03291f !important; }
+    .ocr-progress-modal .spinner { border-color:rgba(53,243,232,.12) !important; border-top-color:var(--aqua) !important; }
+
+    /* Winner announcement card: aqua glow, no celebratory sparkles or fireworks. */
+    .winning-card-halo { background:radial-gradient(circle at 50% 45%,rgba(53,243,232,.22),transparent 66%) !important; filter:blur(34px) !important; animation:none !important; }
+    .winning-number-card {
+      background:radial-gradient(circle at 50% 0%,rgba(53,243,232,.13),transparent 56%),linear-gradient(155deg,#0b2b40 0%,#071a2a 58%,#09283a 100%) !important;
+      border:1.5px solid rgba(53,243,232,.78) !important;
+      box-shadow:0 0 0 1px rgba(66,207,255,.12),0 0 34px rgba(53,243,232,.17),0 24px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(255,255,255,.07) !important;
+    }
+    .winning-number-card::before { background:linear-gradient(115deg,transparent 32%,rgba(120,255,249,.12) 50%,transparent 68%) !important; }
+    .winning-card-sparkles { display:none !important; }
+    .winning-card-title { color:#9afff7 !important; }
+    .winning-number-big { background:linear-gradient(180deg,#efffff 0%,#69fff1 48%,#22c7e8 100%) !important; -webkit-background-clip:text !important; background-clip:text !important; filter:drop-shadow(0 0 24px rgba(53,243,232,.46)) !important; }
+    .winning-card-divider { background:linear-gradient(90deg,transparent,rgba(53,243,232,.72),transparent) !important; }
+    .winning-card-amount { color:#77ffd0 !important; text-shadow:0 0 15px rgba(53,243,232,.25) !important; }
+    .winning-card-amount .amt-label, .winning-card-sub { color:#a5c6d8 !important; }
+    .winning-card-amount .amt-value { background:linear-gradient(180deg,#dfffff,#65f7ed 60%,#36c9e2) !important; -webkit-background-clip:text !important; background-clip:text !important; }
+    .winners-modal-content + div { color:#83aebe !important; }
+
+    /* Spin wheel overlay and machine frame. Keep the existing wheel DOM, animation and timing logic. */
+    .wheel-anim-overlay { background:radial-gradient(ellipse at 50% 35%,rgba(13,65,88,.97),rgba(2,10,18,.98) 72%) !important; }
+    .wheel-anim-machine { filter:drop-shadow(0 12px 32px rgba(0,0,0,.35)); }
+    .wheel-container { border:10px solid #35f3e8 !important; box-shadow:0 0 0 3px rgba(66,207,255,.18),0 0 34px rgba(53,243,232,.3),inset 0 0 20px rgba(0,0,0,.7) !important; background:#061522 !important; }
+    .wheel-pointer { border-top-color:#74fff2 !important; filter:drop-shadow(0 0 9px rgba(53,243,232,.65)) !important; }
+    .wheel-center { background:linear-gradient(135deg,#74fff2,#159dc8) !important; color:#04202b !important; border:4px solid #c7fffb !important; box-shadow:0 0 20px rgba(53,243,232,.45) !important; }
+    .wheel-stand { background:linear-gradient(90deg,#0b3045,#126078,#082538) !important; border:1px solid rgba(53,243,232,.42) !important; box-shadow:0 0 20px rgba(53,243,232,.12) !important; }
+    .wheel-anim-status { color:#b9faff !important; text-shadow:0 0 12px rgba(53,243,232,.2); }
+    .wheel-ready-bubble { color:#efffff !important; background:rgba(4,22,35,.88) !important; border-color:rgba(53,243,232,.9) !important; text-shadow:0 0 12px rgba(53,243,232,.65) !important; box-shadow:0 0 24px rgba(53,243,232,.22) !important; }
+    .wheel-ready-number { color:#73fff1 !important; -webkit-text-stroke:2px #073d4c !important; text-shadow:0 4px 0 #073d4c,0 0 18px rgba(53,243,232,.7) !important; }
+
+    /* Toasts, transaction outcomes, broadcasts, waiting notices and admin messages. */
+    .toast, .waiting-modal {
+      background:linear-gradient(155deg,rgba(10,43,62,.98),rgba(4,18,31,.98)) !important;
+      border:1px solid rgba(53,243,232,.68) !important;
+      color:#eafaff !important; box-shadow:0 18px 48px rgba(0,0,0,.55),0 0 22px rgba(53,243,232,.12) !important;
+    }
+    .toast h3, .waiting-modal h3 { color:#eaffff !important; }
+    .toast p, .waiting-modal p { color:#b4d5e2 !important; }
+    .toast .icon { filter:drop-shadow(0 0 10px rgba(53,243,232,.25)); }
+    .tx-result-modal .tx-result-card, .broadcast-modal .broadcast-card {
+      background:linear-gradient(155deg,rgba(10,43,62,.99),rgba(4,18,31,.99)) !important;
+      border:1.5px solid rgba(53,243,232,.7) !important;
+      box-shadow:0 24px 70px rgba(0,0,0,.75),0 0 30px rgba(53,243,232,.14) !important;
+    }
+    .tx-result-modal.approved .tx-result-card { border-color:rgba(103,255,208,.65) !important; box-shadow:0 24px 70px rgba(0,0,0,.75),0 0 24px rgba(103,255,208,.13) !important; }
+    .tx-result-modal.rejected .tx-result-card { border-color:rgba(255,135,150,.65) !important; box-shadow:0 24px 70px rgba(0,0,0,.75),0 0 24px rgba(255,135,150,.13) !important; }
+    .tx-result-title, .broadcast-title { color:#9afff7 !important; }
+    .tx-result-modal.approved .tx-result-title { color:#77ffd0 !important; }
+    .tx-result-modal.rejected .tx-result-title { color:#ff8796 !important; }
+    .tx-result-msg, .broadcast-msg { color:#c7e5ef !important; }
+    .broadcast-modal .broadcast-card { border-color:rgba(53,243,232,.68) !important; }
+    .broadcast-ok { border-radius:16px !important; }
+    .sticky-broadcast-overlay { background:rgba(0,8,15,.91) !important; backdrop-filter:blur(9px) !important; }
+    .sticky-broadcast-card {
+      background:linear-gradient(155deg,#0b2b40,#061522 75%) !important;
+      border:1.5px solid rgba(53,243,232,.7) !important;
+      box-shadow:0 0 0 1px rgba(66,207,255,.1),0 0 34px rgba(53,243,232,.14),0 25px 70px rgba(0,0,0,.78) !important;
+    }
+    .sticky-badge { background:rgba(53,243,232,.1) !important; border-color:rgba(53,243,232,.45) !important; color:#9afff7 !important; }
+    .sticky-badge::before { color:#35f3e8 !important; }
+    .sticky-title { color:#eaffff !important; }
+    .sticky-msg { color:#c7e5ef !important; }
+    .sticky-note { color:#8bb3c5 !important; border-top-color:rgba(53,243,232,.18) !important; }
+    .sticky-spinner { border-color:rgba(53,243,232,.14) !important; border-top-color:#35f3e8 !important; }
+    #winzoUserEventModal .wue-card {
+      background:linear-gradient(155deg,#0b2b40,#061522 78%) !important;
+      border:1.5px solid rgba(53,243,232,.72) !important;
+      box-shadow:0 24px 70px rgba(0,0,0,.8),0 0 30px rgba(53,243,232,.15) !important;
+      color:#eafaff !important;
+    }
+    #winzoUserEventModal .wue-icon { filter:drop-shadow(0 4px 14px rgba(53,243,232,.25)) !important; }
+    #winzoUserEventModal .wue-title { color:#9afff7 !important; }
+    #winzoUserEventModal .wue-message { color:#eafaff !important; }
+    #winzoUserEventModal .wue-ok { background:linear-gradient(135deg,#74fff2,#2bd8e9 55%,#149dc8) !important; color:#04202b !important; box-shadow:0 4px 16px rgba(53,243,232,.2) !important; }
+    .winner-celebration { background:linear-gradient(145deg,rgba(8,43,60,.98),rgba(4,20,34,.98)) !important; border-color:#35f3e8 !important; box-shadow:0 12px 36px rgba(0,0,0,.55),0 0 24px rgba(53,243,232,.22) !important; color:#efffff !important; }
+    @media (prefers-reduced-motion: reduce) {
+      .winning-number-card, .winning-number-big, .winning-card-sparkles span, .winning-card-halo,
+      .tx-result-modal .tx-result-card, .broadcast-modal .broadcast-card { animation:none !important; }
     }
 
     </style>
@@ -1087,21 +1204,15 @@
             drawParticles();
             fireworksRAF = requestAnimationFrame(animateFireworks);
         }
-        function startFireworks() {
-            if (fireworksRunning) return;
-            fireworksRunning = true; fireworks = []; particles = [];
-            canvas.classList.add('active');
-            for (let i = 0; i < 6; i++) fireworks.push(new Firework({ x: (i+0.5) * (canvas.width/6) + (Math.random()-0.5)*60, y: canvas.height+20, targetY: canvas.height * (0.15 + Math.random()*0.35) }));
-            if (fireworksRAF) cancelAnimationFrame(fireworksRAF);
-            animateFireworks();
-            if (fireworksAutoStopTimer) clearTimeout(fireworksAutoStopTimer);
-            fireworksAutoStopTimer = setTimeout(() => stopFireworks(), 10000);
-        }
+        // Fireworks are intentionally disabled. Keep these function names as no-op hooks
+        // so the existing game/result logic can continue calling them unchanged.
+        function startFireworks() { if (canvas) canvas.classList.remove('active'); }
         function stopFireworks() {
-            fireworksRunning = false; canvas.classList.remove('active');
+            fireworksRunning = false;
+            if (canvas) canvas.classList.remove('active');
             if (fireworksRAF) { cancelAnimationFrame(fireworksRAF); fireworksRAF = null; }
             if (fireworksAutoStopTimer) { clearTimeout(fireworksAutoStopTimer); fireworksAutoStopTimer = null; }
-            ctx2.clearRect(0, 0, canvas.width, canvas.height);
+            if (ctx2 && canvas) ctx2.clearRect(0, 0, canvas.width, canvas.height);
             fireworks = []; particles = [];
         }
 
