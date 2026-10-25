@@ -177,8 +177,6 @@
         .sticky-note { color: #9d8bb7; font-size: 0.72rem; letter-spacing: 0.6px; border-top: 1px solid rgba(180, 120, 255, 0.15); padding-top: 12px; }
         .sticky-spinner { width: 34px; height: 34px; margin: 0 auto 12px; border: 3px solid rgba(255, 130, 130, 0.15); border-top: 3px solid #ff6b6b; border-radius: 50%; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #fireworksCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3000; display: none; }
-        #fireworksCanvas.active { display: block; pointer-events: none; }
         .ocr-progress-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(10, 5, 20, 0.7); justify-content: center; align-items: center; z-index: 200000 !important; padding: 20px; }
         .ocr-progress-modal.active { display: flex !important; z-index: 200000 !important; }
         .ocr-progress-modal .modal-content { max-width: 340px; text-align: center; padding: 30px 20px; }
@@ -610,7 +608,6 @@
             <div class="sticky-note">This message will disappear automatically when the admin finishes.</div>
         </div>
     </div>
-    <canvas id="fireworksCanvas"></canvas>
 
     <div id="wheelAnimOverlay" class="wheel-anim-overlay">
       <div class="wheel-anim-machine">
@@ -867,109 +864,6 @@
             [readyAudio, winnerAudio].forEach(a => { if (a) { a.onended = null; try { a.pause(); a.currentTime = 0; a.muted = false; } catch (e) {} } });
             winnerAudioStartingRounds.delete(key);
             playNoWinnerAudio();
-        }
-
-        const canvas = document.getElementById('fireworksCanvas');
-        const ctx2 = canvas.getContext('2d');
-        let fireworks = []; let particles = []; let fireworksRunning = false;
-        let fireworksRAF = null; let fireworksAutoStopTimer = null;
-        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-        window.addEventListener('resize', resizeCanvas); resizeCanvas();
-        class Firework {
-            constructor(opts) {
-                opts = opts || {};
-                this.x = (opts.x != null) ? opts.x : Math.random() * canvas.width;
-                this.y = (opts.y != null) ? opts.y : canvas.height + 20;
-                this.targetY = (opts.targetY != null) ? opts.targetY : Math.random() * canvas.height * 0.45 + canvas.height * 0.08;
-                this.speed = 5 + Math.random() * 5;
-                this.trail = []; this.exploded = false;
-                this.size = 2.5 + Math.random() * 2.5;
-                this.hue = (Math.random() < 0.45) ? 35 + Math.random() * 22 : Math.random() * 360;
-            }
-            update() {
-                if (this.exploded) return;
-                this.trail.push({ x: this.x, y: this.y });
-                if (this.trail.length > 14) this.trail.shift();
-                this.y -= this.speed;
-                if (this.y <= this.targetY) { this.exploded = true; this.explode(); }
-            }
-            explode() {
-                const count = 120 + Math.floor(Math.random() * 120);
-                const baseHue = this.hue;
-                const isGold = baseHue > 30 && baseHue < 60;
-                const colors = [`hsl(${baseHue},95%,65%)`, `hsl(${(baseHue+20)%360},95%,60%)`, `hsl(${(baseHue-20+360)%360},95%,65%)`, '#ffffff', '#fff8d6'];
-                for (let i = 0; i < count; i++) {
-                    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.15;
-                    const speed = 2 + Math.random() * 7;
-                    particles.push({ x: this.x, y: this.y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, life: 1, decay: 0.006+Math.random()*0.012, size: 2.5+Math.random()*3.5, color: colors[Math.floor(Math.random()*colors.length)], gravity: 0.045, sparkle: isGold && Math.random() < 0.35 });
-                }
-                if (isGold) {
-                    const ringCount = 40 + Math.floor(Math.random() * 30);
-                    for (let i = 0; i < ringCount; i++) {
-                        const angle = (Math.PI * 2 * i) / ringCount;
-                        const speed = 6 + Math.random() * 2;
-                        particles.push({ x: this.x, y: this.y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, life: 1, decay: 0.008, size: 3, color: '#ffd866', gravity: 0.03, sparkle: true });
-                    }
-                }
-            }
-            draw() {
-                if (this.exploded) return;
-                for (let i = 0; i < this.trail.length; i++) {
-                    const alpha = i / this.trail.length;
-                    ctx2.beginPath();
-                    ctx2.arc(this.trail[i].x, this.trail[i].y, this.size * alpha * 0.9, 0, Math.PI * 2);
-                    ctx2.fillStyle = `rgba(255,220,150,${alpha * 0.7})`;
-                    ctx2.fill();
-                }
-                ctx2.beginPath(); ctx2.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx2.fillStyle = '#fff'; ctx2.fill();
-                ctx2.shadowBlur = 24; ctx2.shadowColor = '#f5a623';
-                ctx2.fill(); ctx2.shadowBlur = 0;
-            }
-        }
-        function drawParticles() {
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
-                p.x += p.vx; p.y += p.vy; p.vy += p.gravity;
-                p.vx *= 0.985; p.vy *= 0.985; p.life -= p.decay;
-                if (p.life <= 0) { particles.splice(i, 1); continue; }
-                ctx2.globalAlpha = p.life;
-                ctx2.shadowBlur = p.sparkle ? 18 : 10;
-                ctx2.shadowColor = p.color;
-                ctx2.beginPath();
-                const size = p.sparkle ? p.size * p.life * (1 + Math.sin(Date.now() * 0.02 + p.x) * 0.3) : p.size * p.life;
-                ctx2.arc(p.x, p.y, size, 0, Math.PI * 2);
-                ctx2.fillStyle = p.color; ctx2.fill();
-                ctx2.shadowBlur = 0; ctx2.globalAlpha = 1;
-            }
-        }
-        function animateFireworks() {
-            if (!fireworksRunning) { ctx2.clearRect(0, 0, canvas.width, canvas.height); return; }
-            ctx2.clearRect(0, 0, canvas.width, canvas.height);
-            if (Math.random() < 0.20 && fireworks.length < 12) fireworks.push(new Firework());
-            for (let i = fireworks.length - 1; i >= 0; i--) {
-                const f = fireworks[i]; f.update(); f.draw();
-                if (f.exploded) fireworks.splice(i, 1);
-            }
-            drawParticles();
-            fireworksRAF = requestAnimationFrame(animateFireworks);
-        }
-        function startFireworks() {
-            if (fireworksRunning) return;
-            fireworksRunning = true; fireworks = []; particles = [];
-            canvas.classList.add('active');
-            for (let i = 0; i < 6; i++) fireworks.push(new Firework({ x: (i+0.5) * (canvas.width/6) + (Math.random()-0.5)*60, y: canvas.height+20, targetY: canvas.height * (0.15 + Math.random()*0.35) }));
-            if (fireworksRAF) cancelAnimationFrame(fireworksRAF);
-            animateFireworks();
-            if (fireworksAutoStopTimer) clearTimeout(fireworksAutoStopTimer);
-            fireworksAutoStopTimer = setTimeout(() => stopFireworks(), 10000);
-        }
-        function stopFireworks() {
-            fireworksRunning = false; canvas.classList.remove('active');
-            if (fireworksRAF) { cancelAnimationFrame(fireworksRAF); fireworksRAF = null; }
-            if (fireworksAutoStopTimer) { clearTimeout(fireworksAutoStopTimer); fireworksAutoStopTimer = null; }
-            ctx2.clearRect(0, 0, canvas.width, canvas.height);
-            fireworks = []; particles = [];
         }
 
         let tg = null; let telegramUser = null; let isTelegram = false;
@@ -1659,7 +1553,7 @@
                 renderWinningCardBody(n, winAmount, winners);
                 if (winnersModal) winnersModal.classList.add('active');
                 showWinnerCelebration(r, winners);
-                if (winners.filter(Boolean).length) { playEmbeddedWinnerAnnouncement(r); startFireworks(); }
+                if (winners.filter(Boolean).length) { playEmbeddedWinnerAnnouncement(r); }
                 else playNoWinnerEffectOnce(r);
                 if (!isResultsCountdownRunning) startResultsCountdown();
             }).catch(() => { wheelAnimationPlaying = false; window._wheelAnimStartedAt = null; });
@@ -1787,7 +1681,7 @@
             if (stickyMsgEl) stickyMsgEl.textContent = message || 'Service update in progress…';
             if (stickyOverlay) stickyOverlay.classList.add('active');
             stopTimer(); stopResultsCountdown();
-            try { stopFireworks(); } catch (e) {}
+            
             document.querySelectorAll('.num-btn').forEach(btn => btn.disabled = true);
             updateStatus('⏸ Game paused by admin.');
         }
@@ -2211,7 +2105,7 @@
             gamePausedBySticky = false; activeStickyBroadcast = null;
             closeMoreDropdown(); hideWaitingModal();
             if (welcomeToast) welcomeToast.classList.remove('active');
-            stopFireworks();
+
             if (transactionModal) transactionModal.classList.remove('active');
             if (winnersModal) winnersModal.classList.remove('active');
             if (stickyOverlay) stickyOverlay.classList.remove('active');
