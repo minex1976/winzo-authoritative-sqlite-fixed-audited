@@ -1006,7 +1006,7 @@
         let lastRoomSnapshotRaw = null;
         let localSelectionRound = null;
         let localSelectionPicks = [];
-        const MAX_PICKS_PER_ROUND = 3;
+        const MAX_PICKS_PER_ROUND = 5;
         const pendingPickOps = new Set();
         let serverTimeOffset = 0;
         let phaseDeadline = 0;
@@ -1774,7 +1774,7 @@
             if (!modalEl || !okBtn) return;
             if (iconEl) iconEl.textContent = '⚠️';
             if (titleEl) titleEl.textContent = 'Connection Lost';
-            if (msgEl) msgEl.textContent = 'ጨዋታውን ለማስቀጠል ጌሙን ይዝጉትና በድጋሚ ይግቡ።';
+            if (msgEl) msgEl.textContent = 'Connection ተቋርጧል። እባክዎ፣ ጌሙን ይዝጉና እንደገና ይክፈቱ።';
             modalEl.classList.add('is-visible');
             okBtn.onclick = () => modalEl.classList.remove('is-visible');
         }
