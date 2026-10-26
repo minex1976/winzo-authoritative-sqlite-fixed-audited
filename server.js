@@ -59,7 +59,7 @@ const MAX_IMAGE_BYTES = 2_000_000;
 const WS_MAX_PAYLOAD = 5 * 1024 * 1024;
 
 const BOT_NAMES = [
-  "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara", 
+  "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara",
   "Bereket", "Tigist", "Elias", "Liya", "Samuel", "Bethel", "Nahom", "Rediet",
   "Biniam", "Feven", "Girma", "Mimi", "Henok", "Tsion", "Fikru", "Eden",
   "Dagmawi", "Ruth", "Natnael", "Mahlet", "Yosef", "Rahel", "Tewodros", "Marta",
@@ -136,7 +136,7 @@ async function initDb() {
           at BIGINT NOT NULL
       );
 
-      -- ✅ NEW: persistent record of human winners per round
+      -- ✅ persistent record of human winners per round
       CREATE TABLE IF NOT EXISTS game_winners (
           id VARCHAR(128) PRIMARY KEY,
           username VARCHAR(64) NOT NULL,
@@ -148,6 +148,28 @@ async function initDb() {
           prize_pool NUMERIC,
           created_at BIGINT NOT NULL
       );
+
+      -- ✅ NEW: per-round snapshot of human participation (all humans, not just winners)
+      CREATE TABLE IF NOT EXISTS round_snapshots (
+          id VARCHAR(160) PRIMARY KEY,
+          room_id VARCHAR(64) NOT NULL,
+          round INT NOT NULL,
+          bet NUMERIC NOT NULL,
+          human_count INT NOT NULL DEFAULT 0,
+          human_picks INT NOT NULL DEFAULT 0,
+          bot_count INT NOT NULL DEFAULT 0,
+          bot_picks INT NOT NULL DEFAULT 0,
+          total_picks INT NOT NULL DEFAULT 0,
+          prize_pool NUMERIC NOT NULL DEFAULT 0,
+          winning_number INT,
+          winner_count INT NOT NULL DEFAULT 0,
+          human_winner_count INT NOT NULL DEFAULT 0,
+          human_win_amount NUMERIC NOT NULL DEFAULT 0,
+          human_player_ids JSONB DEFAULT '[]'::jsonb,
+          started_at BIGINT NOT NULL,
+          ended_at BIGINT NOT NULL,
+          created_at BIGINT NOT NULL
+      );
     `);
 
     await client.query(`
@@ -157,11 +179,9 @@ async function initDb() {
       ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(128);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
-      -- ✅ FIX: ensure referral_earnings exists on pre-existing databases
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
     `);
 
-    // ✅ FIX: backfill NULLs so arithmetic never breaks
     await client.query(`UPDATE users SET referral_earnings = 0 WHERE referral_earnings IS NULL;`);
 
     console.log('✅ Migrations applied.');
@@ -176,10 +196,14 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_request_trace_uid ON request_trace (uid, at DESC);
       CREATE INDEX IF NOT EXISTS idx_request_trace_tx ON request_trace (tx_id);
       CREATE INDEX IF NOT EXISTS idx_request_trace_stage ON request_trace (stage, status, at DESC);
-      -- ✅ NEW: fast lookups for winner history
       CREATE INDEX IF NOT EXISTS idx_game_winners_username ON game_winners (username, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_game_winners_room ON game_winners (room_id, round);
       CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by) WHERE referred_by IS NOT NULL;
+
+      -- ✅ NEW: indexes for round_snapshots
+      CREATE INDEX IF NOT EXISTS idx_round_snapshots_time ON round_snapshots (ended_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_round ON round_snapshots (room_id, round);
+      CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_time ON round_snapshots (room_id, ended_at DESC);
     `);
     console.log('✅ Database Schema Verified.');
   } catch (e) {
@@ -300,7 +324,7 @@ function validateInitData(initData, maxAge = 300) {
     const rawUser = params.get('user');
     user = rawUser ? JSON.parse(rawUser) : null;
   } catch { return { ok: false, reason: 'user-not-json' }; }
-  
+
   if (!user || typeof user.id !== 'number' || !Number.isSafeInteger(user.id) || user.id <= 0) return { ok: false, reason: 'invalid-user' };
 
   return { ok: true, user, authDate, params };
@@ -312,7 +336,7 @@ function validateInitData(initData, maxAge = 300) {
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
   if (!clean) return null;
-  
+
   const client = await pool.connect();
   try {
     const res = await client.query('SELECT * FROM users WHERE username = $1', [clean]);
@@ -332,7 +356,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       }
       return { ...current, ...patch };
     }
-    
+
     const t = now();
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
@@ -345,12 +369,12 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : (extra.last_ip_hash || null),
       created_at: t, updated_at: t
     };
-    
+
     await client.query(`
-      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, created_at, updated_at) 
+      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, created_at, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
     `, Object.values(newUser));
-    
+
     return newUser;
   } finally {
     client.release();
@@ -389,10 +413,10 @@ async function resolveTelegramUser(user, referredBy = null) {
         finalUid = canonicalUid;
       }
     }
-    
+
     await client.query('COMMIT');
     const created = await ensureUser(finalUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null });
-    await pool.query('INSERT INTO telegram_users (telegram_id, uid, username, telegram_username, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (telegram_id) DO UPDATE SET uid=EXCLUDED.uid, username=EXCLUDED.username, updated_at=EXCLUDED.updated_at', 
+    await pool.query('INSERT INTO telegram_users (telegram_id, uid, username, telegram_username, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (telegram_id) DO UPDATE SET uid=EXCLUDED.uid, username=EXCLUDED.username, updated_at=EXCLUDED.updated_at',
       [telegramId, finalUid, created.username, telegramUsername, now()]);
     return { uid: finalUid, user: created, telegramId, telegramUsername };
   } catch (e) {
@@ -423,20 +447,20 @@ async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const timestamp = Number(data.timestamp || now());
   const dbType = data.type || 'notification';
-  
-  const wsPayload = { 
-    ...data, 
-    type: 'notification', 
-    notificationType: dbType, 
-    id, 
-    timestamp 
+
+  const wsPayload = {
+    ...data,
+    type: 'notification',
+    notificationType: dbType,
+    id,
+    timestamp
   };
 
   await pool.query(
-    'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)', 
+    'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)',
     [id, username, dbType, String(data.message || ''), data.status || null, data.txType || null, data.txId || null, timestamp]
   );
-  
+
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
@@ -549,12 +573,12 @@ async function transactionRequest(uid, data) {
     await client.query(`
       INSERT INTO transactions (id, username, uid, wallet_uid, telegram_id, telegram_username, display_name, type, amount, status, timestamp, reference, full_name, phone_number, image_data, reason, wallet_applied, client_request_id, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-    `, [id, uid, uid, uid, user.telegram_id, user.telegram_username, user.display_name || uid, type, amount, 'pending', now(), 
+    `, [id, uid, uid, uid, user.telegram_id, user.telegram_username, user.display_name || uid, type, amount, 'pending', now(),
         String(data.reference || ''), String(data.fullName || ''), String(data.phoneNumber || ''), String(data.imageData || '').slice(0, 2500000), '', 0, clientRequestId, now()]);
     await trace(traceId, uid, 'tx.insert', 'ok', { type, amount, reference: rawRef, txId: id, clientRequestId });
 
     if (clientRequestId) {
-      await client.query('INSERT INTO transaction_requests (uid, client_request_id, tx_id, type, amount, created_at) VALUES ($1,$2,$3,$4,$5,$6)', 
+      await client.query('INSERT INTO transaction_requests (uid, client_request_id, tx_id, type, amount, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
         [uid, clientRequestId, id, type, amount, now()]);
     }
 
@@ -607,7 +631,7 @@ async function transactionRequest(uid, data) {
 
 async function transactionImage(uid, id, imageData) {
   if (!id || !imageData || String(imageData).length > 2_500_000) return false;
-  const res = await pool.query('UPDATE transactions SET image_data = $1, updated_at = $2 WHERE id = $3 AND username = $4 AND status = $5 RETURNING id', 
+  const res = await pool.query('UPDATE transactions SET image_data = $1, updated_at = $2 WHERE id = $3 AND username = $4 AND status = $5 RETURNING id',
     [String(imageData), now(), id, uid, 'pending']);
   return res.rowCount > 0;
 }
@@ -637,7 +661,7 @@ async function adminDecision(id, decision, reason = '') {
     if (txRes.rows.length === 0) throw new Error('not-found');
     const tx = txRes.rows[0];
     if (tx.status !== 'pending') throw new Error('already-decided');
-    
+
     const userRes = await client.query('SELECT * FROM users WHERE username = $1 FOR UPDATE', [tx.wallet_uid || tx.uid]);
     if (userRes.rows.length === 0) throw new Error('wallet-user-not-found');
     const user = userRes.rows[0];
@@ -658,14 +682,14 @@ async function adminDecision(id, decision, reason = '') {
       newPending -= amount;
     }
 
-    await client.query('UPDATE users SET main_wallet = $1, play_wallet = $2, pending_withdrawal = $3, updated_at = $4 WHERE username = $5', 
+    await client.query('UPDATE users SET main_wallet = $1, play_wallet = $2, pending_withdrawal = $3, updated_at = $4 WHERE username = $5',
       [newMain, newPlay, newPending, now(), tx.wallet_uid || tx.uid]);
 
-    await client.query('UPDATE transactions SET status = $1, reason = $2, wallet_applied = 1, updated_at = $3 WHERE id = $4', 
+    await client.query('UPDATE transactions SET status = $1, reason = $2, wallet_applied = 1, updated_at = $3 WHERE id = $4',
       [decision, String(reason).slice(0, 256), now(), id]);
 
     await client.query('COMMIT');
-    
+
     const updatedTx = { ...tx, status: decision, reason };
     await sendWallet(tx.wallet_uid || tx.uid);
     await notifyTransaction(tx.wallet_uid || tx.uid, updatedTx);
@@ -717,7 +741,7 @@ function parsePaymentRecord(r) {
   const text = String(r.text || r.message || '').replace(/\s+/g, ' ').trim();
   let reference = r.reference || '';
   if (!reference && text) {
-    const m = text.match(/(?:transaction|txn|ref(?:erence)?)\s*(?:number|code|no\.?|id)?\s*(?:is|:|\-)?\s*([A-Z0-9]{6,})/i) 
+    const m = text.match(/(?:transaction|txn|ref(?:erence)?)\s*(?:number|code|no\.?|id)?\s*(?:is|:|\-)?\s*([A-Z0-9]{6,})/i)
            || text.match(/receipt\/([A-Za-z0-9]{6,24})/i);
     if (m) reference = m[1];
   }
@@ -736,7 +760,7 @@ function parsePaymentRecord(r) {
 
 async function logAutoActivity(kind, smsId, reference, amount, txId, reason) {
   try {
-    await pool.query('INSERT INTO auto_activity (id, kind, sms_id, reference, amount, tx_id, reason, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', 
+    await pool.query('INSERT INTO auto_activity (id, kind, sms_id, reference, amount, tx_id, reason, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
       [crypto.randomUUID(), kind, String(smsId||''), reference || '', Number(amount)||0, txId || '', reason || '', now()]);
   } catch (e) { console.error('[AUTO-LOG]', e.message); }
 }
@@ -975,7 +999,7 @@ async function claimPayout(uid, amount, roomId, round, kind) {
     await client.query('BEGIN');
     const marker = await client.query('SELECT id FROM notifications WHERE id = $1', [key]);
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
-    
+
     await client.query('UPDATE users SET main_wallet = main_wallet + $1, wallet_updated_at = $2, updated_at = $2 WHERE username = $3', [amount, now(), uid]);
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, uid, 'payout_marker', now()]);
     await client.query('COMMIT');
@@ -989,23 +1013,20 @@ async function claimPayout(uid, amount, roomId, round, kind) {
   }
 }
 
-// ✅ FIX (referral): more robust referral commission credit
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (!ref || ref === winnerUid || amount <= 0) return false;
   const key = `ref:${roomId}_${round}_${winnerUid}_${ref}`;
-  
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const marker = await client.query('SELECT id FROM notifications WHERE id = $1', [key]);
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
 
-    // Ensure referrer row exists (may not have connected yet)
     await client.query(
       'INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING',
       [ref, now()]
     );
-    // Credit main wallet + referral_earnings (COALESCE guards against NULLs)
     await client.query(
       `UPDATE users
           SET main_wallet = COALESCE(main_wallet,0) + $1,
@@ -1016,7 +1037,7 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
       [amount, now(), ref]
     );
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, ref, 'referral_marker', now()]);
-    
+
     await client.query('COMMIT');
     await addNotification(ref, {
       type: 'referral_commission',
@@ -1034,7 +1055,6 @@ async function creditReferral(ref, amount, roomId, round, winnerUid) {
   }
 }
 
-// ✅ NEW: Record human winner to persistent history table
 async function recordHumanWinner({ username, displayName, roomId, round, winAmount, winningNumber, prizePool }) {
   try {
     await pool.query(
@@ -1059,6 +1079,45 @@ async function recordHumanWinner({ username, displayName, roomId, round, winAmou
   }
 }
 
+// ✅ NEW: persist per-round human participation snapshot
+async function recordRoundSnapshot({
+  roomId, round, bet, humanCount, humanPicks, botCount, botPicks, totalPicks,
+  prizePool, winningNumber, winnerCount, humanWinnerCount, humanWinAmount,
+  humanPlayerIds, startedAt, endedAt,
+}) {
+  try {
+    const id = `snap_${roomId}_${round}`;
+    await pool.query(
+      `INSERT INTO round_snapshots (
+         id, room_id, round, bet, human_count, human_picks, bot_count, bot_picks,
+         total_picks, prize_pool, winning_number, winner_count, human_winner_count,
+         human_win_amount, human_player_ids, started_at, ended_at, created_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ON CONFLICT (id) DO UPDATE SET
+         human_count = EXCLUDED.human_count,
+         human_picks = EXCLUDED.human_picks,
+         bot_count = EXCLUDED.bot_count,
+         bot_picks = EXCLUDED.bot_picks,
+         total_picks = EXCLUDED.total_picks,
+         prize_pool = EXCLUDED.prize_pool,
+         winning_number = EXCLUDED.winning_number,
+         winner_count = EXCLUDED.winner_count,
+         human_winner_count = EXCLUDED.human_winner_count,
+         human_win_amount = EXCLUDED.human_win_amount,
+         human_player_ids = EXCLUDED.human_player_ids,
+         ended_at = EXCLUDED.ended_at`,
+      [
+        id, roomId, round, bet, humanCount, humanPicks, botCount, botPicks,
+        totalPicks, prizePool, winningNumber, winnerCount, humanWinnerCount,
+        humanWinAmount, JSON.stringify(humanPlayerIds || []), startedAt, endedAt, now(),
+      ]
+    );
+    console.log(`[ROUND-SNAPSHOT] ${roomId} r${round}: ${humanCount} humans, ${humanPicks} picks, ${winnerCount} winners`);
+  } catch (e) {
+    console.error('[ROUND-SNAPSHOT] failed:', e.message, { roomId, round });
+  }
+}
+
 // ============================================================================
 // GAME ROOM
 // ============================================================================
@@ -1075,6 +1134,7 @@ class Room {
     this.prizePool = Number(row?.prize_pool || 0);
     this.lastResult = row?.last_result_json ? JSON.parse(row.last_result_json) : null;
     this.mutex = new Mutex(); this.botTimers = []; this.dirty = true;
+    this.roundStartedAt = now();
     if (row?.taken_json) for (const [n, uid] of Object.entries(JSON.parse(row.taken_json))) this.taken.set(Number(n), uid);
     if (row?.players_json) {
       const saved = JSON.parse(row.players_json);
@@ -1092,7 +1152,7 @@ class Room {
     const humanBets = activePlayers.filter(p => !p.isBot).reduce((sum, p) => sum + p.picks.length * this.bet, 0);
     return {
       gameState: this.phase, round: this.round, betAmount: this.bet, selectionEndsAt: this.endsAt, endsAt: this.endsAt,
-      numbersTaken: Object.fromEntries([...this.taken.keys()].map(n => [n, true])), players, 
+      numbersTaken: Object.fromEntries([...this.taken.keys()].map(n => [n, true])), players,
       winners: [...this.winners].map(uid => this.players.get(uid)?.displayName || uid),
       winningNumber: this.winningNumber, prizePool: this.prizePool, potAmount: this.prizePool,
       totalBets, humanBets, totalPicks, displayedPrizePool: Math.floor(totalBets * PAYOUT_RATE),
@@ -1107,11 +1167,11 @@ class Room {
     await pool.query(`
       INSERT INTO rooms (id, bet, phase, round, ends_at, winning_number, winners_json, prize_pool, last_result_json, taken_json, players_json, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      ON CONFLICT (id) DO UPDATE SET 
+      ON CONFLICT (id) DO UPDATE SET
         phase = EXCLUDED.phase, round = EXCLUDED.round, ends_at = EXCLUDED.ends_at, winning_number = EXCLUDED.winning_number,
         winners_json = EXCLUDED.winners_json, prize_pool = EXCLUDED.prize_pool, last_result_json = EXCLUDED.last_result_json,
         taken_json = EXCLUDED.taken_json, players_json = EXCLUDED.players_json, updated_at = EXCLUDED.updated_at
-    `, [this.id, this.bet, this.phase, this.round, this.endsAt, this.winningNumber, JSON.stringify(this.winners), this.prizePool, 
+    `, [this.id, this.bet, this.phase, this.round, this.endsAt, this.winningNumber, JSON.stringify(this.winners), this.prizePool,
         this.lastResult ? JSON.stringify(this.lastResult) : null, JSON.stringify(taken), JSON.stringify(players), now()]);
     this.dirty = false;
   }
@@ -1141,7 +1201,7 @@ async function debit(uid, amount, roomId, round) {
     const res = await client.query('SELECT play_wallet FROM users WHERE username = $1 FOR UPDATE', [uid]);
     if (res.rows.length === 0) throw new Error('user-not-found');
     if (Number(res.rows[0].play_wallet) < amt) throw new Error('insufficient');
-    
+
     await client.query('UPDATE users SET play_wallet = play_wallet - $1, updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
     await client.query('COMMIT');
     await sendWallet(uid);
@@ -1208,15 +1268,29 @@ async function toSpinning(room) {
   if (!allWithPicks.length) return resetRound(room, 'no-picks');
   const allNums = [...new Set(allWithPicks.flatMap(p => p.picks))];
   if (!allNums.length) return resetRound(room, 'no-picks');
-  
+
   const winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
   const winners = allWithPicks.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
   const totalPicksInRoom = allWithPicks.reduce((s, p) => s + p.picks.length, 0);
   const prizePool = Math.floor(totalPicksInRoom * room.bet * PAYOUT_RATE);
-  
+
+  // ✅ NEW: capture human/bot breakdown for this round
+  const humans = allWithPicks.filter(p => !p.isBot);
+  const bots = allWithPicks.filter(p => p.isBot);
+  const humanCount = humans.length;
+  const humanPicks = humans.reduce((s, p) => s + p.picks.length, 0);
+  const botCount = bots.length;
+  const botPicks = bots.reduce((s, p) => s + p.picks.length, 0);
+  const humanPlayerIds = humans.map(p => p.uid);
+  const humanWinners = winners.filter(uid => !room.players.get(uid)?.isBot);
+  const humanWinAmount = winners.length && prizePool > 0
+    ? Math.floor(prizePool / winners.length) * humanWinners.length
+    : 0;
+  const roundStartedAt = room.roundStartedAt || (now() - SELECTION_SECONDS * 1000);
+
   room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
   room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
-  
+
   if (winners.length && prizePool > 0) {
     const share = Math.floor(prizePool / winners.length);
     for (const uid of winners) {
@@ -1228,7 +1302,6 @@ async function toSpinning(room) {
 
       const displayName = player?.displayName || uid;
 
-      // ✅ NEW: record human winner to persistent history table
       await recordHumanWinner({
         username: uid,
         displayName,
@@ -1239,14 +1312,12 @@ async function toSpinning(room) {
         prizePool
       });
 
-      // Notify human winner
       try {
         await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` });
       } catch (e) {
         console.error('[WIN-NOTIFY]', e.message, { uid });
       }
 
-      // ✅ FIX: credit referral commission (5% of winner's share) to their referrer
       try {
         const refRes = await pool.query('SELECT referred_by FROM users WHERE username = $1', [uid]);
         const refBy = refRes.rows[0]?.referred_by;
@@ -1261,6 +1332,31 @@ async function toSpinning(room) {
       }
     }
   }
+
+  // ✅ NEW: persist the round snapshot (all humans, not just winners)
+  try {
+    await recordRoundSnapshot({
+      roomId: room.id,
+      round: room.round,
+      bet: room.bet,
+      humanCount,
+      humanPicks,
+      botCount,
+      botPicks,
+      totalPicks: totalPicksInRoom,
+      prizePool,
+      winningNumber,
+      winnerCount: winners.length,
+      humanWinnerCount: humanWinners.length,
+      humanWinAmount,
+      humanPlayerIds,
+      startedAt: roundStartedAt,
+      endedAt: now(),
+    });
+  } catch (e) {
+    console.error('[ROUND-SNAPSHOT] persist failed:', e.message);
+  }
+
   room.lastResult = { round: room.round, winningNumber, winners: winners.map(uid => room.players.get(uid)?.displayName || uid), winAmount: (winners.length && prizePool > 0) ? Math.floor(prizePool / winners.length) : 0, setAt: now() };
 }
 
@@ -1277,6 +1373,7 @@ async function resetRound(room, why) {
   room.round += 1; room.phase = 'selection'; room.endsAt = now() + SELECTION_SECONDS * 1000;
   room.taken.clear(); room.winningNumber = null; room.winners = []; room.prizePool = 0; room.lastResult = null;
   for (const p of room.players.values()) { p.picks = []; p.active = false; }
+  room.roundStartedAt = now(); // ✅ NEW
   room.dirty = true;
   scheduleBots(room);
 }
@@ -1379,7 +1476,7 @@ wss.on('connection', (ws) => {
     try { await handle(ws, m); }
     catch (e) { console.error('[WS-MSG]', { type: m?.type, err: e.message }); send(ws, { type: 'error', message: 'server-error' }); }
   });
-  
+
   ws.on('close', async (code, reason) => {
     clearTimeout(ws.authTimer);
     if (ws.uid) console.log(`[WS-CLOSE] uid=${ws.uid} code=${code} reason=${String(reason || '').slice(0, 80)}`);
@@ -1413,7 +1510,7 @@ async function handle(ws, m) {
       }
       return;
     }
-    
+
     const telegramUser = verification.user;
     const resolved = await resolveTelegramUser(telegramUser, m.ref || null);
     if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed', reason: 'identity-failed' });
@@ -1429,7 +1526,7 @@ async function handle(ws, m) {
     await ensureUser(uid, m.ref || null, false, {
       telegram_id: telegramUser.id, display_name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || uid, last_ip: websocketClientIp(ws)
     });
-    
+
     clearTimeout(ws.authTimer);
     ws.authenticatedAt = now(); ws.uid = uid; ws.authed = true;
     ws.displayName = resolved.user.display_name;
@@ -1465,7 +1562,7 @@ async function handle(ws, m) {
   }
 
   if (!ws.authed) return send(ws, { type: 'error', message: 'not-authed' });
-  
+
   if (m.type === 'join') {
     const room = rooms[m.room]; if (!room) return send(ws, { type: 'error', message: 'bad-room' });
     ws.roomId = m.room;
@@ -1477,13 +1574,13 @@ async function handle(ws, m) {
     await sendWallet(ws.uid);
     return;
   }
-  
+
   if (m.type === 'leave') {
     const room = rooms[ws.roomId]; const p = room?.players.get(ws.uid);
     if (room && p && !p.isBot) { await refundDisconnectedPlayer(room, p); room.players.delete(ws.uid); room.dirty = true; await saveRoom(room); }
     ws.roomId = null; return;
   }
-  
+
   if (m.type === 'pick') {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await pickIntent(room, ws.uid, Number(m.number));
@@ -1491,7 +1588,7 @@ async function handle(ws, m) {
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
-  
+
   if (m.type === 'unpick') {
     const room = rooms[ws.roomId]; if (!room) return;
     const r = await unpickIntent(room, ws.uid, Number(m.number));
@@ -1499,7 +1596,7 @@ async function handle(ws, m) {
     send(ws, { type: 'wallet', ...(await walletFor(ws.uid)) });
     return;
   }
-  
+
   if (m.type === 'transfer') {
     const amount = Number(m.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return send(ws, { type: 'error', message: 'bad-amount' });
@@ -1509,9 +1606,9 @@ async function handle(ws, m) {
     } catch (e) { send(ws, { type: 'error', message: 'transfer-failed' }); }
     return;
   }
-  
+
   if (m.type === 'wallet-refresh') { await sendWallet(ws.uid); return; }
-  
+
   if (m.type === 'transaction-request') {
     const traceId = newTraceId();
     const imgLen = String(m.imageData || '').length;
@@ -1558,7 +1655,7 @@ async function handle(ws, m) {
     try { await sendWallet(ws.uid); } catch (_) {}
     return;
   }
-  
+
   if (m.type === 'transaction-image') {
     const imgLen = String(m.imageData || '').length;
     if (imgLen > MAX_IMAGE_BYTES) return send(ws, { type: 'error', message: 'image-too-large' });
@@ -1730,9 +1827,9 @@ app.get('/admin/user-details', async (req, res) => {
     const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [uid]);
     if (userRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
     const user = userRes.rows[0];
-    
+
     const refsRes = await pool.query('SELECT username, display_name FROM users WHERE referred_by = $1', [uid]);
-    
+
     res.json({
       ok: true,
       user: {
@@ -1796,8 +1893,8 @@ app.get('/admin/user-transactions', async (req, res) => {
   if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
   try {
     const r = await pool.query(
-      `SELECT id, type, amount, status, timestamp, reference, reason, wallet_applied 
-       FROM transactions WHERE username = $1 OR wallet_uid = $1 
+      `SELECT id, type, amount, status, timestamp, reference, reason, wallet_applied
+       FROM transactions WHERE username = $1 OR wallet_uid = $1
        ORDER BY timestamp DESC LIMIT 100`,
       [uid]
     );
@@ -1819,7 +1916,6 @@ app.get('/admin/user-transactions', async (req, res) => {
   }
 });
 
-// ✅ NEW: query recorded human winners
 app.get('/admin/winners', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
@@ -1977,6 +2073,176 @@ app.get('/admin/trace', async (req, res) => {
       })),
     });
   } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================================
+// ANALYTICS ENDPOINTS
+// ============================================================================
+
+function dayRangeToMs(fromDate, toDate) {
+  const startMs = Date.parse(fromDate + 'T00:00:00Z');
+  const endMs   = Date.parse(toDate   + 'T00:00:00Z') + 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) return null;
+  return { startMs, endMs };
+}
+
+app.get('/admin/analytics/games', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const from = String(req.query.from || '').trim();
+    const to   = String(req.query.to   || '').trim();
+    const room = String(req.query.room || 'both').trim();
+    const rng  = dayRangeToMs(from, to);
+    if (!rng) return res.status(400).json({ ok: false, error: 'invalid-date-range' });
+
+    const roomsWanted = room === 'both' ? ['room_15', 'room_30'] : [room];
+    if (!roomsWanted.every(r => r === 'room_15' || r === 'room_30')) {
+      return res.status(400).json({ ok: false, error: 'invalid-room' });
+    }
+
+    // Pull round snapshots in range
+    const snapRes = await pool.query(
+      `SELECT room_id, round, bet, human_count, human_picks, bot_count, bot_picks,
+              total_picks, prize_pool, winning_number, winner_count, human_winner_count,
+              human_win_amount, started_at, ended_at
+         FROM round_snapshots
+        WHERE ended_at >= $1 AND ended_at < $2
+          AND room_id = ANY($3::text[])
+        ORDER BY ended_at ASC`,
+      [rng.startMs, rng.endMs, roomsWanted]
+    );
+
+    // Hourly buckets (UTC, same as server-side timestamps)
+    const buckets = Array.from({ length: 24 }, (_, h) => ({
+      hour: h, games: 0, totalHumans: 0, totalHumanPicks: 0,
+      totalBots: 0, totalPicks: 0, totalPrizePool: 0,
+      totalWinners: 0, humanWinners: 0, humanWinAmount: 0,
+    }));
+
+    for (const row of snapRes.rows) {
+      const h = new Date(Number(row.ended_at)).getUTCHours();
+      buckets[h].games += 1;
+      buckets[h].totalHumans += Number(row.human_count || 0);
+      buckets[h].totalHumanPicks += Number(row.human_picks || 0);
+      buckets[h].totalBots += Number(row.bot_count || 0);
+      buckets[h].totalPicks += Number(row.total_picks || 0);
+      buckets[h].totalPrizePool += Number(row.prize_pool || 0);
+      buckets[h].totalWinners += Number(row.winner_count || 0);
+      buckets[h].humanWinners += Number(row.human_winner_count || 0);
+      buckets[h].humanWinAmount += Number(row.human_win_amount || 0);
+    }
+
+    const hourly = buckets.map(b => ({
+      hour: b.hour,
+      games: b.games,
+      avgHumans: b.games ? b.totalHumans / b.games : 0,
+      totalHumans: b.totalHumans,
+      totalHumanPicks: b.totalHumanPicks,
+      totalBots: b.totalBots,
+      totalPicks: b.totalPicks,
+      avgPrizePool: b.games ? b.totalPrizePool / b.games : 0,
+      totalWinners: b.totalWinners,
+      humanWinners: b.humanWinners,
+      humanWinAmount: b.humanWinAmount,
+    }));
+
+    const hoursWithData = hourly.filter(h => h.games > 0).length;
+    const daily = hoursWithData
+      ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData
+      : 0;
+    const peak = hourly.reduce((m, h) => Math.max(m, h.avgHumans), 0);
+    const totalGames = hourly.reduce((s, h) => s + h.games, 0);
+    const totalHumans = hourly.reduce((s, h) => s + h.totalHumans, 0);
+    const totalHumanPicks = hourly.reduce((s, h) => s + h.totalHumanPicks, 0);
+    const totalBots = hourly.reduce((s, h) => s + h.totalBots, 0);
+    const totalWinners = hourly.reduce((s, h) => s + h.totalWinners, 0);
+    const humanWinners = hourly.reduce((s, h) => s + h.humanWinners, 0);
+    const humanWinAmount = hourly.reduce((s, h) => s + h.humanWinAmount, 0);
+
+    res.json({
+      ok: true,
+      from, to, room,
+      summary: {
+        dailyAvgHumansPerGame: daily,
+        peakHourlyAvg: peak,
+        gamesRecorded: totalGames,
+        hoursWithData,
+        totalHumanParticipations: totalHumans,
+        totalHumanPicks,
+        totalBots,
+        totalWinners,
+        humanWinners,
+        humanWinAmount,
+      },
+      hourly,
+    });
+  } catch (e) {
+    console.error('[ANALYTICS/games]', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/admin/analytics/referrals', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const refsRes = await pool.query(
+      `SELECT u.username AS referred_uid, u.display_name AS referred_name,
+              u.referred_by AS referrer_uid,
+              COALESCE(u.referral_earnings, 0) AS referred_ref_earnings,
+              COALESCE(u.created_at, 0) AS referred_created_at,
+              r.display_name AS referrer_name,
+              COALESCE(r.referral_earnings, 0) AS referrer_earnings
+         FROM users u
+         LEFT JOIN users r ON r.username = u.referred_by
+        WHERE u.referred_by IS NOT NULL AND u.referred_by <> ''`
+    );
+
+    const referrers = new Map();
+    for (const row of refsRes.rows) {
+      const rid = row.referrer_uid;
+      if (!rid) continue;
+      if (!referrers.has(rid)) {
+        referrers.set(rid, {
+          uid: rid,
+          name: row.referrer_name || rid,
+          referralEarnings: Number(row.referrer_earnings || 0),
+          referred: [],
+        });
+      }
+      const r = referrers.get(rid);
+      r.referred.push({
+        uid: row.referred_uid,
+        name: row.referred_name || row.referred_uid,
+        earnings: Number(row.referred_ref_earnings || 0),
+        createdAt: Number(row.referred_created_at || 0),
+      });
+    }
+
+    const list = [...referrers.values()].map(r => ({
+      ...r,
+      referralCount: r.referred.length,
+      referralEarnings: r.referralEarnings ||
+        r.referred.reduce((s, x) => s + x.earnings, 0),
+    }));
+
+    list.sort((a, b) => b.referralCount - a.referralCount);
+
+    const totals = {
+      referrers: list.length,
+      referredUsers: list.reduce((s, r) => s + r.referralCount, 0),
+      totalEarnings: list.reduce((s, r) => s + r.referralEarnings, 0),
+      avgPerReferrer: list.length
+        ? list.reduce((s, r) => s + r.referralCount, 0) / list.length
+        : 0,
+      topReferrer: list[0] || null,
+      topEarner: [...list].sort((a, b) => b.referralEarnings - a.referralEarnings)[0] || null,
+    };
+
+    res.json({ ok: true, totals, referrers: list });
+  } catch (e) {
+    console.error('[ANALYTICS/referrals]', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
