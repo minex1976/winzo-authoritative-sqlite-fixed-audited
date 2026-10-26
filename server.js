@@ -41,8 +41,8 @@ const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 3;
-const BOT_MAX = 6;
+const BOT_MIN = 6;
+const BOT_MAX = 10;
 
 const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
