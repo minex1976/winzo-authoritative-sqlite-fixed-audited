@@ -37,7 +37,7 @@ if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authe
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 3;
 const RESULTS_SECONDS = 13;
-const MAX_PICKS = 3;
+const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
@@ -50,7 +50,7 @@ const MAX_REFERENCE_LENGTH = 128;
 const MIN_TELEBIRR_REF_LENGTH = 8;
 const SMS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEPOSIT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_DEPOSIT_AMOUNT = 1;
+const MIN_DEPOSIT_AMOUNT = 15;
 const MAX_DEPOSIT_AMOUNT = 1_000_000;
 const DEPOSIT_RATE_LIMIT_WINDOW_MS = Number(process.env.DEPOSIT_RATE_WINDOW_MS || 10 * 60 * 1000);
 const DEPOSIT_RATE_LIMIT_MAX = Number(process.env.DEPOSIT_RATE_MAX || 15);
@@ -444,7 +444,7 @@ async function addNotification(username, data) {
 async function notifyTransaction(username, tx) {
   let message;
   if (tx.type === 'deposit' && tx.status === 'approved') {
-    message = 'ትዕዛዙ ተፈፅሟል። ዊንዞን ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
+    message = 'ትዕዛዙ ተፈፅሟል። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
   } else if (tx.status === 'approved') {
     message = `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.`;
   } else {
