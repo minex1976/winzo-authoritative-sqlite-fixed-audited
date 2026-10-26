@@ -44,7 +44,6 @@
         .welcome-screen .wallet-info .amount { color: #ffcc44; font-weight: 700; }
         .welcome-screen .logout-btn { background: rgba(120, 80, 200, 0.15); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 30px; padding: 8px 20px; color: #b8a0d0; font-size: 0.75rem; cursor: pointer; }
 
-        /* ===== WALLET BAR (equal height + vertical dividers between items) ===== */
         .wallet-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; background: rgba(150, 10, 40, 0.7); border-radius: 10px; padding: 4px 10px; border: 2px solid rgba(180, 120, 255, 1); flex-shrink: 0; margin: 2px 0 3px; justify-content: space-between; position: relative; z-index: 50; min-height: 36px; box-sizing: border-box; }
         .wallet-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1; min-width: 0; }
         .wallet-item { color: #b8a0d0; font-size: 0.6rem; font-weight: 600; display: flex; align-items: center; gap: 2px; background: rgba(0, 0, 0, 0.3); padding: 2px 8px; border-radius: 30px; border: 1px solid rgba(120, 80, 200, 0.1); white-space: nowrap; position: relative; }
@@ -76,7 +75,6 @@
         .bet-switcher { display: flex; justify-content: center; align-items: center; gap: 8px; background: rgba(20, 10, 40, 0.5); border-radius: 10px; padding: 3px 12px; margin: 2px 0 3px; border: 1px solid rgba(120, 80, 200, 0.1); flex-shrink: 0; }
         .switch-room-btn { background: linear-gradient(135deg, #ffdf6b, #f5b52e 52%, #d98a16) !important; border: 2px solid #ffcc44 !important; border-radius: 20px !important; padding: 3px 18px !important; color: #2a1600 !important; font-size: 0.75rem !important; font-weight: 800 !important; cursor: pointer; }
 
-        /* ===== GAME INFO BAR (equal height + vertical dividers between items) ===== */
         .game-info-bar { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(20, 110, 40, 0.5); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; border: 2px solid rgba(180, 120, 255, 1); flex-shrink: 0; min-height: 36px; box-sizing: border-box; }
         .game-info-bar .info-item { display: flex; align-items: center; gap: 4px; color: #b8a0d0; font-size: 0.7rem; font-weight: 600; position: relative; }
         .game-info-bar .info-item + .info-item::before { content: ''; position: absolute; left: -6px; top: 18%; bottom: 18%; width: 2px; background: rgba(180, 120, 255, 0.8); border-radius: 2px; pointer-events: none; }
@@ -85,7 +83,6 @@
         .game-info-bar .info-item .value.players { color: #8affb0; }
         .game-info-bar .info-item .value.bet-total { color: #74ffb9; font-size: 0.95rem; }
 
-        /* ===== PICK STATUS + STATUS AREA (same height as bars) ===== */
         .pick-status { background: rgba(120, 10, 40, 0.5); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; text-align: center; font-weight: 600; font-size: 0.7rem; color: #b8a0d0; border: 2px solid rgba(180, 120, 255, 1); min-height: 36px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
         .pick-status .highlight { color: #ffcc44; font-weight: 800; }
         .status-area { background: rgba(20, 10, 40, 0.6); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; text-align: center; font-weight: 600; font-size: 0.65rem; color: #b8a0d0; border: 2px solid rgba(180, 120, 255, 1); min-height: 36px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
@@ -145,8 +142,6 @@
         .waiting-modal p { color: #b8a0d0; font-size: 0.8rem; line-height: 1.4; margin-bottom: 6px; }
         .waiting-modal .close-waiting { background: rgba(120, 80, 200, 0.15); border: none; color: #b8a0d0; padding: 4px 14px; border-radius: 30px; font-size: 0.7rem; cursor: pointer; }
 
-        /* ✅ UPDATED: wide, short, horizontal notification toast. Sits above every modal
-           except the top-most user-event dialog (2147483647). Duration extended in JS to 8s. */
         .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(20, 10, 40, 0.97); border: 2px solid #ffcc44; border-radius: 16px; padding: 10px 16px; z-index: 2147483600; display: none; box-shadow: 0 8px 28px rgba(0,0,0,.6), 0 0 24px rgba(255,204,68,.32); width: max-content; max-width: calc(100vw - 24px); align-items: center; gap: 12px; }
         .toast.active { display: flex; animation: toastIn .28s cubic-bezier(.34,1.56,.64,1); }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
@@ -244,7 +239,19 @@
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
-        .wheel-container { position: relative; width: 320px; height: 320px; border-radius: 50%; border: 12px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
+        
+        /* ✅ UPDATED: Responsive wheel container up to 400px */
+        .wheel-container {
+            position: relative;
+            width: min(400px, calc(100vw - 40px));
+            height: min(400px, calc(100vw - 40px));
+            border-radius: 50%;
+            border: 12px solid #6a3a9a;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5);
+            overflow: hidden;
+            background: #111;
+            flex-shrink: 0;
+        }
         .wheel { width: 100%; height: 100%; transform-origin: center center; will-change: transform; }
         .wheel.spinning { transition: transform 8s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
         .wheel-pointer { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 30px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
@@ -586,7 +593,6 @@
         <p>ሌላ ተጫዋች እስከሚገባ እባክዎትን ትንሽ ይጠብቁ!</p>
         <button class="close-waiting" id="closeWaitingBtn">✕ Dismiss</button>
     </div>
-    <!-- ✅ UPDATED: split icon and body so the toast can stretch horizontally -->
     <div class="toast" id="welcomeToast">
         <span class="icon">🎉</span>
         <div class="toast-body">
@@ -1416,114 +1422,282 @@
                 const statusEl2 = document.getElementById('baStatus');
                 if (!overlay || !wheelEl || !statusEl2) { resolve(); return; }
 
+                // ---- Collect all picks ----
                 const allPicks = new Set();
                 Object.values(engineState.players).forEach(p => { if (p && p.picks) p.picks.forEach(n => allPicks.add(n)); });
                 const uniqueNumbers = Array.from(allPicks);
                 if (!uniqueNumbers.includes(winningNumber)) uniqueNumbers.push(winningNumber);
 
-                const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
-                const anglePerSegment = 360 / segmentCount;
-                const numbersForWheel = [];
-                for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
-                let winningIndex = numbersForWheel.indexOf(winningNumber);
-                if (winningIndex === -1) winningIndex = 0;
+                // ---- Cleanup prior reel ----
+                const oldReel = document.getElementById('baReel');
+                if (oldReel) oldReel.remove();
 
-                const size = 300; const center = size / 2; const radius = center;
-                let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
-                for (let i = 0; i < segmentCount; i++) {
-                    const startAngle = i * anglePerSegment;
-                    const endAngle = (i + 1) * anglePerSegment;
-                    const midAngle = startAngle + anglePerSegment / 2;
-                    const startRad = (startAngle - 90) * Math.PI / 180;
-                    const endRad = (endAngle - 90) * Math.PI / 180;
-                    const midRad = (midAngle - 90) * Math.PI / 180;
-                    const x1 = center + radius * Math.cos(startRad);
-                    const y1 = center + radius * Math.sin(startRad);
-                    const x2 = center + radius * Math.cos(endRad);
-                    const y2 = center + radius * Math.sin(endRad);
-                    const textX = center + (radius * 0.65) * Math.cos(midRad);
-                    const textY = center + (radius * 0.65) * Math.sin(midRad);
-                    const color = i % 2 === 0 ? '#e62020' : '#ffffff';
-                    const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
-                    svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
-                    const numText = numbersForWheel[i];
-                    if (numText !== '') {
-                        const fontSize = Math.max(10, Math.min(18, 300 / segmentCount));
-                        svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${fontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${midAngle}, ${textX}, ${textY})">${numText}</text>`;
-                    }
+                const wheelContainer = document.querySelector('.wheel-container');
+                const wheelPointer   = document.querySelector('.wheel-pointer');
+                const wheelStand     = document.querySelector('.wheel-stand');
+
+                // ---- Responsive wheel size (max 400px) ----
+                const maxWheel = Math.min(400, window.innerWidth - 40);
+                const size     = Math.max(280, maxWheel);
+
+                // Beyond ~70 slices even a 400px wheel becomes unreadable → use reel
+                const USE_REEL = uniqueNumbers.length > 70;
+
+                if (wheelContainer) {
+                    wheelContainer.style.width  = size + 'px';
+                    wheelContainer.style.height = size + 'px';
                 }
-                svg += `</svg>`;
-                wheelEl.innerHTML = svg;
 
-                wheelEl.classList.remove('spinning');
-                wheelEl.style.transform = 'rotate(0deg)';
-                void wheelEl.offsetWidth;
+                if (USE_REEL) {
+                    /* ============================================================
+                       REEL MODE — any number of picks (70+ up to 200+)
+                       ============================================================ */
+                    if (wheelContainer) wheelContainer.style.display = 'none';
+                    if (wheelPointer)   wheelPointer.style.display   = 'none';
+                    if (wheelStand)     wheelStand.style.display     = 'none';
 
-                const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
-                const spins = 5;
-                const targetRotation = (spins * 360) - targetSegmentCenter;
+                    const ROW_HEIGHT   = 52;
+                    const VISIBLE_ROWS = 7;
+                    const CENTER_ROW   = Math.floor(VISIBLE_ROWS / 2);
 
-                statusEl2.textContent = 'Get ready to win!';
-                overlay.classList.add('active');
-                const readyAudio = document.getElementById('getReadyToWinAudio');
-                const readyBubble = document.getElementById('wheelReadyBubble');
-                const readyLabel = document.getElementById('wheelReadyLabel');
-                const readyNumber = document.getElementById('wheelReadyNumber');
-                let readyCountdownTimers = [];
-                let spinStarted = false;
-                const showReadyBubble = () => {
-                    if (!readyBubble || !readyLabel || !readyNumber) return;
-                    readyLabel.textContent = 'Get ready to win';
-                    readyNumber.textContent = '';
-                    readyBubble.classList.add('active');
-                    const wheelMachine = document.querySelector('.wheel-anim-machine');
-                    if (wheelMachine) wheelMachine.classList.add('ready-art-active');
-                    const syncCountdownToAudio = () => {
-                        if (!readyAudio || !Number.isFinite(readyAudio.duration) || readyAudio.duration <= 0) return;
-                        const remaining = readyAudio.duration - readyAudio.currentTime;
-                        const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
-                        if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
-                    };
-                    if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
-                    else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
-                };
-                const hideReadyBubble = () => {
-                    readyCountdownTimers.forEach(clearTimeout);
-                    readyCountdownTimers = [];
-                    if (readyBubble) readyBubble.classList.remove('active');
-                    const wheelMachine = document.querySelector('.wheel-anim-machine');
-                    if (wheelMachine) wheelMachine.classList.remove('ready-art-active');
-                };
-                showReadyBubble();
-                const beginSpin = () => {
-                    if (spinStarted) return;
-                    spinStarted = true;
-                    if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
-                    hideReadyBubble();
-                    statusEl2.textContent = 'Spinning the wheel...';
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            wheelEl.classList.add('spinning');
-                            startWheelSpinSound(8000);
-                            wheelEl.style.transform = `rotate(${targetRotation}deg)`;
-                        });
-                    });
+                    const repeats = Math.min(50, Math.max(5, Math.ceil(500 / uniqueNumbers.length)));
+
+                    const shuffled = [...uniqueNumbers];
+                    for (let i = shuffled.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                    }
+                    const winIdxInShuffle = shuffled.indexOf(winningNumber);
+
+                    const fullList = [];
+                    for (let r = 0; r < repeats; r++) fullList.push(...shuffled);
+
+                    const targetRepeat   = Math.floor(repeats * 0.6);
+                    const winningRowIdx  = targetRepeat * shuffled.length + winIdxInShuffle;
+
+                    const reel = document.createElement('div');
+                    reel.id = 'baReel';
+                    reel.style.cssText = `
+                        width: min(${size}px, 85vw);
+                        height: ${VISIBLE_ROWS * ROW_HEIGHT}px;
+                        overflow: hidden;
+                        position: relative;
+                        background: #111;
+                        border: 8px solid #6a3a9a;
+                        border-radius: 20px;
+                        box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5);
+                        margin: 0 auto;
+                        z-index: 5;
+                    `;
+
+                    const strip = document.createElement('div');
+                    strip.style.cssText = 'position:absolute;left:0;right:0;top:0;will-change:transform;';
+                    strip.innerHTML = fullList.map(n => {
+                        const isWin = n === winningNumber;
+                        return `<div style="
+                            height:${ROW_HEIGHT}px;
+                            display:flex;align-items:center;justify-content:center;
+                            font-size:26px;font-weight:900;letter-spacing:1px;
+                            color:${isWin ? '#fff' : '#ffcc44'};
+                            background:${isWin ? 'rgba(230,32,32,0.55)' : 'transparent'};
+                            border-bottom:1px solid rgba(255,255,255,0.05);
+                        ">${n}</div>`;
+                    }).join('');
+                    reel.appendChild(strip);
+
+                    const ptr = document.createElement('div');
+                    ptr.style.cssText = `
+                        position:absolute;left:0;right:0;
+                        top:${CENTER_ROW * ROW_HEIGHT}px;
+                        height:${ROW_HEIGHT}px;
+                        border-top:3px solid #ffcc44;
+                        border-bottom:3px solid #ffcc44;
+                        box-shadow:0 0 20px rgba(255,204,68,0.6), inset 0 0 30px rgba(255,204,68,0.15);
+                        pointer-events:none; z-index:2;
+                    `;
+                    reel.appendChild(ptr);
+
+                    const fadeTop = document.createElement('div');
+                    fadeTop.style.cssText = `position:absolute;left:0;right:0;top:0;height:${ROW_HEIGHT*2}px;background:linear-gradient(to bottom,#111,transparent);pointer-events:none;z-index:3;`;
+                    const fadeBot = document.createElement('div');
+                    fadeBot.style.cssText = `position:absolute;left:0;right:0;bottom:0;height:${ROW_HEIGHT*2}px;background:linear-gradient(to top,#111,transparent);pointer-events:none;z-index:3;`;
+                    reel.appendChild(fadeTop);
+                    reel.appendChild(fadeBot);
+
+                    const machine = document.querySelector('.wheel-anim-machine');
+                    if (machine && wheelContainer) machine.insertBefore(reel, wheelContainer);
+                    else if (machine) machine.appendChild(reel);
+
+                    const targetTranslate = (CENTER_ROW - winningRowIdx) * ROW_HEIGHT;
+                    const startRow        = Math.max(0, winningRowIdx - 2 * shuffled.length);
+                    const startTranslate  = (CENTER_ROW - startRow) * ROW_HEIGHT;
+                    strip.style.transform = `translateY(${startTranslate}px)`;
+
+                    overlay.classList.add('active');
+                    statusEl2.textContent = `Spinning… (${uniqueNumbers.length} picks)`;
+
+                    setTimeout(() => {
+                        startWheelSpinSound(6000);
+                        strip.style.transition = 'transform 6s cubic-bezier(0.15, 0.5, 0.1, 1)';
+                        strip.style.transform  = `translateY(${targetTranslate}px)`;
+                    }, 120);
+
                     setTimeout(() => {
                         stopWheelSpinSound();
                         statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
-                        setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
-                    }, 8000);
-                };
-                if (readyAudio) {
-                    try {
-                        readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
-                        readyAudio.onended = beginSpin;
-                        readyAudio.onerror = () => { beginSpin(); };
-                        setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
-                        const readyPlayback = readyAudio.play();
-                        if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
-                    } catch (err) { beginSpin(); }
-                } else beginSpin();
+                        setTimeout(() => {
+                            overlay.classList.remove('active');
+                            setTimeout(() => {
+                                const r = document.getElementById('baReel');
+                                if (r) r.remove();
+                                if (wheelContainer) wheelContainer.style.display = 'block';
+                                if (wheelPointer)   wheelPointer.style.display   = 'block';
+                                if (wheelStand)     wheelStand.style.display     = 'block';
+                            }, 400);
+                            resolve();
+                        }, 1500);
+                    }, 6200);
+
+                } else {
+                    /* ============================================================
+                       WHEEL MODE — full-width, adaptive font
+                       ============================================================ */
+                    if (wheelContainer) wheelContainer.style.display = 'block';
+                    if (wheelPointer)   wheelPointer.style.display   = 'block';
+                    if (wheelStand)     wheelStand.style.display     = 'block';
+
+                    let segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
+                    const numbersForWheel = [];
+                    for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
+
+                    let winningIndex = numbersForWheel.indexOf(winningNumber);
+                    if (winningIndex === -1) winningIndex = 0;
+
+                    const anglePerSegment = 360 / segmentCount;
+                    const center = size / 2;
+                    const radius = center;
+                    let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
+
+                    // Adaptive font size (scales with both segment count AND wheel size)
+                    let fontSize;
+                    if      (segmentCount > 55) fontSize = 11;
+                    else if (segmentCount > 45) fontSize = 12;
+                    else if (segmentCount > 35) fontSize = 13;
+                    else if (segmentCount > 25) fontSize = 15;
+                    else if (segmentCount > 18) fontSize = 17;
+                    else                        fontSize = 19;
+                    // Slightly boost on bigger wheels
+                    if (size >= 380) fontSize = Math.min(20, fontSize + 1);
+
+                    for (let i = 0; i < segmentCount; i++) {
+                        const startAngle = i * anglePerSegment;
+                        const endAngle   = (i + 1) * anglePerSegment;
+                        const midAngle   = startAngle + anglePerSegment / 2;
+                        const startRad   = (startAngle - 90) * Math.PI / 180;
+                        const endRad     = (endAngle   - 90) * Math.PI / 180;
+                        const midRad     = (midAngle   - 90) * Math.PI / 180;
+
+                        const x1 = center + radius * Math.cos(startRad);
+                        const y1 = center + radius * Math.sin(startRad);
+                        const x2 = center + radius * Math.cos(endRad);
+                        const y2 = center + radius * Math.sin(endRad);
+
+                        const textRadius = radius * 0.72;
+                        const textX = center + textRadius * Math.cos(midRad);
+                        const textY = center + textRadius * Math.sin(midRad);
+
+                        const color     = i % 2 === 0 ? '#e62020' : '#ffffff';
+                        const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
+
+                        svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
+
+                        const numText = numbersForWheel[i];
+                        if (numText !== '') {
+                            let textRotation = midAngle - 90;
+                            if (midAngle > 90 && midAngle < 270) textRotation += 180;
+                            svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${fontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${textRotation}, ${textX}, ${textY})">${numText}</text>`;
+                        }
+                    }
+                    svg += `</svg>`;
+                    wheelEl.innerHTML = svg;
+
+                    wheelEl.classList.remove('spinning');
+                    wheelEl.style.transform = 'rotate(0deg)';
+                    void wheelEl.offsetWidth;
+
+                    const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
+                    const spins = 5;
+                    const targetRotation = (spins * 360) - targetSegmentCenter;
+
+                    statusEl2.textContent = 'Get ready to win!';
+                    overlay.classList.add('active');
+
+                    const readyAudio   = document.getElementById('getReadyToWinAudio');
+                    const readyBubble  = document.getElementById('wheelReadyBubble');
+                    const readyLabel   = document.getElementById('wheelReadyLabel');
+                    const readyNumber  = document.getElementById('wheelReadyNumber');
+                    let readyCountdownTimers = [];
+                    let spinStarted = false;
+
+                    const showReadyBubble = () => {
+                        if (!readyBubble || !readyLabel || !readyNumber) return;
+                        readyLabel.textContent  = 'Get ready to win';
+                        readyNumber.textContent = '';
+                        readyBubble.classList.add('active');
+                        const wheelMachine = document.querySelector('.wheel-anim-machine');
+                        if (wheelMachine) wheelMachine.classList.add('ready-art-active');
+
+                        const syncCountdownToAudio = () => {
+                            if (!readyAudio || !Number.isFinite(readyAudio.duration) || readyAudio.duration <= 0) return;
+                            const remaining = readyAudio.duration - readyAudio.currentTime;
+                            const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
+                            if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
+                        };
+                        if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
+                        else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
+                    };
+
+                    const hideReadyBubble = () => {
+                        readyCountdownTimers.forEach(clearTimeout);
+                        readyCountdownTimers = [];
+                        if (readyBubble) readyBubble.classList.remove('active');
+                        const wheelMachine = document.querySelector('.wheel-anim-machine');
+                        if (wheelMachine) wheelMachine.classList.remove('ready-art-active');
+                    };
+
+                    showReadyBubble();
+
+                    const beginSpin = () => {
+                        if (spinStarted) return;
+                        spinStarted = true;
+                        if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
+                        hideReadyBubble();
+                        statusEl2.textContent = 'Spinning the wheel...';
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                wheelEl.classList.add('spinning');
+                                startWheelSpinSound(8000);
+                                wheelEl.style.transform = `rotate(${targetRotation}deg)`;
+                            });
+                        });
+                        setTimeout(() => {
+                            stopWheelSpinSound();
+                            statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
+                            setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
+                        }, 8000);
+                    };
+
+                    if (readyAudio) {
+                        try {
+                            readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
+                            readyAudio.onended = beginSpin;
+                            readyAudio.onerror = () => { beginSpin(); };
+                            setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
+                            const readyPlayback = readyAudio.play();
+                            if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
+                        } catch (err) { beginSpin(); }
+                    } else beginSpin();
+                }
             });
         }
 
@@ -1586,6 +1760,16 @@
             if (ov) ov.classList.remove('active');
             const wheelEl = document.getElementById('baWheel');
             if (wheelEl) { wheelEl.classList.remove('spinning'); wheelEl.style.transform = 'rotate(0deg)'; }
+
+            // ✅ Restore wheel visibility after reel mode
+            const reel = document.getElementById('baReel');
+            if (reel) reel.remove();
+            const wc = document.querySelector('.wheel-container');
+            if (wc) wc.style.display = 'block';
+            const wp = document.querySelector('.wheel-pointer');
+            if (wp) wp.style.display = 'block';
+            const ws = document.querySelector('.wheel-stand');
+            if (ws) ws.style.display = 'block';
         }
 
         function applyCardState() {
@@ -1761,7 +1945,6 @@
             if (msgEl) msgEl.textContent = String(message).replace(/<[^>]*>/g, '');
             welcomeToast.classList.add('active');
             clearTimeout(welcomeToast._hideTimer);
-            // ✅ Extended duration so players have time to read the message
             welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 8000);
         }
 
@@ -1982,7 +2165,6 @@
             if (!DB.getToastShown()) {
                 if (welcomeToast) welcomeToast.classList.add('active');
                 DB.setToastShown();
-                // ✅ Extended duration so players have time to read the welcome message
                 setTimeout(() => { if (welcomeToast) welcomeToast.classList.remove('active'); }, 8000);
             }
         }
