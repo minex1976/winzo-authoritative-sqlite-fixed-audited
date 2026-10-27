@@ -611,7 +611,7 @@ async function transactionRequest(uid, data) {
           if (statusCheck.rows[0]?.status === 'pending') {
             await addNotification(uid, {
               type: 'notification',
-              message: 'ትዕዛዙ ተልኳል። እባክዎ ትንሽ ይጠብቁ።'
+              message: 'ገንዘብ ገቢ ማደረግዎን የሚያሳይ ማስረጃ አልተገኘም።'
             });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
           }
@@ -1641,7 +1641,7 @@ async function handle(ws, m) {
         try {
           await addNotification(ws.uid, {
             type: 'notification',
-            message: 'አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። እባክዎ በድጋሚ ይሞክሩ። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን።'
+            message: 'አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። እባክዎ በድጋሚ ይሞክሩ።'
           });
         } catch (e) {
           console.error('[TX-USED-REF-MSG]', e.message);
