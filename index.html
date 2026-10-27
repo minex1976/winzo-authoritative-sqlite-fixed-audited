@@ -476,9 +476,7 @@
                 <div class="info-item">🏆ደራሽ: <span class="value bet-total" id="totalBetDisplay">0</span> ብር</div>
             </div>
             <div class="pick-status" id="pickStatus"><span> እስከ <span class="highlight">5</span> ቁጥሮች ይያዙ</span></div>
-            <div class="status-area" id="statusMessage">
-                <span>⏳ Pick up to 5 numbers · Bet: <span class="highlight" id="betDisplay">15</span> Birr</span>
-            </div>
+            <!-- MODIFICATION: 4th game info display bar removed as requested -->
             <div class="profile-area">
                 <div class="profile-row">
                     <span class="profile-label">👤</span>
@@ -1052,7 +1050,7 @@
         const winnersModal = $('winnersModal'); const transactionModal = $('transactionModal');
         const transactionStatus = $('transactionStatus'); const transactionCloseBtn = $('transactionCloseBtn');
         const waitingModal = $('waitingModal'); const closeWaitingBtn = $('closeWaitingBtn'); const welcomeToast = $('welcomeToast');
-        const statusEl = $('statusMessage');
+        const statusEl = $('statusMessage'); // This is now null because the element is removed
         const numPicker = $('numPicker');
         const selectedCountSpan = $('selectedCount'); const prizeDisplay = $('prizeDisplay');
         const timerDisplay = $('timerDisplay'); const playerCountEl = $('playerCount');
@@ -1159,6 +1157,7 @@
         }
         function updatePrizeDisplay() { updateTotalBetDisplay(); }
         function updateStatus(msg, isWin = false) {
+            // MODIFICATION: Gracefully handle removal of the status bar element
             if (!statusEl) return;
             const text = String(msg ?? '');
             if (isWin) { statusEl.textContent = `🏆 ${text}`; statusEl.classList.add('win-badge'); }
