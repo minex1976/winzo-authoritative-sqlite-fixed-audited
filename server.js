@@ -1516,10 +1516,13 @@ const BINGO_STAKE = Math.max(0, Number(process.env.BINGO_STAKE || 10));
 const BINGO_SELECTION_SECONDS = Math.max(15, Number(process.env.BINGO_SELECTION_SECONDS || 45));
 const BINGO_CALL_INTERVAL_MS = Math.max(1000, Number(process.env.BINGO_CALL_INTERVAL_MS || 3000));
 const BINGO_RESULT_SECONDS = Math.max(5, Number(process.env.BINGO_RESULT_SECONDS || 12));
+const BINGO_BOT_COUNT = 5; // New: Number of bots in Bingo
 const bingoMembers = new Set();
 let bingoRoundCounter = 0;
 let bingoRound = null;
 let bingoCallTimer = null;
+let bingoBotTimers = [];
+
 function bingoId() { return crypto.randomBytes(5).toString('hex').toUpperCase(); }
 function bingoNewCard() {
   const grid = Array.from({length:5},()=>Array(5).fill(0));
@@ -1539,6 +1542,63 @@ function bingoPattern(grid, called) {
   if(grid.every((row,r)=>row.every((n,c)=>marked(r,c))))return 'Full House';
   return null;
 }
+
+// New: Bingo Bot Logic
+function clearBingoBots() {
+    bingoBotTimers.forEach(clearTimeout);
+    bingoBotTimers = [];
+}
+
+function scheduleBingoBots() {
+    clearBingoBots();
+    if (!bingoRound || bingoRound.phase !== 'selection') return;
+
+    // Pick a random subset of bots
+    const shuffledBots = [...BOT_NAMES].sort(() => 0.5 - Math.random());
+    const activeBots = shuffledBots.slice(0, BINGO_BOT_COUNT + Math.floor(Math.random() * 3)); // 5 to 7 bots
+
+    activeBots.forEach((botName, index) => {
+        const delay = 1000 + Math.random() * 15000; // Bot picks between 1s and 16s
+        const timer = setTimeout(async () => {
+            if (!bingoRound || bingoRound.phase !== 'selection') return;
+            
+            const botUidStr = botUid(botName);
+            // Check if bot already has an entry
+            const existingEntry = [...bingoRound.entries.values()].find(e => e.uid === botUidStr);
+            if (existingEntry) return;
+
+            // Find available card number
+            const taken = new Set([...bingoRound.entries.values()].map(e => e.cardNumber));
+            let cardNum = Math.floor(Math.random() * 400) + 1;
+            let attempts = 0;
+            while (taken.has(cardNum) && attempts < 50) {
+                cardNum = Math.floor(Math.random() * 400) + 1;
+                attempts++;
+            }
+            if (taken.has(cardNum)) return; // Give up if no space
+
+            // Create entry
+            const grid = bingoNewCard();
+            const id = crypto.randomUUID();
+            try {
+                await pool.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',
+                    [id, bingoRound.id, botUidStr, cardNum, JSON.stringify(grid), bingoRound.stake, Date.now()]);
+                
+                const newEntry = { id, uid: botUidStr, name: botName, cardNumber: cardNum, grid, stake: bingoRound.stake, won: false };
+                bingoRound.entries.set(id, newEntry);
+                bingoRound.prizePool += bingoRound.stake;
+                await pool.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2', [bingoRound.stake, bingoRound.id]);
+                
+                console.log(`[BINGO-BOT] ${botName} picked card ${cardNum}`);
+                bingoBroadcast();
+            } catch(e) {
+                console.error('[BINGO-BOT] pick failed', e.message);
+            }
+        }, delay);
+        bingoBotTimers.push(timer);
+    });
+}
+
 async function bingoNewRound() {
   bingoRoundCounter++;
   bingoRound={id:crypto.randomUUID(),gameId:'B'+bingoId(),roundNumber:bingoRoundCounter,phase:'selection',
@@ -1546,7 +1606,9 @@ async function bingoNewRound() {
     called:[],pool:Array.from({length:75},(_,i)=>i+1),entries:new Map(),winners:[]};
   for(let i=bingoRound.pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[bingoRound.pool[i],bingoRound.pool[j]]=[bingoRound.pool[j],bingoRound.pool[i]];}
   await persistBingoRound();
+  scheduleBingoBots(); // Start bot picking
 }
+
 async function restoreBingoRound() {
   const latest=await pool.query("SELECT * FROM bingo_rounds WHERE phase IN ('selection','playing') ORDER BY started_at DESC LIMIT 1");
   const counter=await pool.query('SELECT COALESCE(MAX(round_number),0) AS n FROM bingo_rounds');
@@ -1573,6 +1635,7 @@ async function restoreBingoRound() {
   if(bingoRound.phase==='selection'&&bingoRound.endsAt<=Date.now())bingoRound.endsAt=Date.now()+BINGO_SELECTION_SECONDS*1000;
   if(bingoRound.phase==='playing'&&bingoRound.endsAt<=Date.now())bingoRound.endsAt=Date.now()+BINGO_CALL_INTERVAL_MS;
   await persistBingoRound();
+  if (bingoRound.phase === 'selection') scheduleBingoBots();
   console.log(`[BINGO] Restored round ${bingoRound.gameId} (${bingoRound.phase})`);
 }
 async function persistBingoRound() {
@@ -1597,12 +1660,12 @@ function bingoBroadcast() {
 }
 async function bingoSelect(ws,numbers) {
   if(!bingoRound||bingoRound.phase!=='selection'||Date.now()>=bingoRound.endsAt)return send(ws,{type:'bingo-error',message:'Card selection is closed for this round.'});
-  if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>100)||new Set(numbers).size!==numbers.length)
-    return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 100.'});
+  if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>400)||new Set(numbers).size!==numbers.length)
+    return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 400.'});
   const existing=[...bingoRound.entries.values()].filter(e=>e.uid===ws.uid);
   if(existing.length)return send(ws,{type:'bingo-error',message:'Your card selection is already confirmed for this round.'});
   for(const n of numbers)if([...bingoRound.entries.values()].some(e=>e.cardNumber===n))return send(ws,{type:'bingo-error',message:'Card number '+n+' has already been taken.'});
-  const cost=Number((BINGO_STAKE*numbers.length).toFixed(2));
+  const cost=Number((bingoRound.stake*numbers.length).toFixed(2));
   const db=await pool.connect(); const newEntries=[];
   try {
     await db.query('BEGIN');
@@ -1622,10 +1685,10 @@ async function bingoSelect(ws,numbers) {
     for(const n of numbers){
       const grid=bingoNewCard(),id=crypto.randomUUID();
       await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',
-        [id,bingoRound.id,ws.uid,n,JSON.stringify(grid),BINGO_STAKE,Date.now()]);
+        [id,bingoRound.id,ws.uid,n,JSON.stringify(grid),bingoRound.stake,Date.now()]);
       await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',
-        [crypto.randomUUID(),bingoRound.id,ws.uid,'stake',BINGO_STAKE,'bingo-stake:'+bingoRound.id+':'+ws.uid+':'+n,Date.now()]);
-      newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:BINGO_STAKE,won:false});
+        [crypto.randomUUID(),bingoRound.id,ws.uid,'stake',bingoRound.stake,'bingo-stake:'+bingoRound.id+':'+ws.uid+':'+n,Date.now()]);
+      newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:bingoRound.stake,won:false});
     }
     await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[cost,bingoRound.id]);
     await db.query('COMMIT');
@@ -1652,7 +1715,8 @@ async function bingoFinish(winners) {
         const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',
           [crypto.randomUUID(),bingoRound.id,w.uid,'prize',prize,'bingo-prize:'+bingoRound.id+':'+w.id,Date.now()]);
         if(ledger.rowCount){
-          const upd=await db.query('UPDATE users SET play_wallet=play_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);
+          // Add winnings to main wallet as requested
+          const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);
           if(!upd.rowCount)throw new Error('Winner wallet update failed');
         }
       }
@@ -1665,7 +1729,17 @@ async function bingoFinish(winners) {
   } catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}
   finally{db.release();}
   bingoRound.winners=eligible;
+  
+  // NEW: Broadcast winner popup to all members
+  for(const w of eligible) {
+      const popupMsg = { type: 'bingo-winner-popup', winner: { name: w.name, prize: w.prize } };
+      for(const ws of bingoMembers) {
+          if(ws.readyState === 1 && ws.authed) send(ws, popupMsg);
+      }
+  }
+
   await persistBingoRound(); bingoBroadcast();
+  clearBingoBots();
   setTimeout(async()=>{if(bingoRound?.phase==='results'){await bingoNewRound();bingoBroadcast();}},BINGO_RESULT_SECONDS*1000);
 }
 async function bingoTick() {
@@ -1813,6 +1887,11 @@ async function handle(ws, m) {
   }
 
   if (m.type === 'join') {
+    // Support Bingo join with room parameter
+    if (m.room === 'room_15' || m.room === 'room_30') {
+        // Bingo logic for room selection is handled by the frontend sending this specific room
+        return;
+    }
     const room = rooms[m.room]; if (!room) return send(ws, { type: 'error', message: 'bad-room' });
     ws.roomId = m.room;
     const existing = room.players.get(ws.uid);
