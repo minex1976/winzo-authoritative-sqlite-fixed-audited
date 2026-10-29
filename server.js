@@ -1733,6 +1733,7 @@ async function bingoFinish(round,winners){
         type: 'bingo-winner-popup',
         winners: winnersPayload,
         called: calledSnapshot,
+        winningNumber: calledSnapshot.length ? calledSnapshot[calledSnapshot.length - 1] : null,
         roundId: round.id,
         gameId: round.gameId,
         prizePool: round.prizePool
