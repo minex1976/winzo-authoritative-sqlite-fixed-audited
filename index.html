@@ -2956,7 +2956,7 @@
               if(st.winners&&st.winners.length){
                 win.classList.remove('hidden');
                 win.innerHTML='<strong>🎉 ROUND WINNER</strong>'+
-                  st.winners.map(w=>`<div>${escapeHtml(w.name)} · Card ${w.cardNumber} · ${escapeHtml(w.pattern||'Bingo')} · Prize ${Number(w.prize||0)} Br</div>`).join('');
+                  st.winners.map(w=>`<div>${escapeHtmlText(w.name || 'Player')} · Card ${w.cardNumber} · ${escapeHtmlText(w.pattern||'Bingo')} · Prize ${Number(w.prize||0)} Br</div>`).join('');
               } else win.classList.add('hidden');
             }
         }
@@ -2995,11 +2995,15 @@
                 const details = document.getElementById('bingoWinnerDetails');
                 if (!modal || !details) return;
                 const winners = Array.isArray(m.winners) ? m.winners : [];
-                const called = new Set(Array.isArray(m.called) ? m.called : []);
+                const calledList = Array.isArray(m.called) ? m.called : [];
+                const called = new Set(calledList);
+                const winningNumber = Number(m.winningNumber || calledList[calledList.length - 1] || 0);
+                const winningCall = winningNumber > 0 ? `${bingoLetter(winningNumber)}-${winningNumber}` : '—';
+                const winningCallHtml = `<div class="bingo-winner-info" style="margin-bottom:12px;">Winning call: <strong>${winningCall}</strong></div>`;
                 if (!winners.length) {
-                  details.innerHTML = '<div style="padding:20px;color:#b8a0d0;">No winner this round</div>';
+                  details.innerHTML = winningCallHtml + '<div style="padding:20px;color:#b8a0d0;">No winner this round</div>';
                 } else {
-                  details.innerHTML = winners.map(w => {
+                  details.innerHTML = winningCallHtml + winners.map(w => {
                     let gridHtml = '<table class="bingo-winner-card-grid"><thead><tr><th>B</th><th>I</th><th>N</th><th>G</th><th>O</th></tr></thead><tbody>';
                     (w.grid || []).forEach((row, ri) => {
                       gridHtml += '<tr>';
@@ -3012,9 +3016,9 @@
                     });
                     gridHtml += '</tbody></table>';
                     return `<div class="bingo-winner-card">
-                      <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtml(w.pattern || 'Bingo')}</div>
+                      <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtmlText(w.pattern || 'Bingo')}</div>
                       ${gridHtml}
-                      <div class="bingo-winner-info"><strong>${escapeHtml(w.name)}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
+                      <div class="bingo-winner-info"><strong>${escapeHtmlText(w.name || 'Player')}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
                     </div>`;
                   }).join('');
                 }
