@@ -44,7 +44,6 @@
         .welcome-screen .wallet-info .amount { color: #ffcc44; font-weight: 700; }
         .welcome-screen .logout-btn { background: rgba(120, 80, 200, 0.15); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 30px; padding: 8px 20px; color: #b8a0d0; font-size: 0.75rem; cursor: pointer; }
 
-        /* ===== WALLET BAR (equal height + vertical dividers between items) ===== */
         .wallet-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; background: rgba(150, 10, 40, 0.7); border-radius: 10px; padding: 4px 10px; border: 2px solid rgba(180, 120, 255, 1); flex-shrink: 0; margin: 2px 0 3px; justify-content: space-between; position: relative; z-index: 50; min-height: 36px; box-sizing: border-box; }
         .wallet-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1; min-width: 0; }
         .wallet-item { color: #b8a0d0; font-size: 0.6rem; font-weight: 600; display: flex; align-items: center; gap: 2px; background: rgba(0, 0, 0, 0.3); padding: 2px 8px; border-radius: 30px; border: 1px solid rgba(120, 80, 200, 0.1); white-space: nowrap; position: relative; }
@@ -76,7 +75,6 @@
         .bet-switcher { display: flex; justify-content: center; align-items: center; gap: 8px; background: rgba(20, 10, 40, 0.5); border-radius: 10px; padding: 3px 12px; margin: 2px 0 3px; border: 1px solid rgba(120, 80, 200, 0.1); flex-shrink: 0; }
         .switch-room-btn { background: linear-gradient(135deg, #ffdf6b, #f5b52e 52%, #d98a16) !important; border: 2px solid #ffcc44 !important; border-radius: 20px !important; padding: 3px 18px !important; color: #2a1600 !important; font-size: 0.75rem !important; font-weight: 800 !important; cursor: pointer; }
 
-        /* ===== GAME INFO BAR (equal height + vertical dividers between items) ===== */
         .game-info-bar { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(20, 110, 40, 0.5); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; border: 2px solid rgba(180, 120, 255, 1); flex-shrink: 0; min-height: 36px; box-sizing: border-box; }
         .game-info-bar .info-item { display: flex; align-items: center; gap: 4px; color: #b8a0d0; font-size: 0.7rem; font-weight: 600; position: relative; }
         .game-info-bar .info-item + .info-item::before { content: ''; position: absolute; left: -6px; top: 18%; bottom: 18%; width: 2px; background: rgba(180, 120, 255, 0.8); border-radius: 2px; pointer-events: none; }
@@ -85,7 +83,6 @@
         .game-info-bar .info-item .value.players { color: #8affb0; }
         .game-info-bar .info-item .value.bet-total { color: #74ffb9; font-size: 0.95rem; }
 
-        /* ===== PICK STATUS + STATUS AREA (same height as bars) ===== */
         .pick-status { background: rgba(120, 10, 40, 0.5); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; text-align: center; font-weight: 600; font-size: 0.7rem; color: #b8a0d0; border: 2px solid rgba(180, 120, 255, 1); min-height: 36px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
         .pick-status .highlight { color: #ffcc44; font-weight: 800; }
         .status-area { background: rgba(20, 10, 40, 0.6); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; text-align: center; font-weight: 600; font-size: 0.65rem; color: #b8a0d0; border: 2px solid rgba(180, 120, 255, 1); min-height: 36px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
@@ -145,8 +142,6 @@
         .waiting-modal p { color: #b8a0d0; font-size: 0.8rem; line-height: 1.4; margin-bottom: 6px; }
         .waiting-modal .close-waiting { background: rgba(120, 80, 200, 0.15); border: none; color: #b8a0d0; padding: 4px 14px; border-radius: 30px; font-size: 0.7rem; cursor: pointer; }
 
-        /* ✅ UPDATED: wide, short, horizontal notification toast. Sits above every modal
-           except the top-most user-event dialog (2147483647). Duration extended in JS to 8s. */
         .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(20, 10, 40, 0.97); border: 2px solid #ffcc44; border-radius: 16px; padding: 10px 16px; z-index: 2147483600; display: none; box-shadow: 0 8px 28px rgba(0,0,0,.6), 0 0 24px rgba(255,204,68,.32); width: max-content; max-width: calc(100vw - 24px); align-items: center; gap: 12px; }
         .toast.active { display: flex; animation: toastIn .28s cubic-bezier(.34,1.56,.64,1); }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
@@ -241,7 +236,6 @@
         @media (max-width: 430px) { #usernameWalletItem { display: none !important; } }
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
 
-        /* ===== SPIN WHEEL (enlarged) ===== */
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
@@ -405,7 +399,6 @@
         .bingo-screen{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:10px;color:#f7f0ff;padding:3px 0 16px}.bingo-header{display:flex;align-items:center;justify-content:space-between;gap:8px;background:#251642;border:1px solid #62448a;border-radius:14px;padding:10px}.bingo-header>div{text-align:center;display:flex;flex-direction:column;gap:3px}.bingo-header strong{font-size:1rem}.bingo-header small{color:#d3b8ff;font-size:.7rem}.bingo-small-btn{border:1px solid #8062a7;background:#39245a;color:white;border-radius:10px;padding:8px;font-size:.75rem}.bingo-wallet-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.bingo-wallet-grid>div,.bingo-stats>div{background:#30204f;border:1px solid #594078;border-radius:10px;padding:8px 5px;text-align:center;min-width:0}.bingo-wallet-grid small,.bingo-stats small{display:block;color:#c9b5e5;font-size:.62rem;margin-bottom:4px}.bingo-wallet-grid strong{font-size:.78rem;overflow-wrap:anywhere}.bingo-panel{background:#1b1431;border:1px solid #4b356b;border-radius:15px;padding:11px;min-width:0}.bingo-panel-title{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.85rem}.bingo-panel-title span{font-size:.72rem;color:#ffce57}.bingo-hint{font-size:.72rem;color:#bdaed6;margin:7px 0 10px}.bingo-number-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px;max-height:none;overflow:visible;padding:2px}.bingo-num{background:linear-gradient(145deg,#ffb53e,#f47b20);border:0;border-radius:7px;min-height:34px;color:#32164a;font-weight:900;font-size:.78rem;cursor:pointer}.bingo-num.selected{background:#70e4a0;box-shadow:0 0 0 2px #d5ffe3}.bingo-num.taken{background:#635a70;color:#c2b8ca;opacity:.6}.bingo-action-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;font-size:.7rem;color:#cbbce0}.bingo-action-row button{background:#ffcc44;color:#28143c;font-weight:900;border:0;border-radius:9px;padding:10px;font-size:.72rem}.bingo-action-row button:disabled{opacity:.4}.bingo-confirm-btn{background:linear-gradient(120deg,#ffcf55,#f39a2d);color:#28143c;font-weight:900;border:0;border-radius:9px;padding:10px 14px;font-size:.75rem}.bingo-called-number{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;font-size:.65rem;font-weight:900;color:#cfc2df;background:#302342;border:1px solid #4b3a60}.bingo-called-number.called{color:#fff;background:#6c4a9c;border-color:#9b73cb;box-shadow:0 0 0 1px #9b73cb}.bingo-called-number.b.called{background:#2679dc;border-color:#70b4ff}.bingo-called-number.i.called{background:#8c52d8;border-color:#c6a0ff}.bingo-called-number.n.called{background:#6d45a5;border-color:#b899ef}.bingo-called-number.g.called{background:#209b65;border-color:#72e7b0}.bingo-called-number.o.called{background:#e87a21;border-color:#ffc078}.bingo-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.bingo-stats strong{font-size:.72rem;overflow-wrap:anywhere}.bingo-latest{text-align:center;padding:12px;background:radial-gradient(circle,#49316c,#24163d);border-radius:14px;border:1px solid #7a58a3}.bingo-latest small{display:block;color:#d8c2f5;font-size:.65rem}.bingo-latest>strong{display:block;font-size:2.5rem;color:#ffcf53;line-height:1.2;margin:5px}.bingo-recent-calls{display:flex;justify-content:center;gap:5px;flex-wrap:wrap}.bingo-ball{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;font-size:.65rem;font-weight:900;color:white;background:#6c4a9c}.bingo-ball.b{background:#2679dc}.bingo-ball.i{background:#8c52d8}.bingo-ball.n{background:#6d45a5}.bingo-ball.g{background:#209b65}.bingo-ball.o{background:#e87a21}.bingo-my-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px;margin-top:10px}.bingo-card{background:#f7f0ff;color:#24153d;border-radius:12px;padding:8px;min-width:0}.bingo-card-title{display:flex;justify-content:space-between;font-size:.75rem;font-weight:900;margin-bottom:6px}.bingo-card table{border-collapse:separate;border-spacing:3px;width:100%;table-layout:fixed}.bingo-card th{background:#5d338b;color:#fff;border-radius:5px;padding:5px 0;font-size:.7rem}.bingo-card td{background:#e2d8f2;border-radius:5px;text-align:center;font-weight:800;font-size:.7rem;height:31px;position:relative}.bingo-card td.marked{background:#43c985;color:#063d28;box-shadow:inset 0 0 0 2px #168a54}.bingo-card td.free{background:#ffcf55}.bingo-card td.win-cell{outline:2px solid #e87524}.bingo-history{margin-top:10px}.bingo-history>strong{font-size:.8rem}.bingo-called-history{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}.bingo-winner-box{padding:13px;text-align:center;border-radius:12px;background:linear-gradient(120deg,#3a8b5c,#5b2c8b);border:1px solid #9fffc0}.bingo-winner-box strong{display:block;font-size:1.1rem;margin-bottom:6px}.bingo-bottom-nav{display:none!important}.bingo-bottom-nav button{flex:1;border:0;background:transparent;color:#c7b7de;border-radius:8px;padding:7px 1px;font-size:.65rem}.bingo-bottom-nav button.active{background:#51327a;color:#fff}.bingo-info-modal{background:#41224c;border:1px solid #bd8de7;border-radius:10px;padding:9px;font-size:.75rem;text-align:center}.bingo-screen .hidden{display:none!important}
         @media(max-width:360px){.bingo-wallet-grid small{font-size:.56rem}.bingo-wallet-grid strong{font-size:.68rem}.bingo-num{min-height:30px}.bingo-number-grid{gap:4px}.bingo-header strong{font-size:.85rem}.bingo-my-cards{grid-template-columns:minmax(0,1fr)}}
 
-        /* New styles for called numbers grid and modal */
         .bingo-called-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-top: 8px; }
         .bingo-called-column { display: flex; flex-direction: column; gap: 4px; align-items: center; }
         .bingo-called-header { font-weight: 900; font-size: 0.8rem; color: #fff; background: #5d338b; width: 100%; text-align: center; padding: 4px 0; border-radius: 4px; }
@@ -419,6 +412,51 @@
         #bingoWinnerModal .winner-details { color: #fff; font-size: 1.1rem; line-height: 1.6; margin-bottom: 20px; }
         #bingoWinnerModal .winner-details strong { color: #ffcc44; }
         #bingoWinnerModal .ok-btn { background: linear-gradient(135deg, #ffcc44, #f5a623); border: none; border-radius: 30px; padding: 10px 40px; font-weight: 800; color: #1a0a2e; cursor: pointer; }
+
+        /* ===== BINGO: big yellow latest-called ball ===== */
+        .bingo-latest { padding: 16px 12px; }
+        .bingo-latest-ball {
+          width: 150px; height: 150px;
+          margin: 8px auto;
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: radial-gradient(circle at 32% 28%, #fff8c0 0%, #ffe066 22%, #ffc233 52%, #e8a020 82%, #a86408 100%);
+          box-shadow: 0 0 44px rgba(255, 200, 60, 0.7), 0 10px 24px rgba(0, 0, 0, 0.55),
+                      inset 0 4px 8px rgba(255, 255, 255, 0.6), inset 0 -8px 18px rgba(120, 60, 0, 0.4);
+          border: 4px solid #ffcc44;
+          color: #2a1600;
+          font-size: 2.6rem;
+          font-weight: 900;
+          letter-spacing: 2px;
+          text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+        }
+        .bingo-latest-ball.pop { animation: latestBallPop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes latestBallPop {
+          0%   { transform: scale(0.4) rotate(-15deg); opacity: 0.2; }
+          60%  { transform: scale(1.15) rotate(5deg); opacity: 1; }
+          100% { transform: scale(1) rotate(0); opacity: 1; }
+        }
+
+        /* ===== BINGO: winner popup cards ===== */
+        #bingoWinnerModal .card { max-width: 380px; max-height: 88vh; overflow-y: auto; }
+        .bingo-winner-card {
+          background: rgba(30, 20, 50, 0.72);
+          border: 2px solid #8affb0;
+          border-radius: 16px;
+          padding: 12px;
+          margin-bottom: 12px;
+        }
+        .bingo-winner-card-title {
+          color: #ffcc44; font-size: 0.8rem; font-weight: 800;
+          text-align: center; margin-bottom: 8px; letter-spacing: 0.5px;
+        }
+        .bingo-winner-card-grid { width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; margin-bottom: 8px; }
+        .bingo-winner-card-grid th { background: #5d338b; color: #fff; padding: 5px 0; border-radius: 5px; font-size: 0.65rem; }
+        .bingo-winner-card-grid td { background: #e2d8f2; color: #24153d; border-radius: 5px; text-align: center; font-weight: 800; font-size: 0.68rem; height: 30px; }
+        .bingo-winner-card-grid td.called { background: #43c985; color: #063d28; box-shadow: inset 0 0 0 2px #168a54; }
+        .bingo-winner-card-grid td.free  { background: #ffcf55; }
+        .bingo-winner-info { text-align: center; font-size: 0.9rem; color: #f0e6ff; font-weight: 700; }
+        .bingo-winner-info strong { color: #8affb0; }
     </style>
 </head>
 <body>
@@ -473,7 +511,6 @@
           </div>
           <div id="bingoSelectionPanel" class="bingo-panel">
             <div class="bingo-panel-title"><strong>Choose up to 2 cards</strong><span id="bingoSelectedLabel">0 / 2 selected</span></div>
-            <!-- Removed the helper text as requested -->
             <div id="bingoNumberGrid" class="bingo-number-grid"></div>
             <div class="bingo-action-row">
               <span id="bingoSelectionStatus">Tap a card number to select automatically.</span>
@@ -481,7 +518,11 @@
           </div>
           <div id="bingoLivePanel" class="bingo-panel hidden">
             <div class="bingo-stats"><div><small>Game ID</small><strong id="bingoGameId">—</strong></div><div><small>Players</small><strong id="bingoPlayers">0</strong></div><div><small>Prize pool</small><strong id="bingoPrizePool">0</strong></div><div><small>Calls</small><strong id="bingoCallsCount">0</strong></div></div>
-            <div class="bingo-latest"><small>LATEST CALLED NUMBER</small><strong id="bingoLatest">—</strong><div id="bingoRecentCalls" class="bingo-recent-calls"></div></div>
+            <div class="bingo-latest">
+              <small>LATEST CALLED NUMBER</small>
+              <div class="bingo-latest-ball" id="bingoLatest">—</div>
+              <div id="bingoRecentCalls" class="bingo-recent-calls"></div>
+            </div>
             <div id="bingoMyCards" class="bingo-my-cards"></div>
             <div class="bingo-history">
                 <strong>Called numbers</strong>
@@ -642,7 +683,6 @@
         <p>ሌላ ተጫዋች እስከሚገባ እባክዎትን ትንሽ ይጠብቁ!</p>
         <button class="close-waiting" id="closeWaitingBtn">✕ Dismiss</button>
     </div>
-    <!-- ✅ UPDATED: split icon and body so the toast can stretch horizontally -->
     <div class="toast" id="welcomeToast">
         <span class="icon">🎉</span>
         <div class="toast-body">
@@ -693,7 +733,6 @@
       </div>
     </div>
 
-    <!-- NEW: Bingo Winner Modal -->
     <div id="bingoWinnerModal">
         <div class="card">
             <div class="title">🎉 BINGO WINNER! 🎉</div>
@@ -1110,7 +1149,7 @@
         const winnersModal = $('winnersModal'); const transactionModal = $('transactionModal');
         const transactionStatus = $('transactionStatus'); const transactionCloseBtn = $('transactionCloseBtn');
         const waitingModal = $('waitingModal'); const closeWaitingBtn = $('closeWaitingBtn'); const welcomeToast = $('welcomeToast');
-        const statusEl = $('statusMessage'); // This is now null because the element is removed
+        const statusEl = $('statusMessage');
         const numPicker = $('numPicker');
         const selectedCountSpan = $('selectedCount'); const prizeDisplay = $('prizeDisplay');
         const timerDisplay = $('timerDisplay'); const playerCountEl = $('playerCount');
@@ -1217,7 +1256,6 @@
         }
         function updatePrizeDisplay() { updateTotalBetDisplay(); }
         function updateStatus(msg, isWin = false) {
-            // MODIFICATION: Gracefully handle removal of the status bar element
             if (!statusEl) return;
             const text = String(msg ?? '');
             if (isWin) { statusEl.textContent = `🏆 ${text}`; statusEl.classList.add('win-badge'); }
@@ -1827,7 +1865,6 @@
             if (msgEl) msgEl.textContent = String(message).replace(/<[^>]*>/g, '');
             welcomeToast.classList.add('active');
             clearTimeout(welcomeToast._hideTimer);
-            // ✅ Extended duration so players have time to read the message
             welcomeToast._hideTimer = setTimeout(() => welcomeToast.classList.remove('active'), 8000);
         }
 
@@ -2052,7 +2089,6 @@
             if (!DB.getToastShown()) {
                 if (welcomeToast) welcomeToast.classList.add('active');
                 DB.setToastShown();
-                // ✅ Extended duration so players have time to read the welcome message
                 setTimeout(() => { if (welcomeToast) welcomeToast.classList.remove('active'); }, 8000);
             }
         }
@@ -2634,7 +2670,6 @@
             if (roundChanged) {
                 localSelectionRound = null;
                 localSelectionPicks = [];
-                // Clear only the previous round's result before applying the newest server snapshot.
                 lastResultData = null;
                 displayedCardRound = null;
                 clearCardFetchRetry();
@@ -2653,8 +2688,6 @@
             engineState.roundNumber = round;
             phaseDeadline = Number(data.endsAt || data.selectionEndsAt) || 0;
             if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
-            // The authoritative state can arrive without lastResult on reconnect or older server builds.
-            // Keep the result visible to every client by reconstructing it from the room snapshot.
             if (data.lastResult && Number(data.lastResult.round) === round && Number(data.lastResult.winningNumber) > 0) {
                 lastResultData = data.lastResult;
             } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 200) {
@@ -2764,7 +2797,6 @@
             };
         };
 
-        // Winzo Bingo is an independent game mode sharing the authenticated Winzo socket.
         const bingoUi = { state: null, selected: [], cardTab: 0, history: [], active: false, submitting: false, lastRoundId: null, selectionTimer: null };
 
         function showGameChooser() {
@@ -2789,7 +2821,6 @@
             bingoUi.active=true;
             if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
             bingoUi.selected=[]; bingoUi.submitting=false; bingoUi.lastRoundId=null; bingoUi.state=null;
-            // Join only the selected stake room; Spin's room connection is handled separately.
             bingoSend('join');
             bingoSend('state');
             renderBingoWallet();
@@ -2802,44 +2833,65 @@
         function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
         
         function renderBingoGrid(){
-            const root=document.getElementById('bingoNumberGrid'); if(!root)return; root.innerHTML='';
-            const st=bingoUi.state||{}, taken=new Set(st.taken||[]);
-            const serverMine=Array.isArray(st.mySelections)?st.mySelections:[];
-            const mine=new Set(serverMine.length?serverMine:bingoUi.selected);
-            for(let n=1;n<=400;n++){
-                const btn=document.createElement('button');
-                btn.type='button';
-                btn.className='bingo-num'+(mine.has(n)?' selected':'')+(taken.has(n)&&!mine.has(n)?' taken':'');
-                btn.textContent=n;
-                btn.disabled=!!bingoUi.submitting || st.phase!=='selection' || (taken.has(n)&&!mine.has(n)) || (!mine.has(n)&&mine.size>=2) || serverMine.length>0;
-                btn.onclick=()=>{
-                    if(bingoUi.submitting || serverMine.length || !bingoUi.state || bingoUi.state.phase!=='selection') return;
-                    const selected=new Set(bingoUi.selected);
-                    if(selected.has(n)) selected.delete(n);
-                    else if(selected.size>=2){bingoNotice('You can select up to two cards per round.');return;}
-                    else selected.add(n);
-                    bingoUi.selected=[...selected].sort((a,b)=>a-b);
-                    renderBingoGrid();
-                    // Automatically submit after a short pause, allowing a second quick tap
-                    // to be included in the same atomic selection request.
-                    if (bingoUi.selectionTimer) clearTimeout(bingoUi.selectionTimer);
-                    if (!bingoUi.selected.length) { bingoUi.selectionTimer=null; return; }
-                    bingoUi.selectionTimer=setTimeout(()=>{
-                        bingoUi.selectionTimer=null;
-                        submitBingoSelection();
-                    }, 1000);
-                };
-                root.appendChild(btn);
-            }
-            const lab=document.getElementById('bingoSelectedLabel');if(lab)lab.textContent=mine.size+' / 2 selected';
-            const status=document.getElementById('bingoSelectionStatus');if(status)status.textContent=st.phase==='selection'?'Stake per card: '+(st.stake??currentBet)+' Birr · selections submit automatically':'Selection is closed';
+          const root=document.getElementById('bingoNumberGrid'); if(!root)return; root.innerHTML='';
+          const st=bingoUi.state||{}, taken=new Set(st.taken||[]);
+          const serverMine=Array.isArray(st.mySelections)?st.mySelections:[];
+          const allMine=new Set([...serverMine, ...bingoUi.selected]);
+          for(let n=1;n<=400;n++){
+            const btn=document.createElement('button');
+            btn.type='button';
+            const isSelected = allMine.has(n);
+            const isServerPick = serverMine.includes(n);
+            btn.className='bingo-num'+(isSelected?' selected':'')+(taken.has(n)&&!isSelected?' taken':'');
+            btn.textContent=n;
+            btn.disabled =
+              !!bingoUi.submitting ||
+              st.phase!=='selection' ||
+              (taken.has(n) && !isSelected) ||
+              (!isSelected && allMine.size>=2) ||
+              isServerPick ||
+              serverMine.length>=2;
+            btn.onclick=()=>{
+              if(bingoUi.submitting || !bingoUi.state || bingoUi.state.phase!=='selection') return;
+              const sMine = Array.isArray(bingoUi.state.mySelections) ? bingoUi.state.mySelections : [];
+              if (sMine.length >= 2) { bingoNotice('You already have 2 cards for this round.'); return; }
+              if (sMine.includes(n)) return;
+              if (bingoUi.selected.includes(n)) {
+                bingoUi.selected = bingoUi.selected.filter(x => x !== n);
+              } else {
+                if (sMine.length + bingoUi.selected.length >= 2) {
+                  bingoNotice('You can select up to 2 cards per round.');
+                  return;
+                }
+                bingoUi.selected.push(n);
+              }
+              renderBingoGrid();
+              if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
+              if (!bingoUi.selected.length) return;
+              bingoUi.selectionTimer = setTimeout(() => {
+                bingoUi.selectionTimer = null;
+                submitBingoSelection();
+              }, 1000);
+            };
+            root.appendChild(btn);
+          }
+          const lab=document.getElementById('bingoSelectedLabel');
+          if(lab)lab.textContent=allMine.size+' / 2 selected';
+          const status=document.getElementById('bingoSelectionStatus');
+          if(status)status.textContent = st.phase==='selection'
+            ? 'Stake per card: '+(st.stake??currentBet)+' Birr · taps auto-submit'
+            : 'Selection is closed';
         }
         function submitBingoSelection(){
-            if(bingoUi.submitting || !bingoUi.selected.length) return;
-            if(!bingoUi.state || bingoUi.state.phase!=='selection'){bingoNotice('Card selection is closed for this round.');return;}
-            if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
-            bingoUi.submitting=true; renderBingoGrid();
-            bingoSend('select',{numbers:[...bingoUi.selected],stake:currentBet===30?30:15});
+          if (bingoUi.submitting || !bingoUi.selected.length) return;
+          if (!bingoUi.state || bingoUi.state.phase !== 'selection') { bingoNotice('Card selection is closed for this round.'); return; }
+          const sMine = Array.isArray(bingoUi.state.mySelections) ? bingoUi.state.mySelections : [];
+          const newPicks = bingoUi.selected.filter(n => !sMine.includes(n));
+          if (!newPicks.length) { bingoUi.selected = []; return; }
+          if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer = null; }
+          bingoUi.submitting = true;
+          renderBingoGrid();
+          bingoSend('select', { numbers: newPicks, stake: currentBet === 30 ? 30 : 15 });
         }
         function renderBingoState(st){
             if (st && st.roundId && bingoUi.lastRoundId !== st.roundId) {
@@ -2855,16 +2907,31 @@
             const selection=document.getElementById('bingoSelectionPanel'),live=document.getElementById('bingoLivePanel');
             if(st.phase==='selection'||st.phase==='waiting'){selection?.classList.remove('hidden');live?.classList.add('hidden');}
             else {selection?.classList.add('hidden');live?.classList.remove('hidden');}
-            const my=Array.isArray(st.mySelections)?st.mySelections:[];
-            if(my.length){bingoUi.selected=[...my];bingoUi.submitting=false;}
-            else if(st.phase!=='selection'){bingoUi.selected=[];bingoUi.submitting=false;}
+            if (st.phase !== 'selection') {
+              bingoUi.selected = [];
+              bingoUi.submitting = false;
+            } else {
+              const my = Array.isArray(st.mySelections) ? st.mySelections : [];
+              bingoUi.selected = bingoUi.selected.filter(n => !my.includes(n));
+            }
             
             const fields={bingoGameId:st.gameId||'—',bingoPlayers:st.playerCount||0,bingoPrizePool:st.prizePool||0,bingoCallsCount:(st.called||[]).length};
             Object.entries(fields).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=v;});
-            const latest=(st.called||[]).slice(-1)[0],le=document.getElementById('bingoLatest');if(le)le.textContent=latest?(bingoLetter(latest)+'-'+latest):'—';
+            const latest = (st.called || []).slice(-1)[0];
+            const le = document.getElementById('bingoLatest');
+            if (le) {
+              const newText = latest ? (bingoLetter(latest) + '-' + latest) : '—';
+              if (le.textContent !== newText) {
+                le.textContent = newText;
+                if (latest) {
+                  le.classList.remove('pop');
+                  void le.offsetWidth;
+                  le.classList.add('pop');
+                }
+              }
+            }
             const recent=document.getElementById('bingoRecentCalls');if(recent)recent.innerHTML=(st.called||[]).slice(-5).reverse().map(n=>`<span class="bingo-ball ${bingoLetter(n).toLowerCase()}">${bingoLetter(n)}-${n}</span>`).join('');
             
-            // Render the complete 1–75 board in B/I/N/G/O columns and highlight called balls.
             const hist=document.getElementById('bingoCalledHistory');
             if(hist) {
                 hist.innerHTML='';
@@ -2885,7 +2952,13 @@
 
             renderBingoGrid(); renderBingoCards(st);
             const win=document.getElementById('bingoWinnerBox');
-            if(win){if(st.winners&&st.winners.length){win.classList.remove('hidden');win.innerHTML='<strong>🎉 ROUND WINNER</strong>'+st.winners.map(w=>`<div>${escapeHtml(w.name)} · Card ${w.cardId} · ${escapeHtml(w.pattern)} · Prize ${Number(w.prize||0)} Br</div>`).join('');}else win.classList.add('hidden');}
+            if(win){
+              if(st.winners&&st.winners.length){
+                win.classList.remove('hidden');
+                win.innerHTML='<strong>🎉 ROUND WINNER</strong>'+
+                  st.winners.map(w=>`<div>${escapeHtml(w.name)} · Card ${w.cardNumber} · ${escapeHtml(w.pattern||'Bingo')} · Prize ${Number(w.prize||0)} Br</div>`).join('');
+              } else win.classList.add('hidden');
+            }
         }
         function renderBingoCards(st){
             const root=document.getElementById('bingoMyCards');if(!root)return;root.innerHTML='';
@@ -2902,6 +2975,7 @@
                 if(m.state) renderBingoState(m.state);
             }
             else if(m.type==='bingo-selected'){
+                if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
                 bingoUi.selected=[]; bingoUi.submitting=false;
                 bingoNotice(m.message||'Your Bingo card selection is confirmed.');
                 if(client)client.walletRefresh();
@@ -2917,13 +2991,34 @@
                 bingoNotice(items.length?('Recent Bingo rounds:\n'+lines):'No saved Bingo history yet.');
             }
             else if(m.type==='bingo-winner-popup'){
-                // Show Winner Popup
                 const modal = document.getElementById('bingoWinnerModal');
                 const details = document.getElementById('bingoWinnerDetails');
-                if (modal && details) {
-                    details.innerHTML = `Winner: <strong>${escapeHtml(m.winner.name)}</strong><br>Prize: <strong>${m.winner.prize} Birr</strong>`;
-                    modal.classList.add('active');
+                if (!modal || !details) return;
+                const winners = Array.isArray(m.winners) ? m.winners : [];
+                const called = new Set(Array.isArray(m.called) ? m.called : []);
+                if (!winners.length) {
+                  details.innerHTML = '<div style="padding:20px;color:#b8a0d0;">No winner this round</div>';
+                } else {
+                  details.innerHTML = winners.map(w => {
+                    let gridHtml = '<table class="bingo-winner-card-grid"><thead><tr><th>B</th><th>I</th><th>N</th><th>G</th><th>O</th></tr></thead><tbody>';
+                    (w.grid || []).forEach((row, ri) => {
+                      gridHtml += '<tr>';
+                      row.forEach((n, ci) => {
+                        const free = ri === 2 && ci === 2;
+                        const hit = free || called.has(n);
+                        gridHtml += `<td class="${free ? 'free' : ''} ${hit && !free ? 'called' : ''}">${free ? '★' : n}</td>`;
+                      });
+                      gridHtml += '</tr>';
+                    });
+                    gridHtml += '</tbody></table>';
+                    return `<div class="bingo-winner-card">
+                      <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtml(w.pattern || 'Bingo')}</div>
+                      ${gridHtml}
+                      <div class="bingo-winner-info"><strong>${escapeHtml(w.name)}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
+                    </div>`;
+                  }).join('');
                 }
+                modal.classList.add('active');
             }
         };
 
@@ -2943,9 +3038,6 @@
             document.getElementById('gameChooserScreen').classList.add('hidden');
             showWelcomeScreen();
         };
-        // Route the welcome-screen stake buttons explicitly. Keep Spin's existing
-        // selectBet()/wheel engine untouched; wait briefly for auth state if a tap
-        // races the authentication callback instead of silently doing nothing.
         function openSelectedGameForStake(amount, mode) {
             currentBet = amount;
             if (mode === 'bingo') {
@@ -2989,9 +3081,6 @@
         function init() {
             if (authLoginBtn) authLoginBtn.onclick = handleLogin;
             if (authSignupBtn) authSignupBtn.onclick = handleSignup;
-            // Bet buttons are already handled above with the modified onclick
-            // if (bet15Btn) bet15Btn.onclick = () => selectBet(15);
-            // if (bet30Btn) bet30Btn.onclick = () => selectBet(30);
             
             if (welcomeLogoutBtn) welcomeLogoutBtn.onclick = function() { if (confirm('Are you sure you want to logout?')) performLogout(); };
             if (gameLogoutBtn) gameLogoutBtn.onclick = function() { if (confirm('Are you sure you want to logout?')) performLogout(); };
