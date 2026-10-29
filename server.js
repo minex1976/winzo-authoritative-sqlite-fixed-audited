@@ -661,7 +661,7 @@ async function transactionRequest(uid, data) {
           if (statusCheck.rows[0]?.status === 'pending') {
             await addNotification(uid, {
               type: 'notification',
-              message: 'ገንዘብ ገቢ ማደረግዎን የሚያሳይ ማስረጃ አልተገኘም።'
+              message: 'ገንዘብ ገቢ ማድረግዎን የሚያሳይ ማስረጃ አልተገኘም።'
             });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
           }
@@ -1512,6 +1512,7 @@ setInterval(async () => {
 
 // ============================================================================
 /* WINZO BINGO */
+// ============================================================================
 const BINGO_DEFAULT_STAKE = [15,30].includes(Number(process.env.BINGO_STAKE)) ? Number(process.env.BINGO_STAKE) : 15;
 const BINGO_STAKES = [15, 30];
 const BINGO_SELECTION_SECONDS = Math.max(15, Number(process.env.BINGO_SELECTION_SECONDS || 45));
@@ -1548,6 +1549,74 @@ function bingoWithRoundLock(round, fn) {
 function clearBingoBots(round){for(const t of (round.botTimers||[]))clearTimeout(t);round.botTimers=[];}
 function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}return pool;}
 
+// ✅ Build a ball pool biased toward numbers on the cards in the round,
+//    guaranteeing at least one winner. Winner card is chosen uniformly
+//    from ALL entries (bots and humans have equal chance).
+function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
+  const entries = [...round.entries.values()];
+  if (!entries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
+
+  const shuffledEntries = bingoShuffle([...entries]);
+  const designated = shuffledEntries.slice(0, Math.min(guaranteedWinnerCount, shuffledEntries.length));
+  const winnerCard = designated[0];
+
+  const g = winnerCard.grid;
+  const patternChoices = [];
+  for (let r = 0; r < 5; r++) patternChoices.push([0,1,2,3,4].map(c => g[r][c]));
+  for (let c = 0; c < 5; c++) patternChoices.push([0,1,2,3,4].map(r => g[r][c]));
+  patternChoices.push([0,1,2,3,4].map(i => g[i][i]));
+  patternChoices.push([0,1,2,3,4].map(i => g[i][4 - i]));
+
+  const chosen = patternChoices[crypto.randomInt(patternChoices.length)];
+  const mustCall = chosen.filter(n => n > 0);
+
+  const allNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
+  const fillerPool = bingoShuffle(allNumbers.filter(n => !mustCall.includes(n)));
+
+  const pool = [];
+  let mustIdx = 0;
+  const maxMustPos = Math.min(30, mustCall.length * 5);
+  for (let pos = 0; pos < 75 && (mustIdx < mustCall.length || fillerPool.length); pos++) {
+    const placeMust = mustIdx < mustCall.length && (
+      pos >= maxMustPos - mustCall.length + mustIdx
+      || crypto.randomInt(4) === 0
+    );
+    if (placeMust) pool.push(mustCall[mustIdx++]);
+    else if (fillerPool.length) pool.push(fillerPool.shift());
+  }
+  while (mustIdx < mustCall.length) pool.push(mustCall[mustIdx++]);
+  return pool;
+}
+
+// ✅ Fallback: guarantee a winner exists. Considers all entries equally.
+function bingoForceWinner(round) {
+  const allCards = [...round.entries.values()];
+  if (!allCards.length) return null;
+
+  let best = null, bestMissing = Infinity, bestPattern = null;
+  for (const card of allCards) {
+    const g = card.grid;
+    const patterns = [];
+    for (let r = 0; r < 5; r++) patterns.push({ name: 'Horizontal Line', nums: [0,1,2,3,4].map(c => g[r][c]) });
+    for (let c = 0; c < 5; c++) patterns.push({ name: 'Vertical Line',   nums: [0,1,2,3,4].map(r => g[r][c]) });
+    patterns.push({ name: 'Diagonal Line', nums: [0,1,2,3,4].map(i => g[i][i]) });
+    patterns.push({ name: 'Diagonal Line', nums: [0,1,2,3,4].map(i => g[i][4 - i]) });
+    patterns.push({ name: 'Four Corners',  nums: [g[0][0], g[0][4], g[4][0], g[4][4]] });
+    patterns.push({ name: 'Full House',    nums: g.flat() });
+
+    for (const p of patterns) {
+      const need = p.nums.filter(n => n > 0 && !round.called.includes(n));
+      if (need.length < bestMissing) {
+        bestMissing = need.length; best = card; bestPattern = p;
+      }
+      if (need.length === 0) return { ...card, pattern: p.name };
+    }
+  }
+  if (!best || !bestPattern) return null;
+  for (const n of bestPattern.nums) if (n > 0 && !round.called.includes(n)) round.called.push(n);
+  return { ...best, pattern: bestPattern.name };
+}
+
 function scheduleBingoBots(round){
   clearBingoBots(round);if(!round||round.phase!=='selection')return;
   const shuffled=[...BOT_NAMES].sort(()=>0.5-Math.random());
@@ -1583,11 +1652,12 @@ async function restoreOneBingoRound(stake){
   const r=latest.rows[0],round={stake,id:r.id,gameId:r.game_id,roundNumber:Number(r.round_number),phase:r.phase,prizePool:Number(r.prize_pool),startedAt:Number(r.started_at),endsAt:Number(r.ends_at),called:Array.isArray(r.called_numbers)?r.called_numbers:[],pool:[],entries:new Map(),winners:Array.isArray(r.winners)?r.winners:[],botTimers:[],tickRunning:false};
   round.pool=bingoShuffle(Array.from({length:75},(_,i)=>i+1).filter(n=>!round.called.includes(n)));
   const entries=await pool.query('SELECT id,username,card_number,card_data,stake FROM bingo_entries WHERE round_id=$1',[round.id]),found=[];
-  for(const e of entries.rows){const user=await pool.query('SELECT display_name FROM users WHERE username=$1',[e.username]);const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called);const entry={id:e.id,uid:e.username,name:user.rows[0]?.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing'&&!String(e.username).startsWith('__bot_'))found.push({...entry,pattern});}
+  for(const e of entries.rows){const user=await pool.query('SELECT display_name FROM users WHERE username=$1',[e.username]);const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called);const entry={id:e.id,uid:e.username,name:user.rows[0]?.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing')found.push({...entry,pattern});}
   bingoRounds.set(stake,round);
   if(round.phase==='playing'&&found.length){await bingoFinish(round,found);return round;}
   if(round.phase==='selection'&&round.endsAt<=Date.now())round.endsAt=Date.now()+BINGO_SELECTION_SECONDS*1000;
   if(round.phase==='playing'&&round.endsAt<=Date.now())round.endsAt=Date.now()+BINGO_CALL_INTERVAL_MS;
+  if(round.phase==='playing'&&(!round.pool||!round.pool.length))round.pool=bingoBuildGuaranteedPool(round,1);
   await persistBingoRound(round);if(round.phase==='selection')scheduleBingoBots(round);
   console.log(`[BINGO] Restored ${stake}-Birr round ${round.gameId} (${round.phase})`);return round;
 }
@@ -1597,7 +1667,7 @@ function bingoPublicState(round,uid){if(!round)return null;const entries=[...rou
 function bingoSendState(ws){if(ws?.readyState===1&&ws.authed)send(ws,{type:'bingo-state',state:bingoPublicState(bingoRoundFor(ws),ws.uid)});}
 function bingoBroadcast(stake){for(const ws of bingoMembers)if(ws.readyState===1&&ws.authed&&(!stake||bingoStake(ws._bingoStake)===stake))bingoSendState(ws);}
 
-// ✅ FIX: allow up to 2 cards per round per user
+// ✅ Allow up to 2 cards per round per user
 async function bingoSelectUnlocked(ws,numbers){
   const round=bingoRoundFor(ws);if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)return send(ws,{type:'bingo-error',message:'Card selection is closed for this round.'});
   if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>400)||new Set(numbers).size!==numbers.length)return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 400.'});
@@ -1607,7 +1677,6 @@ async function bingoSelectUnlocked(ws,numbers){
     await db.query('BEGIN');const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
     if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))throw new Error('Card selection is closed for this round.');
     const usedRows=await db.query('SELECT card_number FROM bingo_entries WHERE round_id=$1',[round.id]),used=new Set(usedRows.rows.map(r=>Number(r.card_number)));
-    // ✅ Count how many cards user already has — allow up to 2 total
     const priorCountRes = await db.query('SELECT COUNT(*)::int AS c FROM bingo_entries WHERE round_id=$1 AND username=$2',[round.id,ws.uid]);
     const existingCount = priorCountRes.rows[0]?.c || 0;
     if (existingCount + numbers.length > 2) throw new Error('You can select up to 2 cards per round (you already have ' + existingCount + ').');
@@ -1625,12 +1694,31 @@ async function bingoSelect(ws,numbers){
   return bingoWithRoundLock(round,()=>bingoSelectUnlocked(ws,numbers));
 }
 
-// ✅ FIX: broadcast ALL winners with card grids in one popup
+// ✅ Finish round: broadcast ALL winners (with card grids) to every player
 async function bingoFinish(round,winners){
-  if(!round||round.phase!=='playing')return;round.phase='results';round.completedAt=Date.now();const eligible=[...new Map(winners.map(w=>[w.id,w])).values()],prizeEach=eligible.length?Math.floor((round.prizePool*0.8*100)/eligible.length)/100:0,db=await pool.connect();
-  try{await db.query('BEGIN');for(const w of eligible){const prize=prizeEach;if(prize>0 && !String(w.uid).startsWith('__bot_')){const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',[crypto.randomUUID(),round.id,w.uid,'prize',prize,'bingo-prize:'+round.id+':'+w.id,Date.now()]);if(ledger.rowCount){const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);if(!upd.rowCount)throw new Error('Winner wallet update failed');}}await db.query('INSERT INTO bingo_results(id,round_id,username,display_name,card_number,pattern,prize,call_number,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(round_id,username,card_number) DO NOTHING',[w.id,round.id,w.uid,w.name,w.cardNumber,w.pattern,prize,round.called.at(-1)||null,Date.now()]);w.prize=prize;}await db.query('UPDATE bingo_rounds SET phase=$1,completed_at=$2,winners=$3::jsonb WHERE id=$4',['results',Date.now(),JSON.stringify(eligible),round.id]);await db.query('COMMIT');}catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}finally{db.release();}
+  if(!round||round.phase!=='playing')return;
+  round.phase='results';round.completedAt=Date.now();
+  const eligible=[...new Map(winners.map(w=>[w.id,w])).values()];
+  const prizeEach=eligible.length?Math.floor((round.prizePool*0.8*100)/eligible.length)/100:0;
+  const db=await pool.connect();
+  try{
+    await db.query('BEGIN');
+    for(const w of eligible){
+      const prize=prizeEach;
+      if(prize>0 && !String(w.uid).startsWith('__bot_')){
+        const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',[crypto.randomUUID(),round.id,w.uid,'prize',prize,'bingo-prize:'+round.id+':'+w.id,Date.now()]);
+        if(ledger.rowCount){const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);if(!upd.rowCount)throw new Error('Winner wallet update failed');}
+      }
+      await db.query('INSERT INTO bingo_results(id,round_id,username,display_name,card_number,pattern,prize,call_number,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(round_id,username,card_number) DO NOTHING',[w.id,round.id,w.uid,w.name,w.cardNumber,w.pattern,prize,round.called.at(-1)||null,Date.now()]);
+      w.prize=prize;
+    }
+    await db.query('UPDATE bingo_rounds SET phase=$1,completed_at=$2,winners=$3::jsonb WHERE id=$4',['results',Date.now(),JSON.stringify(eligible),round.id]);
+    await db.query('COMMIT');
+  }catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}finally{db.release();}
+
   round.winners=eligible;
-  // ✅ Send ONE popup containing ALL winners + their card grids
+
+  // ✅ Single popup containing ALL winning cards + their grids, sent to EVERY player in this stake room.
   const winnersPayload = eligible.map(w => ({
     name: w.name,
     prize: w.prize,
@@ -1646,16 +1734,70 @@ async function bingoFinish(round,winners){
         winners: winnersPayload,
         called: calledSnapshot,
         roundId: round.id,
-        gameId: round.gameId
+        gameId: round.gameId,
+        prizePool: round.prizePool
       });
     }
   }
-  await persistBingoRound(round);bingoBroadcast(round.stake);clearBingoBots(round);setTimeout(async()=>{if(bingoRounds.get(round.stake)===round&&round.phase==='results'){await bingoNewRound(round.stake);bingoBroadcast(round.stake);}},BINGO_RESULT_SECONDS*1000);
+  await persistBingoRound(round);bingoBroadcast(round.stake);clearBingoBots(round);
+  setTimeout(async()=>{if(bingoRounds.get(round.stake)===round&&round.phase==='results'){await bingoNewRound(round.stake);bingoBroadcast(round.stake);}},BINGO_RESULT_SECONDS*1000);
 }
-async function bingoTickUnlocked(round){if(!round)return;try{
-  if(round.phase==='selection'&&Date.now()>=round.endsAt){if(!round.entries.size){await bingoNewRound(round.stake);bingoBroadcast(round.stake);return;}round.phase='playing';round.endsAt=Date.now()+BINGO_CALL_INTERVAL_MS;await persistBingoRound(round);bingoBroadcast(round.stake);return;}
-  if(round.phase==='playing'&&Date.now()>=round.endsAt){const n=round.pool.shift();if(n==null){await bingoFinish(round,[]);return;}round.called.push(n);const winners=[];for(const e of round.entries.values()){const pattern=bingoPattern(e.grid,round.called);if(pattern&&!e.won){e.won=true;if(!String(e.uid).startsWith('__bot_'))winners.push({...e,pattern});}}round.endsAt=Date.now()+BINGO_CALL_INTERVAL_MS;if(winners.length||!round.pool.length){await bingoFinish(round,winners);return;}await persistBingoRound(round);bingoBroadcast(round.stake);}
-  }finally{round.tickRunning=false;}}
+
+async function bingoTickUnlocked(round) {
+  if (!round) return;
+  try {
+    if (round.phase === 'selection' && Date.now() >= round.endsAt) {
+      if (!round.entries.size) {
+        await bingoNewRound(round.stake);
+        bingoBroadcast(round.stake);
+        return;
+      }
+      round.phase = 'playing';
+      round.endsAt = Date.now() + BINGO_CALL_INTERVAL_MS;
+      // ✅ Rebuild pool so at least one card (bot or human, equally likely) wins
+      round.pool = bingoBuildGuaranteedPool(round, 1);
+      await persistBingoRound(round);
+      bingoBroadcast(round.stake);
+      return;
+    }
+
+    if (round.phase === 'playing' && Date.now() >= round.endsAt) {
+      const n = round.pool.shift();
+      if (n == null) {
+        const forced = bingoForceWinner(round);
+        await bingoFinish(round, forced ? [forced] : []);
+        return;
+      }
+      round.called.push(n);
+
+      const winners = [];
+      for (const e of round.entries.values()) {
+        const pattern = bingoPattern(e.grid, round.called);
+        if (pattern && !e.won) {
+          e.won = true;
+          // ✅ Bots and humans have equal win chance
+          winners.push({ ...e, pattern });
+        }
+      }
+      round.endsAt = Date.now() + BINGO_CALL_INTERVAL_MS;
+
+      const tooManyCalls = round.called.length >= 45;
+      const nearPoolEnd = round.pool.length <= 5;
+      if (winners.length || !round.pool.length || tooManyCalls || nearPoolEnd) {
+        if (!winners.length) {
+          const forced = bingoForceWinner(round);
+          if (forced) winners.push(forced);
+        }
+        await bingoFinish(round, winners);
+        return;
+      }
+      await persistBingoRound(round);
+      bingoBroadcast(round.stake);
+    }
+  } finally {
+    round.tickRunning = false;
+  }
+}
 async function bingoTick(round){
   if(!round||round.tickRunning)return;
   round.tickRunning=true;
@@ -1804,9 +1946,6 @@ async function handle(ws, m) {
     return send(ws,{type:'bingo-history',items:r.rows});
   }
 
-  // ✅ FIX: Removed early return that blocked room_15/room_30 joins.
-  // Bingo uses 'bingo-join' (handled above), so 'join' should ALWAYS join
-  // the spin room. This fixes the "frozen on loading numbers" bug.
   if (m.type === 'join') {
     const room = rooms[m.room]; if (!room) return send(ws, { type: 'error', message: 'bad-room' });
     ws.roomId = m.room;
