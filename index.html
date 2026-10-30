@@ -433,7 +433,7 @@
             display: grid;
             grid-template-columns: 100px 1fr; /* Fixed width for called numbers to prevent squeeze */
             gap: 10px;
-            align-items: start;
+            align-items: stretch;
             flex: 1 1 auto;
             min-height: 0;
             overflow: hidden;
@@ -443,8 +443,8 @@
             display: flex;
             flex-direction: column;
             height: 100%;
-            overflow-y: auto; /* Scrollable called numbers if they exceed height */
-            -webkit-overflow-scrolling: touch;
+            min-height: 0;
+            overflow: hidden;
             padding-right: 2px;
         }
         .bingo-right-col {
@@ -458,14 +458,19 @@
 
         .bingo-called-grid {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 2px;
+            height: 100%;
+            min-height: 0;
+            flex: 1 1 auto;
         }
         .bingo-called-column {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            align-items: center;
+            display: grid;
+            grid-template-rows: auto repeat(15, minmax(0, 1fr));
+            gap: clamp(2px, .35vh, 4px);
+            align-items: stretch;
+            height: 100%;
+            min-height: 0;
         }
         .bingo-called-header {
             font-weight: 900;
@@ -605,7 +610,7 @@
         .bingo-called-column { gap: clamp(3px, .55vw, 6px); }
         .bingo-called-header { font-size: clamp(.78rem, 1.6vw, 1rem); padding: 5px 2px; border-radius: 7px; }
         .bingo-called-number {
-            height: clamp(25px, 3.5vh, 36px); min-height: 25px;
+            height: auto; min-height: 0; min-width: 0;
             font-size: clamp(.72rem, 1.55vw, .95rem); border-radius: 6px;
         }
         .bingo-called-number.just-called { animation: calledPulse .65s ease-out; }
@@ -634,7 +639,7 @@
             .game-wrapper.bingo-mode { padding:8px 7px 9px; border-radius:12px; }
             .bingo-main-area { gap:7px; }
             .bingo-panel { padding:8px; }
-            .bingo-called-number { height:clamp(23px,3.15vh,31px); font-size:.68rem; }
+            .bingo-called-number { height:auto; min-height:0; font-size:clamp(.62rem,2.2vw,.78rem); }
         }
         @media (prefers-reduced-motion: reduce) {
             .bingo-num, .bingo-num.selected, .bingo-called-number.just-called,
@@ -697,7 +702,7 @@
           
           <div id="bingoSelectionPanel" class="bingo-panel">
             <div class="bingo-panel-title"><strong>Choose up to 2 cards</strong><span id="bingoSelectedLabel">0 / 2 selected</span></div>
-            <div class="bingo-selection-prize"><span>🏆 Current prize pool</span><strong id="bingoSelectionPrizePool">0 Br</strong></div>
+            <div class="bingo-selection-prize"><span>🏆 Prize pool after 20% fee</span><strong id="bingoSelectionPrizePool">0 Br</strong></div>
             <div id="bingoNumberGrid" class="bingo-number-grid"></div>
             <div class="bingo-action-row">
               <span id="bingoSelectionStatus">Tap a card number to select automatically.</span>
@@ -716,7 +721,7 @@
                     <div class="bingo-stats">
                         <div><small>Game ID</small><strong id="bingoGameId">—</strong></div>
                         <div><small>Players</small><strong id="bingoPlayers">0</strong></div>
-                        <div><small>Prize pool</small><strong id="bingoPrizePool">0</strong></div>
+                        <div><small>Prize pool after 20% fee</small><strong id="bingoPrizePool">0</strong></div>
                         <div><small>Calls</small><strong id="bingoCallsCount">0</strong></div>
                     </div>
                     
@@ -3102,7 +3107,7 @@
           const lab=document.getElementById('bingoSelectedLabel');
           if(lab)lab.textContent=allMine.size+' / 2 selected';
           const prize = document.getElementById('bingoSelectionPrizePool');
-          if (prize) prize.textContent = safeNum(st.prizePool, 0).toLocaleString() + ' Br';
+          if (prize) prize.textContent = (safeNum(st.prizePool, 0) * 0.8).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' Br';
           const status=document.getElementById('bingoSelectionStatus');
           if(status)status.textContent = st.phase==='selection'
             ? 'Stake per card: '+(st.stake??currentBet)+' Birr · taps auto-submit'
@@ -3150,7 +3155,8 @@
               bingoUi.selected = bingoUi.selected.filter(n => !my.includes(n));
             }
             
-            const fields={bingoGameId:st.gameId||'—',bingoPlayers:st.playerCount||0,bingoPrizePool:st.prizePool||0,bingoCallsCount:(st.called||[]).length};
+            const netPrizePool = safeNum(st.prizePool, 0) * 0.8;
+            const fields={bingoGameId:st.gameId||'—',bingoPlayers:st.playerCount||0,bingoPrizePool:netPrizePool.toLocaleString(undefined, { maximumFractionDigits: 2 }),bingoCallsCount:(st.called||[]).length};
             Object.entries(fields).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=v;});
             const latest = (st.called || []).slice(-1)[0];
             const le = document.getElementById('bingoLatest');
