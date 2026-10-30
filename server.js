@@ -1694,6 +1694,61 @@ async function bingoSelect(ws,numbers){
   return bingoWithRoundLock(round,()=>bingoSelectUnlocked(ws,numbers));
 }
 
+// Remove one of the current player's reserved cards during the selection phase.
+// The original stake is refunded to the play wallet in the same database transaction.
+async function bingoUnselectUnlocked(ws,number){
+  const round=bingoRoundFor(ws);
+  const n=Number(number);
+  if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)
+    return send(ws,{type:'bingo-unselect-error',number:n,message:'Card selection is closed for this round.'});
+  if(!Number.isInteger(n)||n<1||n>400)
+    return send(ws,{type:'bingo-unselect-error',number:n,message:'Invalid card number.'});
+  const db=await pool.connect();
+  let removed=null;
+  try{
+    await db.query('BEGIN');
+    const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
+    if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))
+      throw new Error('Card selection is closed for this round.');
+    const entryRes=await db.query(
+      'SELECT id,stake FROM bingo_entries WHERE round_id=$1 AND username=$2 AND card_number=$3 FOR UPDATE',
+      [round.id,ws.uid,n]
+    );
+    if(!entryRes.rows.length)throw new Error('That card is not reserved by your account.');
+    removed=entryRes.rows[0];
+    const refund=Number(removed.stake);
+    const ledger=await db.query(
+      `INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at)
+       VALUES($1,$2,$3,'refund',$4,$5,$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id`,
+      [crypto.randomUUID(),round.id,ws.uid,refund,'bingo-refund:'+round.id+':'+ws.uid+':'+n,Date.now()]
+    );
+    if(ledger.rowCount){
+      const upd=await db.query(
+        'UPDATE users SET play_wallet=play_wallet+$1,wallet_updated_at=$2 WHERE username=$3',
+        [refund,Date.now(),ws.uid]
+      );
+      if(!upd.rowCount)throw new Error('Wallet refund failed.');
+    }
+    await db.query('DELETE FROM bingo_entries WHERE id=$1',[removed.id]);
+    await db.query('UPDATE bingo_rounds SET prize_pool=GREATEST(0,prize_pool-$1) WHERE id=$2',[refund,round.id]);
+    await db.query('COMMIT');
+    round.entries.delete(removed.id);
+    round.prizePool=Math.max(0,Number((round.prizePool-refund).toFixed(2)));
+    send(ws,{type:'bingo-unselected',number:n,message:'Card '+n+' removed. '+refund+' Birr refunded to your play wallet.',state:bingoPublicState(round,ws.uid)});
+    await sendWallet(ws.uid);
+    await persistBingoRound(round);
+    bingoBroadcast(round.stake);
+  }catch(e){
+    await db.query('ROLLBACK').catch(()=>{});
+    send(ws,{type:'bingo-unselect-error',number:n,message:e.message||'Could not remove this card.'});
+  }finally{db.release();}
+}
+async function bingoUnselect(ws,number){
+  const round=bingoRoundFor(ws);
+  if(!round)return send(ws,{type:'bingo-unselect-error',number:Number(number),message:'The selected Bingo room is not ready yet.'});
+  return bingoWithRoundLock(round,()=>bingoUnselectUnlocked(ws,number));
+}
+
 // ✅ Finish round: broadcast ALL winners (with card grids) to every player
 async function bingoFinish(round,winners){
   if(!round||round.phase!=='playing')return;
@@ -1739,6 +1794,11 @@ async function bingoFinish(round,winners){
         prizePool: round.prizePool
       });
     }
+  }
+  // The result popup is queued first; then push the newly credited main-wallet
+  // balance to each human winner without waiting for another player action.
+  for(const uid of new Set(eligible.filter(w=>!String(w.uid).startsWith('__bot_')).map(w=>w.uid))){
+    await sendWallet(uid);
   }
   await persistBingoRound(round);bingoBroadcast(round.stake);clearBingoBots(round);
   setTimeout(async()=>{if(bingoRounds.get(round.stake)===round&&round.phase==='results'){await bingoNewRound(round.stake);bingoBroadcast(round.stake);}},BINGO_RESULT_SECONDS*1000);
@@ -1939,6 +1999,10 @@ async function handle(ws, m) {
   if (m.type === 'bingo-select') {
     if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake);
     return bingoSelect(ws,m.numbers);
+  }
+  if (m.type === 'bingo-unselect') {
+    if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake);
+    return bingoUnselect(ws,m.number);
   }
   if (m.type === 'bingo-history') {
     const r=await pool.query(`SELECT DISTINCT r.game_id,r.round_number,r.phase,r.prize_pool,r.called_numbers,r.completed_at
