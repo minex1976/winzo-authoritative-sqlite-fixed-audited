@@ -59,6 +59,8 @@
         .status-dot.online { background: #4caf84; box-shadow: 0 0 12px rgba(76, 175, 132, 0.4); }
         .status-dot.offline { background: #e87070; }
         .more-btn { background: rgba(120, 80, 200, 0.15); border: 1px solid rgba(120, 80, 200, 0.15); border-radius: 50%; width: 24px; height: 24px; color: #d4c0f0; font-size: 1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; }
+        .spin-games-btn{font-size:1.05rem;line-height:1}
+
         .more-wrapper { position: relative; flex-shrink: 0; z-index: 100; }
         .more-dropdown { display: none; position: absolute; top: calc(100% + 8px); right: 0; min-width: 180px; background: rgba(20, 10, 40, 0.95); border: 1px solid rgba(180, 120, 255, 0.15); border-radius: 18px; padding: 6px; flex-direction: column; gap: 3px; }
         .more-dropdown.open { display: flex; }
@@ -394,6 +396,11 @@
         #winzoUserEventModal .wue-ok:focus { outline: 2px solid #f0abfc; outline-offset: 3px; }
     
         .game-chooser-screen{display:flex;flex-direction:column;justify-content:center;gap:18px;padding:24px 10px;flex:1;min-height:0;color:#f5edff}
+        .chooser-topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;position:relative;z-index:120;min-height:92px}
+        .chooser-topbar .chooser-logo{flex:1;text-align:center;margin-bottom:12px;padding-left:62px}
+        .chooser-more-wrapper{margin-top:4px}
+        .more-btn.chooser-options-btn{width:auto;height:auto;min-height:36px;padding:0 13px;border-radius:12px;border:1px solid rgba(255,204,68,.55);background:linear-gradient(135deg,rgba(120,80,200,.45),rgba(50,30,90,.9));color:#ffdf78;font-size:.78rem;letter-spacing:.3px}
+        .chooser-more-dropdown{top:calc(100% + 8px);min-width:190px;max-height:70vh;overflow-y:auto;z-index:300}
         .chooser-logo{text-align:center;margin-bottom:12px}.chooser-crown{font-size:3rem;filter:drop-shadow(0 0 15px #a36aff)}.chooser-logo h1{font-size:2rem;letter-spacing:3px;font-weight:900}.chooser-logo h1 span{color:#ffcc44}.chooser-logo p{color:#b9a7d7;font-size:.85rem;margin-top:7px}
         .game-choice{display:flex;align-items:center;gap:14px;text-align:left;width:100%;padding:20px 16px;border-radius:22px;border:1px solid rgba(210,180,255,.35);color:#fff;cursor:pointer;box-shadow:0 9px 22px #07041466;transition:transform .15s,border-color .15s}.game-choice:active{transform:scale(.98)}.spin-choice{background:linear-gradient(120deg,#4a237b,#211b4d)}.bingo-choice{background:linear-gradient(120deg,#753b14,#39204e)}.game-choice:hover{border-color:#ffcc44}.choice-icon{font-size:2.3rem}.choice-copy{display:flex;flex-direction:column;gap:5px;flex:1}.choice-copy strong{font-size:1.15rem}.choice-copy small{font-size:.75rem;color:#e0d4f5}.choice-arrow{font-size:2rem;color:#ffcc44}.chooser-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#cbb9e5;font-size:.75rem;margin-top:8px}
         
@@ -688,13 +695,30 @@
         </div>
 
         <div id="gameChooserScreen" class="game-chooser-screen hidden">
-          <div class="chooser-logo"><div class="chooser-crown">🏆</div><h1>WINZO <span>GAMES</span></h1><p>Choose your game to continue</p></div>
+          <div class="chooser-topbar">
+            <div class="chooser-logo"><div class="chooser-crown">🏆</div><h1>WINZO <span>GAMES</span></h1><p>Choose your game to continue</p></div>
+            <div class="more-wrapper chooser-more-wrapper">
+              <button class="more-btn chooser-options-btn" id="moreBtn" type="button">Options</button>
+              <div class="more-dropdown chooser-more-dropdown" id="moreDropdown">
+                <div style="padding:4px 3px;">
+                  <div style="color:#7a6a9a;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">⚙️ Actions</div>
+                  <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
+                  <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
+                  <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
+                  <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
+                  <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
+                  <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
+                  <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
           <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
           <div class="chooser-footer"><span id="chooserBalance">Play balance: 0 Birr</span><button id="chooserLogoutBtn" class="logout-btn">🚪 Logout</button></div>
         </div>
         <section id="bingoScreen" class="bingo-screen hidden">
-          <header class="bingo-header"><button id="bingoBackBtn" class="bingo-small-btn">‹ Games</button><div><strong>🎱 WINZO BINGO</strong><small id="bingoPhaseLabel">Connecting…</small></div><button id="bingoRefreshBtn" class="bingo-small-btn">↻</button></header>
+          <header class="bingo-header"><button id="bingoBackBtn" class="bingo-small-btn">‹ Games</button><div><strong>🎱 WINZO BINGO</strong><small id="bingoPhaseLabel">Connecting…</small></div><button id="bingoRefreshBtn" class="bingo-small-btn" aria-label="Back to games">⌂</button></header>
           
           <div class="bingo-wallet-grid">
             <div><small>Main Wallet</small><strong id="bingoMainWallet">—</strong></div><div><small>Play Wallet</small><strong id="bingoPlayWallet">—</strong></div><div><small>Stake / Card</small><strong id="bingoStake">15</strong></div><div><small>Countdown</small><strong id="bingoCountdown">—</strong></div>
@@ -756,21 +780,7 @@
                 </div>
                 <div class="wallet-right" style="display:flex;align-items:center;gap:3px;">
                     <span class="status-dot offline" id="statusDot"></span>
-                    <div class="more-wrapper">
-                        <button class="more-btn" id="moreBtn">⋮</button>
-                        <div class="more-dropdown" id="moreDropdown">
-                            <div style="padding:4px 3px;">
-                                <div style="color:#7a6a9a;font-size:0.55rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">⚙️ Actions</div>
-                                <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
-                                <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
-                                <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
-                                <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
-                                <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
-                                <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
-                                <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
-                            </div>
-                        </div>
-                    </div>
+                    <button class="more-btn spin-games-btn" id="spinGamesBtn" type="button" aria-label="Back to games">⋮</button>
                 </div>
             </div>
             <div class="game-info-bar">
@@ -3008,7 +3018,7 @@
             };
         };
 
-        const bingoUi = { state: null, selected: [], cardTab: 0, history: [], active: false, submitting: false, lastRoundId: null, selectionTimer: null };
+        const bingoUi = { state: null, selected: [], cardTab: 0, history: [], active: false, submitting: false, unselecting: new Set(), lastRoundId: null, selectionTimer: null };
 
         function setBingoViewportMode(enabled) {
             document.body.classList.toggle('bingo-mode', !!enabled);
@@ -3075,16 +3085,20 @@
             btn.textContent=n;
             btn.disabled =
               !!bingoUi.submitting ||
+              bingoUi.unselecting.has(n) ||
               st.phase!=='selection' ||
               (taken.has(n) && !isSelected) ||
-              (!isSelected && allMine.size>=2) ||
-              isServerPick ||
-              serverMine.length>=2;
+              (!isSelected && allMine.size>=2 && !isServerPick) ||
+              (serverMine.length>=2 && !isServerPick && !bingoUi.selected.includes(n));
             btn.onclick=()=>{
               if(bingoUi.submitting || !bingoUi.state || bingoUi.state.phase!=='selection') return;
               const sMine = Array.isArray(bingoUi.state.mySelections) ? bingoUi.state.mySelections : [];
-              if (sMine.length >= 2) { bingoNotice('You already have 2 cards for this round.'); return; }
-              if (sMine.includes(n)) return;
+              if (sMine.includes(n)) {
+                bingoUi.unselecting.add(n);
+                renderBingoGrid();
+                bingoSend('unselect', { number:n, stake: currentBet === 30 ? 30 : 15 });
+                return;
+              }
               if (bingoUi.selected.includes(n)) {
                 bingoUi.selected = bingoUi.selected.filter(x => x !== n);
               } else {
@@ -3135,6 +3149,7 @@
                 bingoUi.lastRoundId = st.roundId;
                 bingoUi.selected = [];
                 bingoUi.submitting = false;
+                bingoUi.unselecting.clear();
                 if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
             }
             const prevCalledCount = (bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called.length : 0;
@@ -3225,6 +3240,17 @@
                 if(client)client.walletRefresh();
                 if(m.state)renderBingoState(m.state);
             }
+            else if(m.type==='bingo-unselected'){
+                bingoUi.unselecting.delete(Number(m.number));
+                if(m.state) renderBingoState(m.state);
+                bingoNotice(m.message||'Card selection removed and stake refunded.');
+                if(client) client.walletRefresh();
+            }
+            else if(m.type==='bingo-unselect-error'){
+                bingoUi.unselecting.delete(Number(m.number));
+                renderBingoGrid();
+                bingoNotice(m.message||'Could not remove this card.');
+            }
             else if(m.type==='bingo-error'){
                 bingoUi.submitting=false; renderBingoGrid();
                 bingoNotice(m.message||'Bingo action could not be completed.');
@@ -3243,7 +3269,7 @@
                 const called = new Set(calledList);
                 const winningNumber = Number(m.winningNumber || calledList[calledList.length - 1] || 0);
                 const winningCall = winningNumber > 0 ? `${bingoLetter(winningNumber)}-${winningNumber}` : '—';
-                const winningCallHtml = `<div class="bingo-winner-info" style="margin-bottom:12px;">Winning call: <strong>${winningCall}</strong></div>`;
+                const winningCallHtml = `<div class="bingo-winner-info" style="margin-bottom:6px;">Winning call: <strong>${winningCall}</strong></div><div class="bingo-winner-info" style="margin-bottom:12px;">Prize pool: <strong>${Number(m.prizePool||0).toLocaleString()} Birr</strong></div>`;
                 if (!winners.length) {
                   details.innerHTML = winningCallHtml + '<div style="padding:20px;color:#b8a0d0;">No winner this round</div>';
                 } else {
@@ -3266,8 +3292,12 @@
                     </div>`;
                   }).join('');
                 }
-                // Intentionally persistent: only the player's OK action closes this result.
                 modal.classList.add('active');
+                if (window._bingoWinnerPopupTimer) clearTimeout(window._bingoWinnerPopupTimer);
+                window._bingoWinnerPopupTimer = setTimeout(() => {
+                    modal.classList.remove('active');
+                    window._bingoWinnerPopupTimer = null;
+                }, 5000);
                 const ok = document.getElementById('bingoWinnerOkBtn');
                 if (ok) ok.focus({ preventScroll: true });
             }
@@ -3275,6 +3305,7 @@
 
         document.getElementById('bingoWinnerOkBtn').onclick = () => {
             const modal = document.getElementById('bingoWinnerModal');
+            if (window._bingoWinnerPopupTimer) { clearTimeout(window._bingoWinnerPopupTimer); window._bingoWinnerPopupTimer = null; }
             if (modal) modal.classList.remove('active');
         };
 
@@ -3326,7 +3357,12 @@
         document.getElementById('welcomeLogoutBtn').addEventListener('click',()=>{});
         document.getElementById('bingoBackBtn').onclick=()=>{bingoUi.active=false;setBingoViewportMode(false);if(bingoUi.selectionTimer){clearTimeout(bingoUi.selectionTimer);bingoUi.selectionTimer=null;}bingoUi.selected=[];bingoUi.submitting=false;bingoSend('leave');showGameChooser();};
         document.getElementById('bingoRefreshBtn').onclick=()=>{
-            bingoSend('state', { room: currentBet === 15 ? 'room_15' : 'room_30' });
+            bingoUi.active=false;
+            setBingoViewportMode(false);
+            if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
+            bingoUi.selected=[]; bingoUi.submitting=false;
+            bingoSend('leave');
+            showGameChooser();
         };
         setInterval(()=>{if(bingoUi.active&&bingoUi.state){const e=document.getElementById('bingoCountdown');if(e)e.textContent=Math.max(0,Math.ceil((Number(bingoUi.state.endsAt||0)-Date.now())/1000))+'s';}},500);
 
@@ -3388,6 +3424,18 @@
                 if (tg && tg.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl, '_blank');
             };
             if (moreBtn) moreBtn.onclick = toggleMoreDropdown;
+            const spinGamesBtn = document.getElementById('spinGamesBtn');
+            if (spinGamesBtn) spinGamesBtn.onclick = () => {
+                if (client) client.leave();
+                hideMoreLoginTip();
+                detachLastResultListener(); clearCardFetchRetry();
+                isGameInitialized = false;
+                stopTimer(); stopResultsCountdown(); stopResilienceEngine();
+                resetEngineStateForNewRound();
+                DB.setSavedBet(null);
+                showGameChooser();
+                closeMoreDropdown();
+            };
             if (depositConfirm) depositConfirm.onclick = async () => {
                 const file = depositImage ? depositImage.files[0] : null;
                 let amount = parseFloat(depositAmount ? depositAmount.value : '0');
@@ -3475,7 +3523,7 @@
                     walletData.pending = safeNum(w.pending, 0);
                     walletData.refEarn = safeNum(w.refEarn, 0);
                     walletData.updatedAt = safeNum(w.updatedAt, Date.now());
-                    updateWalletUI(); updateWelcomeUI();
+                    updateWalletUI(); updateWelcomeUI(); renderBingoWallet();
                     renderNumberPicker();
                 },
                 onTransactionCreated: () => { transactionStatus.textContent = '⏳ Pending admin approval...'; },
