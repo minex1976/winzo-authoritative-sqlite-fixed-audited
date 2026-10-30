@@ -592,6 +592,55 @@
         .bingo-winner-card-grid td.free  { background: #ffcf55; }
         .bingo-winner-info { text-align: center; font-size: 0.9rem; color: #f0e6ff; font-weight: 700; }
         .bingo-winner-info strong { color: #8affb0; }
+    
+        /* Winzo Bingo: use the full available viewport without changing Winzo Spin. */
+        body.bingo-mode { padding: 0; align-items: stretch; }
+        .game-wrapper.bingo-mode {
+            width: 100vw; max-width: none; height: 100dvh; max-height: none;
+            border-radius: 18px; padding: 10px 12px 12px;
+        }
+        .game-wrapper.bingo-mode .bingo-screen { padding-bottom: 4px; }
+        .bingo-main-area { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+        .bingo-called-grid { gap: clamp(3px, .7vw, 7px); }
+        .bingo-called-column { gap: clamp(3px, .55vw, 6px); }
+        .bingo-called-header { font-size: clamp(.78rem, 1.6vw, 1rem); padding: 5px 2px; border-radius: 7px; }
+        .bingo-called-number {
+            height: clamp(25px, 3.5vh, 36px); min-height: 25px;
+            font-size: clamp(.72rem, 1.55vw, .95rem); border-radius: 6px;
+        }
+        .bingo-called-number.just-called { animation: calledPulse .65s ease-out; }
+        .bingo-selection-prize {
+            display:flex; align-items:center; justify-content:space-between; gap:10px;
+            margin: 9px 0 7px; padding: 10px 13px; flex-shrink:0;
+            border:1px solid rgba(255,204,68,.55); border-radius:12px;
+            background:linear-gradient(110deg,rgba(255,204,68,.17),rgba(112,228,160,.09));
+            box-shadow:0 0 18px rgba(255,204,68,.10), inset 0 1px rgba(255,255,255,.07);
+        }
+        .bingo-selection-prize span { color:#e4d6f8; font-size:.78rem; font-weight:700; }
+        .bingo-selection-prize strong { color:#8affb0; font-size:1.05rem; text-shadow:0 0 12px rgba(138,255,176,.3); }
+        .bingo-num { transition:transform .12s ease,filter .12s ease,box-shadow .12s ease; }
+        .bingo-num:not(:disabled):active { transform:scale(.94); filter:brightness(1.18); }
+        .bingo-num.selected { animation:bingoPickPop .22s ease-out; }
+        @keyframes bingoPickPop { 0%{transform:scale(.82)} 75%{transform:scale(1.08)} 100%{transform:scale(1)} }
+        .bingo-latest-ball { transition:filter .2s ease; }
+        .bingo-latest-ball.pop { filter:drop-shadow(0 0 13px rgba(255,204,68,.8)); }
+        .bingo-card { box-shadow:0 5px 18px rgba(0,0,0,.22); }
+        .bingo-card td.marked { animation:bingoMark .28s ease-out; }
+        @keyframes bingoMark { from{transform:scale(.82)} to{transform:scale(1)} }
+        #bingoWinnerModal { z-index:2147483600; }
+        #bingoWinnerModal .card { max-height:88dvh; overflow:auto; }
+        #bingoWinnerModal .ok-btn { min-width:130px; min-height:44px; }
+        @media (max-width:520px) {
+            .game-wrapper.bingo-mode { padding:8px 7px 9px; border-radius:12px; }
+            .bingo-main-area { gap:7px; }
+            .bingo-panel { padding:8px; }
+            .bingo-called-number { height:clamp(23px,3.15vh,31px); font-size:.68rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bingo-num, .bingo-num.selected, .bingo-called-number.just-called,
+            .bingo-card td.marked, .bingo-latest-ball.pop { animation:none !important; transition:none !important; }
+        }
+
     </style>
 </head>
 <body>
@@ -648,6 +697,7 @@
           
           <div id="bingoSelectionPanel" class="bingo-panel">
             <div class="bingo-panel-title"><strong>Choose up to 2 cards</strong><span id="bingoSelectedLabel">0 / 2 selected</span></div>
+            <div class="bingo-selection-prize"><span>🏆 Current prize pool</span><strong id="bingoSelectionPrizePool">0 Br</strong></div>
             <div id="bingoNumberGrid" class="bingo-number-grid"></div>
             <div class="bingo-action-row">
               <span id="bingoSelectionStatus">Tap a card number to select automatically.</span>
@@ -897,6 +947,8 @@
 
     <script>
         const DEV_MODE = false;
+        // GitHub Pages is static hosting. Keep the authoritative game server here,
+        // or define window.WINZO_CONFIG.WS_URL in a small config script before this script.
         window.WINZO_CONFIG = window.WINZO_CONFIG || {
             WS_URL: 'wss://winzo-authoritative-sqlite-fixed-audited.app.aletcloud.com/'
         };
@@ -2744,7 +2796,7 @@
                     else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
                     else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                     else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
-                    else if (m.type.startsWith('bingo-')) { if (window.handleBingoMessage) window.handleBingoMessage(m); }
+                    else if (typeof m.type === 'string' && m.type.startsWith('bingo-')) { if (window.handleBingoMessage) window.handleBingoMessage(m); }
                     else if (m.type === 'error') {
                         if (m.message === 'auth-failed') {
                             this.lastAuthFailureReason = m.reason || 'unknown';
@@ -2953,7 +3005,14 @@
 
         const bingoUi = { state: null, selected: [], cardTab: 0, history: [], active: false, submitting: false, lastRoundId: null, selectionTimer: null };
 
+        function setBingoViewportMode(enabled) {
+            document.body.classList.toggle('bingo-mode', !!enabled);
+            const wrapper = document.querySelector('.game-wrapper');
+            if (wrapper) wrapper.classList.toggle('bingo-mode', !!enabled);
+        }
+
         function showGameChooser() {
+            setBingoViewportMode(false);
             const auth = document.getElementById('authScreen'), welcome = document.getElementById('welcomeScreen');
             const game = document.getElementById('gameScreen'), chooser = document.getElementById('gameChooserScreen'), bingo = document.getElementById('bingoScreen');
             if (auth) auth.style.display = 'none'; if (welcome) welcome.style.display = 'none'; if (game) game.style.display = 'none';
@@ -2961,13 +3020,24 @@
             updateWelcomeUI();
             const b = document.getElementById('chooserBalance'); if (b) b.textContent = 'Play balance: ' + safeNum(walletData.play, 0) + ' Birr';
         }
+        let bingoNoticeTimer = null;
         function bingoSend(type, extra={}) {
-            if (!client || !client.authenticated) { bingoNotice('Please wait until your account connects to the server.'); return; }
-            if (!client.rawSend({ type: 'bingo-' + type, stake: currentBet === 30 ? 30 : 15, room: currentBet === 30 ? 'room_30' : 'room_15', ...extra })) bingoNotice('Connection is not ready. Please try again.');
+            if (!client || !client.authenticated) { bingoNotice('Please wait until your account connects to the server.'); return false; }
+            const sent = client.rawSend({ type: 'bingo-' + type, stake: currentBet === 30 ? 30 : 15, room: currentBet === 30 ? 'room_30' : 'room_15', ...extra });
+            if (!sent) bingoNotice('Connection is not ready. Please try again.');
+            return sent;
         }
-        function bingoNotice(s) { const el=document.getElementById('bingoInfoModal'); if(el){el.textContent=s;el.classList.remove('hidden');setTimeout(()=>el.classList.add('hidden'), 4000);} }
+        function bingoNotice(message) {
+            const el=document.getElementById('bingoInfoModal');
+            if(!el) return;
+            el.textContent=String(message || 'Please try again.');
+            el.classList.remove('hidden');
+            if (bingoNoticeTimer) clearTimeout(bingoNoticeTimer);
+            bingoNoticeTimer=setTimeout(()=>{el.classList.add('hidden');bingoNoticeTimer=null;},4000);
+        }
         
         function openBingo() {
+            setBingoViewportMode(true);
             document.getElementById('gameChooserScreen')?.classList.add('hidden');
             document.getElementById('welcomeScreen').style.display='none';
             document.getElementById('gameScreen').style.display='none';
@@ -3031,6 +3101,8 @@
           }
           const lab=document.getElementById('bingoSelectedLabel');
           if(lab)lab.textContent=allMine.size+' / 2 selected';
+          const prize = document.getElementById('bingoSelectionPrizePool');
+          if (prize) prize.textContent = safeNum(st.prizePool, 0).toLocaleString() + ' Br';
           const status=document.getElementById('bingoSelectionStatus');
           if(status)status.textContent = st.phase==='selection'
             ? 'Stake per card: '+(st.stake??currentBet)+' Birr · taps auto-submit'
@@ -3048,6 +3120,12 @@
           bingoSend('select', { numbers: newPicks, stake: currentBet === 30 ? 30 : 15 });
         }
         function renderBingoState(st){
+            if (!st || typeof st !== 'object' || !bingoUi.active) return;
+            st.called = Array.isArray(st.called) ? st.called.filter(n => Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= 75).map(Number) : [];
+            st.taken = Array.isArray(st.taken) ? st.taken.filter(n => Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= 400).map(Number) : [];
+            st.mySelections = Array.isArray(st.mySelections) ? st.mySelections.filter(n => Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= 400).map(Number) : [];
+            st.myCards = Array.isArray(st.myCards) ? st.myCards : [];
+            st.winners = Array.isArray(st.winners) ? st.winners : [];
             if (st && st.roundId && bingoUi.lastRoundId !== st.roundId) {
                 bingoUi.lastRoundId = st.roundId;
                 bingoUi.selected = [];
@@ -3182,12 +3260,16 @@
                     </div>`;
                   }).join('');
                 }
+                // Intentionally persistent: only the player's OK action closes this result.
                 modal.classList.add('active');
+                const ok = document.getElementById('bingoWinnerOkBtn');
+                if (ok) ok.focus({ preventScroll: true });
             }
         };
 
         document.getElementById('bingoWinnerOkBtn').onclick = () => {
-            document.getElementById('bingoWinnerModal').classList.remove('active');
+            const modal = document.getElementById('bingoWinnerModal');
+            if (modal) modal.classList.remove('active');
         };
 
         document.getElementById('chooseSpinBtn').onclick = () => {
@@ -3236,7 +3318,7 @@
 
         document.getElementById('chooserLogoutBtn').onclick=()=>{if(client)client.disconnect();showAuthScreen();};
         document.getElementById('welcomeLogoutBtn').addEventListener('click',()=>{});
-        document.getElementById('bingoBackBtn').onclick=()=>{bingoUi.active=false;if(bingoUi.selectionTimer){clearTimeout(bingoUi.selectionTimer);bingoUi.selectionTimer=null;}bingoUi.selected=[];bingoUi.submitting=false;bingoSend('leave');showGameChooser();};
+        document.getElementById('bingoBackBtn').onclick=()=>{bingoUi.active=false;setBingoViewportMode(false);if(bingoUi.selectionTimer){clearTimeout(bingoUi.selectionTimer);bingoUi.selectionTimer=null;}bingoUi.selected=[];bingoUi.submitting=false;bingoSend('leave');showGameChooser();};
         document.getElementById('bingoRefreshBtn').onclick=()=>{
             bingoSend('state', { room: currentBet === 15 ? 'room_15' : 'room_30' });
         };
@@ -3361,7 +3443,14 @@
                     currentDisplayName = displayName || currentDisplayName || telegramDetectedDisplayName || telegramDetectedUsername || uid;
                     console.info('[WINZO AUTH]', { uid, displayName: currentDisplayName, telegramId: telegramUser?.id || null, telegramUsername: telegramUser?.username || null });
                     DB.setCurrentUser(uid);
-                    updateWalletUI(); updateWelcomeUI(); showGameChooser();
+                    updateWalletUI(); updateWelcomeUI();
+                    if (bingoUi.active) {
+                        setBingoViewportMode(true);
+                        bingoSend('join');
+                        bingoSend('state');
+                    } else {
+                        showGameChooser();
+                    }
                 },
                 onState: (state, room) => {
                     if (!state || (room && room !== currentRoom)) return;
