@@ -3070,6 +3070,51 @@
             const cb=document.getElementById('chooserBalance');if(cb)cb.textContent='Play balance: '+safeNum(walletData.play,0)+' Birr';
         }
         function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
+
+        // Winzo Bingo caller audio: one MP3 for every standard 75-ball number.
+        // Calls are queued so rapid state updates never overlap the spoken numbers.
+        const bingoCallAudio = {
+            queue: Promise.resolve(),
+            lastRoundId: null,
+            lastCalled: [],
+            play(number) {
+                const n = Number(number);
+                if (!Number.isInteger(n) || n < 1 || n > 75) return;
+                const label = bingoLetter(n) + '-' + n;
+                this.queue = this.queue.then(() => new Promise(resolve => {
+                    const audio = new Audio('./bingo_audio/' + label + '.mp3');
+                    audio.preload = 'auto';
+                    const finish = () => resolve();
+                    audio.addEventListener('ended', finish, { once: true });
+                    audio.addEventListener('error', finish, { once: true });
+                    const attempt = audio.play();
+                    if (attempt && typeof attempt.catch === 'function') {
+                        attempt.catch(err => {
+                            console.warn('[BINGO AUDIO] Playback unavailable for ' + label, err);
+                            resolve();
+                        });
+                    }
+                })).catch(err => console.warn('[BINGO AUDIO] Queue error', err));
+            },
+            update(roundId, called) {
+                const list = Array.isArray(called) ? called.map(Number) : [];
+                // A first state (or a reconnect) establishes the current history without
+                // replaying numbers that were called before this client joined.
+                if (this.lastRoundId !== roundId) {
+                    this.lastRoundId = roundId;
+                    this.lastCalled = list.slice();
+                    return;
+                }
+                const previous = this.lastCalled;
+                const newlyCalled = list.length >= previous.length &&
+                    previous.every((n, i) => list[i] === n)
+                    ? list.slice(previous.length)
+                    : list.filter(n => !previous.includes(n));
+                this.lastCalled = list.slice();
+                newlyCalled.forEach(n => this.play(n));
+            }
+        };
+
         
         function renderBingoGrid(){
           const root=document.getElementById('bingoNumberGrid'); if(!root)return; root.innerHTML='';
@@ -3152,6 +3197,7 @@
                 bingoUi.unselecting.clear();
                 if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
             }
+            bingoCallAudio.update(st.roundId, st.called);
             const prevCalledCount = (bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called.length : 0;
             const prevCalled = new Set((bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called : []);
             
