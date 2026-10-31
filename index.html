@@ -653,6 +653,17 @@
             .bingo-card td.marked, .bingo-latest-ball.pop { animation:none !important; transition:none !important; }
         }
 
+    
+        /* The Options control lives where Logout used to be on the game chooser. */
+        .chooser-options-anchor { display:flex; align-items:center; justify-content:flex-end; gap:7px; position:relative; }
+        .chooser-options-btn { width:auto; min-width:112px; height:42px; padding:0 18px; border-radius:14px; border:1px solid rgba(255,204,68,.72); background:linear-gradient(135deg,rgba(95,56,150,.95),rgba(43,32,83,.98)); color:#ffdc71; font-weight:800; font-size:.9rem; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+        .chooser-options-btn:focus-visible { outline:2px solid #ffcc44; outline-offset:3px; }
+        .options-pointing-emoji { display:inline-block; font-size:1.6rem; filter:drop-shadow(0 0 6px rgba(255,204,68,.4)); animation:pointAtOptions .8s ease-in-out infinite alternate; transform-origin:center; }
+        @keyframes pointAtOptions { from { transform:translateX(0) scale(1); } to { transform:translateX(7px) scale(1.13); } }
+        .chooser-more-wrapper { position:relative; }
+        .chooser-more-dropdown { z-index:1000; bottom:calc(100% + 8px); top:auto; right:0; }
+        .bingo-congratulations-badge { display:inline-flex; align-items:center; justify-content:center; margin:0 auto 8px; padding:5px 13px; border-radius:999px; color:#281400; background:linear-gradient(135deg,#ffe783,#ffb52e); border:1px solid rgba(255,255,255,.5); font-weight:900; font-size:.72rem; letter-spacing:.6px; text-shadow:0 1px rgba(255,255,255,.35); box-shadow:0 0 18px rgba(255,204,68,.25); animation:pulse 1s infinite alternate; }
+
     </style>
 </head>
 <body>
@@ -697,25 +708,30 @@
         <div id="gameChooserScreen" class="game-chooser-screen hidden">
           <div class="chooser-topbar">
             <div class="chooser-logo"><div class="chooser-crown">🏆</div><h1>WINZO <span>GAMES</span></h1><p>Choose your game to continue</p></div>
-            <div class="more-wrapper chooser-more-wrapper">
-              <button class="more-btn chooser-options-btn" id="moreBtn" type="button">Options</button>
-              <div class="more-dropdown chooser-more-dropdown" id="moreDropdown">
-                <div style="padding:4px 3px;">
-                  <div style="color:#7a6a9a;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">⚙️ Actions</div>
-                  <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
-                  <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
-                  <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
-                  <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
-                  <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
-                  <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
-                  <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
+          </div>
+          <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
+          <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
+          <div class="chooser-footer">
+            <span id="chooserBalance">Play balance: 0 Birr</span>
+            <div class="chooser-options-anchor">
+              <span class="options-pointing-emoji" aria-hidden="true">👉</span>
+              <div class="more-wrapper chooser-more-wrapper">
+                <button class="more-btn chooser-options-btn" id="moreBtn" type="button" aria-expanded="false">Options</button>
+                <div class="more-dropdown chooser-more-dropdown" id="moreDropdown">
+                  <div style="padding:4px 3px;">
+                    <div style="color:#7a6a9a;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">⚙️ Actions</div>
+                    <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
+                    <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
+                    <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
+                    <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
+                    <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
+                    <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
+                    <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-          <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <div class="chooser-footer"><span id="chooserBalance">Play balance: 0 Birr</span><button id="chooserLogoutBtn" class="logout-btn">🚪 Logout</button></div>
         </div>
         <section id="bingoScreen" class="bingo-screen hidden">
           <header class="bingo-header"><button id="bingoBackBtn" class="bingo-small-btn">‹ Games</button><div><strong>🎱 WINZO BINGO</strong><small id="bingoPhaseLabel">Connecting…</small></div><button id="bingoRefreshBtn" class="bingo-small-btn" aria-label="Back to games">⌂</button></header>
@@ -2405,7 +2421,9 @@
             currentUser = null;
             DB.setSavedCredentials('', '');
             if (authError) authError.textContent = '';
-            showWelcomeScreen();
+            // Keep the user on the authentication screen while connecting.
+            // The bet selector is only shown after a game is chosen from the chooser.
+            showAuthScreen();
             setConnectionStatus(false, '⚡ Connecting to game server…');
             let initData = (tg && tg.initData) ? tg.initData : '';
             if (!initData && isTelegram) initData = await waitForTelegramInitData(5000);
@@ -2507,7 +2525,11 @@
             if (gamePhaseLabel) gamePhaseLabel.textContent = '⏳ Selecting';
             renderNumberPicker(); updatePickStatus(); updateWalletUI(); updateTotalBetDisplay();
         }
-        function toggleMoreDropdown(e) { e.stopPropagation(); if (moreDropdown) moreDropdown.classList.toggle('open'); }
+        function toggleMoreDropdown(e) {
+            e.stopPropagation();
+            const isOpen = !!moreDropdown && moreDropdown.classList.toggle('open');
+            if (moreBtn) moreBtn.setAttribute('aria-expanded', String(isOpen));
+        }
         function openReferralModal() {
             if (!currentUser) return;
             const link = `${TELEGRAM_BOT_LINK}?startapp=ref_${encodeURIComponent(currentUser)}`;
@@ -2515,7 +2537,10 @@
             if (referralModal) referralModal.classList.add('active');
             closeMoreDropdown();
         }
-        function closeMoreDropdown() { if (moreDropdown) moreDropdown.classList.remove('open'); }
+        function closeMoreDropdown() {
+            if (moreDropdown) moreDropdown.classList.remove('open');
+            if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+        }
         document.addEventListener('click', (e) => { if (!e.target.closest('.more-wrapper')) closeMoreDropdown(); });
 
         function startTimer() {
@@ -3071,49 +3096,206 @@
         }
         function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
 
-        // Winzo Bingo caller audio: one MP3 for every standard 75-ball number.
-        // Calls are queued so rapid state updates never overlap the spoken numbers.
+        // Winzo Bingo caller audio: calls missed while backgrounded are never replayed.
         const bingoCallAudio = {
             queue: Promise.resolve(),
+            generation: 0,
             lastRoundId: null,
             lastCalled: [],
+            winnerDeclared: false,
+            winnerRoundId: null,
+            finalCalled: null,
+            currentAudio: null,
+            currentFinish: null,
+            pendingCount: 0,
+            maxPlaybackMs: 9000,
+
             play(number) {
                 const n = Number(number);
-                if (!Number.isInteger(n) || n < 1 || n > 75) return;
+                // Once a winner is declared, no further calls may enter this round's queue.
+                if (this.winnerDeclared && this.winnerRoundId === this.lastRoundId) return;
+                if (!Number.isInteger(n) || n < 1 || n > 75 || document.hidden) return;
                 const label = bingoLetter(n) + '-' + n;
+                const callGeneration = this.generation;
+                this.pendingCount++;
+
                 this.queue = this.queue.then(() => new Promise(resolve => {
-                    const audio = new Audio('./bingo_audio/' + label + '.mp3');
-                    audio.preload = 'auto';
-                    const finish = () => resolve();
-                    audio.addEventListener('ended', finish, { once: true });
-                    audio.addEventListener('error', finish, { once: true });
-                    const attempt = audio.play();
-                    if (attempt && typeof attempt.catch === 'function') {
-                        attempt.catch(err => {
-                            console.warn('[BINGO AUDIO] Playback unavailable for ' + label, err);
-                            resolve();
-                        });
+                    // A visibility change invalidates every call queued under the old generation.
+                    if (document.hidden || callGeneration !== this.generation) {
+                        this.pendingCount = Math.max(0, this.pendingCount - 1);
+                        resolve();
+                        return;
                     }
-                })).catch(err => console.warn('[BINGO AUDIO] Queue error', err));
+
+                    const audio = new Audio('./bingo_audio/' + label + '.mp3');
+                    this.currentAudio = audio;
+                    audio.preload = 'auto';
+                    let finished = false;
+                    const finish = () => {
+                        if (finished) return;
+                        finished = true;
+                        clearTimeout(timeout);
+                        audio.removeEventListener('ended', finish);
+                        audio.removeEventListener('error', onError);
+                        audio.removeEventListener('play', onPlay);
+                        if (this.currentAudio === audio) {
+                            this.currentAudio = null;
+                            this.currentFinish = null;
+                        }
+                        this.pendingCount = Math.max(0, this.pendingCount - 1);
+                        resolve();
+                    };
+                    this.currentFinish = finish;
+
+                    const onError = () => {
+                        console.warn('[BINGO AUDIO] Playback unavailable for ' + label);
+                        finish();
+                    };
+                    const onPlay = () => {
+                        // Show the spoken call only when its audio actually begins.
+                        if (callGeneration !== this.generation || document.hidden) return;
+                        const latest = document.getElementById('bingoLatest');
+                        if (latest && latest.textContent !== label) {
+                            latest.textContent = label;
+                            latest.classList.remove('pop');
+                            void latest.offsetWidth;
+                            latest.classList.add('pop');
+                        }
+                    };
+                    const timeout = setTimeout(() => {
+                        console.warn('[BINGO AUDIO] Playback timed out for ' + label);
+                        try { audio.pause(); } catch (_) {}
+                        finish();
+                    }, this.maxPlaybackMs);
+
+                    audio.addEventListener('ended', finish, { once: true });
+                    audio.addEventListener('error', onError, { once: true });
+                    audio.addEventListener('play', onPlay, { once: true });
+                    try {
+                        const attempt = audio.play();
+                        if (attempt && typeof attempt.catch === 'function') {
+                            attempt.catch(err => {
+                                console.warn('[BINGO AUDIO] Could not play ' + label, err);
+                                finish();
+                            });
+                        }
+                    } catch (err) {
+                        console.warn('[BINGO AUDIO] Could not play ' + label, err);
+                        finish();
+                    }
+                })).catch(err => {
+                    console.warn('[BINGO AUDIO] Queue error', err);
+                });
             },
-            update(roundId, called) {
+
+            skipPendingAndStopCurrent() {
+                // Invalidate queued calls before pausing. This prevents old queue chains
+                // from waking up and playing missed numbers if the screen turns on quickly.
+                this.generation++;
+                const audio = this.currentAudio;
+                const finish = this.currentFinish;
+                this.currentAudio = null;
+                this.currentFinish = null;
+                if (audio) {
+                    try { audio.pause(); } catch (_) {}
+                    try { audio.currentTime = 0; } catch (_) {}
+                }
+                if (finish) finish();
+                this.queue = Promise.resolve();
+                this.pendingCount = 0;
+
+                const st = bingoUi && bingoUi.state;
+                if (st && Array.isArray(st.called)) {
+                    this.lastRoundId = st.roundId ?? this.lastRoundId;
+                    this.lastCalled = st.called.map(Number);
+                }
+            },
+
+            stopForWinner(roundId, called) {
+                // Seal this round against additional calls, but DO NOT interrupt audio.
+                // Calls already queued (including the final called number) must finish in order.
+                const winnerRound = roundId ?? this.lastRoundId;
+                const finalList = Array.isArray(called) ? called.map(Number) : this.lastCalled.slice();
+                if (this.lastRoundId !== winnerRound) {
+                    this.lastRoundId = winnerRound;
+                    this.lastCalled = [];
+                }
+                const alreadyKnown = new Set(this.lastCalled);
+                const missingCalls = finalList.filter(n => !alreadyKnown.has(n));
+                this.winnerDeclared = true;
+                this.winnerRoundId = winnerRound;
+                this.finalCalled = finalList.slice();
+                // Queue any final calls not yet observed, then let the queue drain naturally.
+                missingCalls.forEach(n => this.playForWinner(n));
+                this.lastCalled = finalList.slice();
+            },
+
+            playForWinner(number) {
+                // Temporarily allow only the missing final calls while the round is sealed.
+                const sealed = this.winnerDeclared;
+                this.winnerDeclared = false;
+                this.play(number);
+                this.winnerDeclared = sealed;
+            },
+
+            whenIdle() {
+                // The promise resolves only after every queued caller clip has ended or failed.
+                return this.queue.catch(err => {
+                    console.warn('[BINGO AUDIO] Queue completion error', err);
+                });
+            },
+
+            update(roundId, called, phase) {
                 const list = Array.isArray(called) ? called.map(Number) : [];
-                // A first state (or a reconnect) establishes the current history without
-                // replaying numbers that were called before this client joined.
                 if (this.lastRoundId !== roundId) {
                     this.lastRoundId = roundId;
                     this.lastCalled = list.slice();
+                    this.winnerDeclared = false;
+                    this.winnerRoundId = null;
+                    this.finalCalled = null;
+                    return; // Establish history without replaying old calls.
+                }
+
+                // A winner/result phase is terminal for audio in this round.
+                if (this.winnerDeclared && this.winnerRoundId === roundId) {
                     return;
                 }
+                if (phase !== 'playing') {
+                    if (phase === 'results') {
+                        this.stopForWinner(roundId, list);
+                    } else {
+                        // Selection/waiting must never start call audio.
+                        this.skipPendingAndStopCurrent();
+                        this.lastCalled = list.slice();
+                    }
+                    return;
+                }
+
                 const previous = this.lastCalled;
-                const newlyCalled = list.length >= previous.length &&
-                    previous.every((n, i) => list[i] === n)
+                const isAppend = list.length >= previous.length &&
+                    previous.every((n, i) => list[i] === n);
+                const newlyCalled = isAppend
                     ? list.slice(previous.length)
                     : list.filter(n => !previous.includes(n));
                 this.lastCalled = list.slice();
+
+                if (document.hidden) return;
                 newlyCalled.forEach(n => this.play(n));
             }
         };
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                bingoCallAudio.skipPendingAndStopCurrent();
+            } else {
+                // Adopt the current server history without replaying anything missed.
+                const st = bingoUi && bingoUi.state;
+                if (st && Array.isArray(st.called)) {
+                    bingoCallAudio.lastRoundId = st.roundId ?? bingoCallAudio.lastRoundId;
+                    bingoCallAudio.lastCalled = st.called.map(Number);
+                }
+            }
+        });
 
         
         function renderBingoGrid(){
@@ -3197,7 +3379,12 @@
                 bingoUi.unselecting.clear();
                 if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
             }
-            bingoCallAudio.update(st.roundId, st.called);
+            // Once the round enters results, ignore any late call-list mutations.
+            const priorState = bingoUi.state;
+            if (priorState && priorState.roundId === st.roundId && priorState.phase === 'results') {
+                st.called = Array.isArray(priorState.called) ? priorState.called.slice() : st.called;
+            }
+            bingoCallAudio.update(st.roundId, st.called, st.phase);
             const prevCalledCount = (bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called.length : 0;
             const prevCalled = new Set((bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called : []);
             
@@ -3221,7 +3408,7 @@
             Object.entries(fields).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=v;});
             const latest = (st.called || []).slice(-1)[0];
             const le = document.getElementById('bingoLatest');
-            if (le) {
+            if (le && !bingoCallAudio.currentAudio && !bingoCallAudio.pendingCount) {
               const newText = latest ? (bingoLetter(latest) + '-' + latest) : '—';
               if (le.textContent !== newText) {
                 le.textContent = newText;
@@ -3312,6 +3499,12 @@
                 if (!modal || !details) return;
                 const winners = Array.isArray(m.winners) ? m.winners : [];
                 const calledList = Array.isArray(m.called) ? m.called : [];
+                const activeRoundId = (bingoUi.state && bingoUi.state.roundId) || m.roundId || null;
+                bingoCallAudio.stopForWinner(activeRoundId, calledList);
+                // Freeze the visible call history at the winner declaration.
+                if (bingoUi.state && bingoUi.state.roundId === activeRoundId) {
+                    bingoUi.state.called = calledList.map(Number);
+                }
                 const called = new Set(calledList);
                 const winningNumber = Number(m.winningNumber || calledList[calledList.length - 1] || 0);
                 const winningCall = winningNumber > 0 ? `${bingoLetter(winningNumber)}-${winningNumber}` : '—';
@@ -3332,20 +3525,42 @@
                     });
                     gridHtml += '</tbody></table>';
                     return `<div class="bingo-winner-card">
+                      ${((bingoUi.state && Array.isArray(bingoUi.state.myCards) ? bingoUi.state.myCards : []).some(myCard => String(myCard.id ?? myCard.cardNumber ?? myCard.card_number ?? '').trim() === String(w.cardNumber ?? '').trim()) ? '<div class="bingo-congratulations-badge">🎉 CONGRATULATIONS 🎉</div>' : '')}
                       <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtmlText(w.pattern || 'Bingo')}</div>
                       ${gridHtml}
                       <div class="bingo-winner-info"><strong>${escapeHtmlText(w.name || 'Player')}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
                     </div>`;
                   }).join('');
                 }
-                modal.classList.add('active');
-                if (window._bingoWinnerPopupTimer) clearTimeout(window._bingoWinnerPopupTimer);
-                window._bingoWinnerPopupTimer = setTimeout(() => {
-                    modal.classList.remove('active');
-                    window._bingoWinnerPopupTimer = null;
-                }, 5000);
-                const ok = document.getElementById('bingoWinnerOkBtn');
-                if (ok) ok.focus({ preventScroll: true });
+                // Show the result after the final caller audio finishes. Audio errors
+                // resolve the queue too; this timeout is a final safety net in case an
+                // unexpected browser/audio failure leaves a playback promise pending.
+                const popupRoundKey = String(activeRoundId ?? 'unknown');
+                window._bingoWinnerPopupPendingRound = popupRoundKey;
+                let popupReleased = false;
+                let audioFailSafeTimer = null;
+                const releaseWinnerPopup = () => {
+                    if (popupReleased) return;
+                    popupReleased = true;
+                    if (audioFailSafeTimer) clearTimeout(audioFailSafeTimer);
+                    // Ignore stale callbacks if another round's result arrived meanwhile.
+                    if (window._bingoWinnerPopupPendingRound !== popupRoundKey) return;
+                    modal.classList.add('active');
+                    if (window._bingoWinnerPopupTimer) clearTimeout(window._bingoWinnerPopupTimer);
+                    window._bingoWinnerPopupTimer = setTimeout(() => {
+                        modal.classList.remove('active');
+                        window._bingoWinnerPopupTimer = null;
+                    }, 5000);
+                    const ok = document.getElementById('bingoWinnerOkBtn');
+                    if (ok) ok.focus({ preventScroll: true });
+                };
+                // Normal path: all queued clips have ended or failed.
+                bingoCallAudio.whenIdle().then(releaseWinnerPopup).catch(err => {
+                    console.warn('[BINGO AUDIO] Winner popup fallback after queue error', err);
+                    releaseWinnerPopup();
+                });
+                // Fallback path: never leave the winners card hidden indefinitely.
+                audioFailSafeTimer = setTimeout(releaseWinnerPopup, 12000);
             }
         };
 
@@ -3399,7 +3614,6 @@
             openSelectedGameForStake(30, mode);
         };
 
-        document.getElementById('chooserLogoutBtn').onclick=()=>{if(client)client.disconnect();showAuthScreen();};
         document.getElementById('welcomeLogoutBtn').addEventListener('click',()=>{});
         document.getElementById('bingoBackBtn').onclick=()=>{bingoUi.active=false;setBingoViewportMode(false);if(bingoUi.selectionTimer){clearTimeout(bingoUi.selectionTimer);bingoUi.selectionTimer=null;}bingoUi.selected=[];bingoUi.submitting=false;bingoSend('leave');showGameChooser();};
         document.getElementById('bingoRefreshBtn').onclick=()=>{
