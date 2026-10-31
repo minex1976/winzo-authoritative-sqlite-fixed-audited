@@ -3096,26 +3096,35 @@
         }
         function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
 
-        // Winzo Bingo caller audio: skip calls missed while the page is backgrounded.
+        // Winzo Bingo caller audio: calls missed while backgrounded are never replayed.
         const bingoCallAudio = {
             queue: Promise.resolve(),
+            generation: 0,
             lastRoundId: null,
             lastCalled: [],
+            winnerDeclared: false,
+            winnerRoundId: null,
+            finalCalled: null,
             currentAudio: null,
+            currentFinish: null,
             pendingCount: 0,
             maxPlaybackMs: 9000,
+
             play(number) {
                 const n = Number(number);
                 if (!Number.isInteger(n) || n < 1 || n > 75 || document.hidden) return;
                 const label = bingoLetter(n) + '-' + n;
+                const callGeneration = this.generation;
                 this.pendingCount++;
+
                 this.queue = this.queue.then(() => new Promise(resolve => {
-                    // A call that waited until the page was backgrounded is discarded.
-                    if (document.hidden) {
+                    // A visibility change invalidates every call queued under the old generation.
+                    if (document.hidden || callGeneration !== this.generation) {
                         this.pendingCount = Math.max(0, this.pendingCount - 1);
                         resolve();
                         return;
                     }
+
                     const audio = new Audio('./bingo_audio/' + label + '.mp3');
                     this.currentAudio = audio;
                     audio.preload = 'auto';
@@ -3127,15 +3136,22 @@
                         audio.removeEventListener('ended', finish);
                         audio.removeEventListener('error', onError);
                         audio.removeEventListener('play', onPlay);
-                        if (this.currentAudio === audio) this.currentAudio = null;
+                        if (this.currentAudio === audio) {
+                            this.currentAudio = null;
+                            this.currentFinish = null;
+                        }
                         this.pendingCount = Math.max(0, this.pendingCount - 1);
                         resolve();
                     };
+                    this.currentFinish = finish;
+
                     const onError = () => {
                         console.warn('[BINGO AUDIO] Playback unavailable for ' + label);
                         finish();
                     };
                     const onPlay = () => {
+                        // Show the spoken call only when its audio actually begins.
+                        if (callGeneration !== this.generation || document.hidden) return;
                         const latest = document.getElementById('bingoLatest');
                         if (latest && latest.textContent !== label) {
                             latest.textContent = label;
@@ -3149,6 +3165,7 @@
                         try { audio.pause(); } catch (_) {}
                         finish();
                     }, this.maxPlaybackMs);
+
                     audio.addEventListener('ended', finish, { once: true });
                     audio.addEventListener('error', onError, { once: true });
                     audio.addEventListener('play', onPlay, { once: true });
@@ -3164,26 +3181,68 @@
                         console.warn('[BINGO AUDIO] Could not play ' + label, err);
                         finish();
                     }
-                })).catch(err => console.warn('[BINGO AUDIO] Queue error', err));
+                })).catch(err => {
+                    console.warn('[BINGO AUDIO] Queue error', err);
+                });
             },
+
             skipPendingAndStopCurrent() {
-                if (this.currentAudio) {
-                    try { this.currentAudio.pause(); } catch (_) {}
-                    try { this.currentAudio.currentTime = 0; } catch (_) {}
-                }
+                // Invalidate queued calls before pausing. This prevents old queue chains
+                // from waking up and playing missed numbers if the screen turns on quickly.
+                this.generation++;
+                const audio = this.currentAudio;
+                const finish = this.currentFinish;
                 this.currentAudio = null;
+                this.currentFinish = null;
+                if (audio) {
+                    try { audio.pause(); } catch (_) {}
+                    try { audio.currentTime = 0; } catch (_) {}
+                }
+                if (finish) finish();
                 this.queue = Promise.resolve();
                 this.pendingCount = 0;
+
                 const st = bingoUi && bingoUi.state;
-                if (st && Array.isArray(st.called)) this.lastCalled = st.called.map(Number);
+                if (st && Array.isArray(st.called)) {
+                    this.lastRoundId = st.roundId ?? this.lastRoundId;
+                    this.lastCalled = st.called.map(Number);
+                }
             },
-            update(roundId, called) {
+
+            stopForWinner(roundId, called) {
+                this.winnerDeclared = true;
+                this.winnerRoundId = roundId ?? this.lastRoundId;
+                this.finalCalled = Array.isArray(called) ? called.map(Number) : this.lastCalled.slice();
+                this.skipPendingAndStopCurrent();
+                this.lastCalled = this.finalCalled.slice();
+            },
+
+            update(roundId, called, phase) {
                 const list = Array.isArray(called) ? called.map(Number) : [];
                 if (this.lastRoundId !== roundId) {
                     this.lastRoundId = roundId;
                     this.lastCalled = list.slice();
+                    this.winnerDeclared = false;
+                    this.winnerRoundId = null;
+                    this.finalCalled = null;
+                    return; // Establish history without replaying old calls.
+                }
+
+                // A winner/result phase is terminal for audio in this round.
+                if (this.winnerDeclared && this.winnerRoundId === roundId) {
                     return;
                 }
+                if (phase !== 'playing') {
+                    if (phase === 'results') {
+                        this.stopForWinner(roundId, list);
+                    } else {
+                        // Selection/waiting must never start call audio.
+                        this.skipPendingAndStopCurrent();
+                        this.lastCalled = list.slice();
+                    }
+                    return;
+                }
+
                 const previous = this.lastCalled;
                 const isAppend = list.length >= previous.length &&
                     previous.every((n, i) => list[i] === n);
@@ -3191,6 +3250,7 @@
                     ? list.slice(previous.length)
                     : list.filter(n => !previous.includes(n));
                 this.lastCalled = list.slice();
+
                 if (document.hidden) return;
                 newlyCalled.forEach(n => this.play(n));
             }
@@ -3198,10 +3258,9 @@
 
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                // Stop current playback and discard queued calls immediately.
                 bingoCallAudio.skipPendingAndStopCurrent();
             } else {
-                // Resume from the current server state; never replay calls missed while hidden.
+                // Adopt the current server history without replaying anything missed.
                 const st = bingoUi && bingoUi.state;
                 if (st && Array.isArray(st.called)) {
                     bingoCallAudio.lastRoundId = st.roundId ?? bingoCallAudio.lastRoundId;
@@ -3292,7 +3351,12 @@
                 bingoUi.unselecting.clear();
                 if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
             }
-            bingoCallAudio.update(st.roundId, st.called);
+            // Once the round enters results, ignore any late call-list mutations.
+            const priorState = bingoUi.state;
+            if (priorState && priorState.roundId === st.roundId && priorState.phase === 'results') {
+                st.called = Array.isArray(priorState.called) ? priorState.called.slice() : st.called;
+            }
+            bingoCallAudio.update(st.roundId, st.called, st.phase);
             const prevCalledCount = (bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called.length : 0;
             const prevCalled = new Set((bingoUi.state && Array.isArray(bingoUi.state.called)) ? bingoUi.state.called : []);
             
@@ -3407,6 +3471,12 @@
                 if (!modal || !details) return;
                 const winners = Array.isArray(m.winners) ? m.winners : [];
                 const calledList = Array.isArray(m.called) ? m.called : [];
+                const activeRoundId = (bingoUi.state && bingoUi.state.roundId) || m.roundId || null;
+                bingoCallAudio.stopForWinner(activeRoundId, calledList);
+                // Freeze the visible call history at the winner declaration.
+                if (bingoUi.state && bingoUi.state.roundId === activeRoundId) {
+                    bingoUi.state.called = calledList.map(Number);
+                }
                 const called = new Set(calledList);
                 const winningNumber = Number(m.winningNumber || calledList[calledList.length - 1] || 0);
                 const winningCall = winningNumber > 0 ? `${bingoLetter(winningNumber)}-${winningNumber}` : '—';
@@ -3427,7 +3497,7 @@
                     });
                     gridHtml += '</tbody></table>';
                     return `<div class="bingo-winner-card">
-                      <div class="bingo-congratulations-badge">🎉 CONGRATULATIONS 🎉</div>
+                      ${((bingoUi.state && Array.isArray(bingoUi.state.myCards) ? bingoUi.state.myCards : []).some(myCard => String(myCard.id) === String(w.cardNumber)) ? '<div class="bingo-congratulations-badge">🎉 CONGRATULATIONS 🎉</div>' : '')}
                       <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtmlText(w.pattern || 'Bingo')}</div>
                       ${gridHtml}
                       <div class="bingo-winner-info"><strong>${escapeHtmlText(w.name || 'Player')}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
