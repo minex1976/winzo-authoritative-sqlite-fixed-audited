@@ -653,6 +653,17 @@
             .bingo-card td.marked, .bingo-latest-ball.pop { animation:none !important; transition:none !important; }
         }
 
+    
+        /* The Options control lives where Logout used to be on the game chooser. */
+        .chooser-options-anchor { display:flex; align-items:center; justify-content:flex-end; gap:7px; position:relative; }
+        .chooser-options-btn { width:auto; min-width:112px; height:42px; padding:0 18px; border-radius:14px; border:1px solid rgba(255,204,68,.72); background:linear-gradient(135deg,rgba(95,56,150,.95),rgba(43,32,83,.98)); color:#ffdc71; font-weight:800; font-size:.9rem; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+        .chooser-options-btn:focus-visible { outline:2px solid #ffcc44; outline-offset:3px; }
+        .options-pointing-emoji { display:inline-block; font-size:1.6rem; filter:drop-shadow(0 0 6px rgba(255,204,68,.4)); animation:pointAtOptions .8s ease-in-out infinite alternate; transform-origin:center; }
+        @keyframes pointAtOptions { from { transform:translateX(0) scale(1); } to { transform:translateX(7px) scale(1.13); } }
+        .chooser-more-wrapper { position:relative; }
+        .chooser-more-dropdown { z-index:1000; bottom:calc(100% + 8px); top:auto; right:0; }
+        .bingo-congratulations-badge { display:inline-flex; align-items:center; justify-content:center; margin:0 auto 8px; padding:5px 13px; border-radius:999px; color:#281400; background:linear-gradient(135deg,#ffe783,#ffb52e); border:1px solid rgba(255,255,255,.5); font-weight:900; font-size:.72rem; letter-spacing:.6px; text-shadow:0 1px rgba(255,255,255,.35); box-shadow:0 0 18px rgba(255,204,68,.25); animation:pulse 1s infinite alternate; }
+
     </style>
 </head>
 <body>
@@ -697,25 +708,30 @@
         <div id="gameChooserScreen" class="game-chooser-screen hidden">
           <div class="chooser-topbar">
             <div class="chooser-logo"><div class="chooser-crown">🏆</div><h1>WINZO <span>GAMES</span></h1><p>Choose your game to continue</p></div>
-            <div class="more-wrapper chooser-more-wrapper">
-              <button class="more-btn chooser-options-btn" id="moreBtn" type="button">Options</button>
-              <div class="more-dropdown chooser-more-dropdown" id="moreDropdown">
-                <div style="padding:4px 3px;">
-                  <div style="color:#7a6a9a;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">⚙️ Actions</div>
-                  <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
-                  <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
-                  <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
-                  <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
-                  <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
-                  <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
-                  <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
+          </div>
+          <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
+          <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
+          <div class="chooser-footer">
+            <span id="chooserBalance">Play balance: 0 Birr</span>
+            <div class="chooser-options-anchor">
+              <span class="options-pointing-emoji" aria-hidden="true">👉</span>
+              <div class="more-wrapper chooser-more-wrapper">
+                <button class="more-btn chooser-options-btn" id="moreBtn" type="button" aria-expanded="false">Options</button>
+                <div class="more-dropdown chooser-more-dropdown" id="moreDropdown">
+                  <div style="padding:4px 3px;">
+                    <div style="color:#7a6a9a;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">⚙️ Actions</div>
+                    <button class="dropdown-item deposit" id="depositBtn"><span class="icon">💰</span> Deposit</button>
+                    <button class="dropdown-item withdraw" id="withdrawBtn"><span class="icon">🏦</span> Withdraw</button>
+                    <button class="dropdown-item transfer" id="transferBtn"><span class="icon">↗️</span> Transfer to Play</button>
+                    <button class="dropdown-item" id="referralBtn"><span class="icon">🎁</span> Referral</button>
+                    <button class="dropdown-item" id="customerServiceBtn"><span class="icon">💬</span> Customer Service</button>
+                    <button class="dropdown-item reconnect" id="reconnectBtn"><span class="icon">🔌</span> Reconnect</button>
+                    <button class="dropdown-item logout" id="gameLogoutBtn"><span class="icon">🚪</span> Logout</button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-          <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <div class="chooser-footer"><span id="chooserBalance">Play balance: 0 Birr</span><button id="chooserLogoutBtn" class="logout-btn">🚪 Logout</button></div>
         </div>
         <section id="bingoScreen" class="bingo-screen hidden">
           <header class="bingo-header"><button id="bingoBackBtn" class="bingo-small-btn">‹ Games</button><div><strong>🎱 WINZO BINGO</strong><small id="bingoPhaseLabel">Connecting…</small></div><button id="bingoRefreshBtn" class="bingo-small-btn" aria-label="Back to games">⌂</button></header>
@@ -2405,7 +2421,9 @@
             currentUser = null;
             DB.setSavedCredentials('', '');
             if (authError) authError.textContent = '';
-            showWelcomeScreen();
+            // Keep the user on the authentication screen while connecting.
+            // The bet selector is only shown after a game is chosen from the chooser.
+            showAuthScreen();
             setConnectionStatus(false, '⚡ Connecting to game server…');
             let initData = (tg && tg.initData) ? tg.initData : '';
             if (!initData && isTelegram) initData = await waitForTelegramInitData(5000);
@@ -2507,7 +2525,11 @@
             if (gamePhaseLabel) gamePhaseLabel.textContent = '⏳ Selecting';
             renderNumberPicker(); updatePickStatus(); updateWalletUI(); updateTotalBetDisplay();
         }
-        function toggleMoreDropdown(e) { e.stopPropagation(); if (moreDropdown) moreDropdown.classList.toggle('open'); }
+        function toggleMoreDropdown(e) {
+            e.stopPropagation();
+            const isOpen = !!moreDropdown && moreDropdown.classList.toggle('open');
+            if (moreBtn) moreBtn.setAttribute('aria-expanded', String(isOpen));
+        }
         function openReferralModal() {
             if (!currentUser) return;
             const link = `${TELEGRAM_BOT_LINK}?startapp=ref_${encodeURIComponent(currentUser)}`;
@@ -2515,7 +2537,10 @@
             if (referralModal) referralModal.classList.add('active');
             closeMoreDropdown();
         }
-        function closeMoreDropdown() { if (moreDropdown) moreDropdown.classList.remove('open'); }
+        function closeMoreDropdown() {
+            if (moreDropdown) moreDropdown.classList.remove('open');
+            if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+        }
         document.addEventListener('click', (e) => { if (!e.target.closest('.more-wrapper')) closeMoreDropdown(); });
 
         function startTimer() {
@@ -3077,37 +3102,80 @@
             queue: Promise.resolve(),
             lastRoundId: null,
             lastCalled: [],
+            currentAudio: null,
+            pendingCount: 0,
+            maxPlaybackMs: 9000,
             play(number) {
                 const n = Number(number);
                 if (!Number.isInteger(n) || n < 1 || n > 75) return;
                 const label = bingoLetter(n) + '-' + n;
+                this.pendingCount++;
                 this.queue = this.queue.then(() => new Promise(resolve => {
                     const audio = new Audio('./bingo_audio/' + label + '.mp3');
+                    this.currentAudio = audio;
                     audio.preload = 'auto';
-                    const finish = () => resolve();
+                    let finished = false;
+                    const finish = () => {
+                        if (finished) return;
+                        finished = true;
+                        clearTimeout(timeout);
+                        audio.removeEventListener('ended', finish);
+                        audio.removeEventListener('error', onError);
+                        if (this.currentAudio === audio) this.currentAudio = null;
+                        this.pendingCount = Math.max(0, this.pendingCount - 1);
+                        resolve();
+                    };
+                    const onError = () => {
+                        console.warn('[BINGO AUDIO] Playback unavailable for ' + label);
+                        finish();
+                    };
+                    const timeout = setTimeout(() => {
+                        console.warn('[BINGO AUDIO] Playback timed out for ' + label);
+                        try { audio.pause(); } catch (_) {}
+                        finish();
+                    }, this.maxPlaybackMs);
                     audio.addEventListener('ended', finish, { once: true });
-                    audio.addEventListener('error', finish, { once: true });
-                    const attempt = audio.play();
-                    if (attempt && typeof attempt.catch === 'function') {
-                        attempt.catch(err => {
-                            console.warn('[BINGO AUDIO] Playback unavailable for ' + label, err);
-                            resolve();
-                        });
+                    audio.addEventListener('error', onError, { once: true });
+                    audio.addEventListener('play', () => {
+                        // Keep the large "latest call" display aligned with the number
+                        // whose voice is actually starting, not merely the newest server state.
+                        const latest = document.getElementById('bingoLatest');
+                        if (latest) {
+                            const spokenLabel = bingoLetter(n) + '-' + n;
+                            if (latest.textContent !== spokenLabel) {
+                                latest.textContent = spokenLabel;
+                                latest.classList.remove('pop');
+                                void latest.offsetWidth;
+                                latest.classList.add('pop');
+                            }
+                        }
+                    }, { once: true });
+                    try {
+                        const attempt = audio.play();
+                        if (attempt && typeof attempt.catch === 'function') {
+                            attempt.catch(err => {
+                                console.warn('[BINGO AUDIO] Could not play ' + label, err);
+                                finish();
+                            });
+                        }
+                    } catch (err) {
+                        console.warn('[BINGO AUDIO] Could not play ' + label, err);
+                        finish();
                     }
                 })).catch(err => console.warn('[BINGO AUDIO] Queue error', err));
             },
             update(roundId, called) {
                 const list = Array.isArray(called) ? called.map(Number) : [];
-                // A first state (or a reconnect) establishes the current history without
-                // replaying numbers that were called before this client joined.
+                // A new round/reconnect establishes existing history without replaying it.
                 if (this.lastRoundId !== roundId) {
                     this.lastRoundId = roundId;
                     this.lastCalled = list.slice();
                     return;
                 }
                 const previous = this.lastCalled;
-                const newlyCalled = list.length >= previous.length &&
-                    previous.every((n, i) => list[i] === n)
+                const isAppend = list.length >= previous.length &&
+                    previous.every((n, i) => list[i] === n);
+                const newlyCalled = isAppend
                     ? list.slice(previous.length)
                     : list.filter(n => !previous.includes(n));
                 this.lastCalled = list.slice();
@@ -3221,7 +3289,7 @@
             Object.entries(fields).forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.textContent=v;});
             const latest = (st.called || []).slice(-1)[0];
             const le = document.getElementById('bingoLatest');
-            if (le) {
+            if (le && !bingoCallAudio.currentAudio && !bingoCallAudio.pendingCount) {
               const newText = latest ? (bingoLetter(latest) + '-' + latest) : '—';
               if (le.textContent !== newText) {
                 le.textContent = newText;
@@ -3332,6 +3400,7 @@
                     });
                     gridHtml += '</tbody></table>';
                     return `<div class="bingo-winner-card">
+                      <div class="bingo-congratulations-badge">🎉 CONGRATULATIONS 🎉</div>
                       <div class="bingo-winner-card-title">Card ${w.cardNumber} · ${escapeHtmlText(w.pattern || 'Bingo')}</div>
                       ${gridHtml}
                       <div class="bingo-winner-info"><strong>${escapeHtmlText(w.name || 'Player')}</strong> won <strong>${Number(w.prize||0)} Birr</strong></div>
@@ -3399,7 +3468,6 @@
             openSelectedGameForStake(30, mode);
         };
 
-        document.getElementById('chooserLogoutBtn').onclick=()=>{if(client)client.disconnect();showAuthScreen();};
         document.getElementById('welcomeLogoutBtn').addEventListener('click',()=>{});
         document.getElementById('bingoBackBtn').onclick=()=>{bingoUi.active=false;setBingoViewportMode(false);if(bingoUi.selectionTimer){clearTimeout(bingoUi.selectionTimer);bingoUi.selectionTimer=null;}bingoUi.selected=[];bingoUi.submitting=false;bingoSend('leave');showGameChooser();};
         document.getElementById('bingoRefreshBtn').onclick=()=>{
