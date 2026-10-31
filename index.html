@@ -3096,8 +3096,7 @@
         }
         function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
 
-        // Winzo Bingo caller audio: one MP3 for every standard 75-ball number.
-        // Calls are queued so rapid state updates never overlap the spoken numbers.
+        // Winzo Bingo caller audio: skip calls missed while the page is backgrounded.
         const bingoCallAudio = {
             queue: Promise.resolve(),
             lastRoundId: null,
@@ -3107,10 +3106,16 @@
             maxPlaybackMs: 9000,
             play(number) {
                 const n = Number(number);
-                if (!Number.isInteger(n) || n < 1 || n > 75) return;
+                if (!Number.isInteger(n) || n < 1 || n > 75 || document.hidden) return;
                 const label = bingoLetter(n) + '-' + n;
                 this.pendingCount++;
                 this.queue = this.queue.then(() => new Promise(resolve => {
+                    // A call that waited until the page was backgrounded is discarded.
+                    if (document.hidden) {
+                        this.pendingCount = Math.max(0, this.pendingCount - 1);
+                        resolve();
+                        return;
+                    }
                     const audio = new Audio('./bingo_audio/' + label + '.mp3');
                     this.currentAudio = audio;
                     audio.preload = 'auto';
@@ -3121,6 +3126,7 @@
                         clearTimeout(timeout);
                         audio.removeEventListener('ended', finish);
                         audio.removeEventListener('error', onError);
+                        audio.removeEventListener('play', onPlay);
                         if (this.currentAudio === audio) this.currentAudio = null;
                         this.pendingCount = Math.max(0, this.pendingCount - 1);
                         resolve();
@@ -3129,6 +3135,15 @@
                         console.warn('[BINGO AUDIO] Playback unavailable for ' + label);
                         finish();
                     };
+                    const onPlay = () => {
+                        const latest = document.getElementById('bingoLatest');
+                        if (latest && latest.textContent !== label) {
+                            latest.textContent = label;
+                            latest.classList.remove('pop');
+                            void latest.offsetWidth;
+                            latest.classList.add('pop');
+                        }
+                    };
                     const timeout = setTimeout(() => {
                         console.warn('[BINGO AUDIO] Playback timed out for ' + label);
                         try { audio.pause(); } catch (_) {}
@@ -3136,20 +3151,7 @@
                     }, this.maxPlaybackMs);
                     audio.addEventListener('ended', finish, { once: true });
                     audio.addEventListener('error', onError, { once: true });
-                    audio.addEventListener('play', () => {
-                        // Keep the large "latest call" display aligned with the number
-                        // whose voice is actually starting, not merely the newest server state.
-                        const latest = document.getElementById('bingoLatest');
-                        if (latest) {
-                            const spokenLabel = bingoLetter(n) + '-' + n;
-                            if (latest.textContent !== spokenLabel) {
-                                latest.textContent = spokenLabel;
-                                latest.classList.remove('pop');
-                                void latest.offsetWidth;
-                                latest.classList.add('pop');
-                            }
-                        }
-                    }, { once: true });
+                    audio.addEventListener('play', onPlay, { once: true });
                     try {
                         const attempt = audio.play();
                         if (attempt && typeof attempt.catch === 'function') {
@@ -3164,9 +3166,19 @@
                     }
                 })).catch(err => console.warn('[BINGO AUDIO] Queue error', err));
             },
+            skipPendingAndStopCurrent() {
+                if (this.currentAudio) {
+                    try { this.currentAudio.pause(); } catch (_) {}
+                    try { this.currentAudio.currentTime = 0; } catch (_) {}
+                }
+                this.currentAudio = null;
+                this.queue = Promise.resolve();
+                this.pendingCount = 0;
+                const st = bingoUi && bingoUi.state;
+                if (st && Array.isArray(st.called)) this.lastCalled = st.called.map(Number);
+            },
             update(roundId, called) {
                 const list = Array.isArray(called) ? called.map(Number) : [];
-                // A new round/reconnect establishes existing history without replaying it.
                 if (this.lastRoundId !== roundId) {
                     this.lastRoundId = roundId;
                     this.lastCalled = list.slice();
@@ -3179,9 +3191,24 @@
                     ? list.slice(previous.length)
                     : list.filter(n => !previous.includes(n));
                 this.lastCalled = list.slice();
+                if (document.hidden) return;
                 newlyCalled.forEach(n => this.play(n));
             }
         };
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Stop current playback and discard queued calls immediately.
+                bingoCallAudio.skipPendingAndStopCurrent();
+            } else {
+                // Resume from the current server state; never replay calls missed while hidden.
+                const st = bingoUi && bingoUi.state;
+                if (st && Array.isArray(st.called)) {
+                    bingoCallAudio.lastRoundId = st.roundId ?? bingoCallAudio.lastRoundId;
+                    bingoCallAudio.lastCalled = st.called.map(Number);
+                }
+            }
+        });
 
         
         function renderBingoGrid(){
