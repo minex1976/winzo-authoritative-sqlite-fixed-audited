@@ -667,6 +667,70 @@
         .chooser-more-dropdown { z-index:1000; bottom:calc(100% + 8px); top:auto; right:0; }
         .bingo-congratulations-badge { display:inline-flex; align-items:center; justify-content:center; margin:0 auto 8px; padding:5px 13px; border-radius:999px; color:#281400; background:linear-gradient(135deg,#ffe783,#ffb52e); border:1px solid rgba(255,255,255,.5); font-weight:900; font-size:.72rem; letter-spacing:.6px; text-shadow:0 1px rgba(255,255,255,.35); box-shadow:0 0 18px rgba(255,204,68,.25); animation:pulse 1s infinite alternate; }
 
+
+
+        /* Winzo Bingo visual-only refinements: number borders, column colors and ball bounce. */
+        .bingo-called-header {
+            border: 2px solid rgba(255,255,255,.82);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 2px 5px rgba(0,0,0,.22);
+        }
+        .bingo-called-header:nth-child(1) { background:#2679dc; border-color:#83c1ff; }
+        .bingo-called-header:nth-child(1) { color:#fff; }
+        .bingo-called-column:nth-child(1) .bingo-called-header { background:#2679dc; border-color:#83c1ff; }
+        .bingo-called-column:nth-child(2) .bingo-called-header { background:#8c52d8; border-color:#d0adff; }
+        .bingo-called-column:nth-child(3) .bingo-called-header { background:#209b65; border-color:#82edb8; }
+        .bingo-called-column:nth-child(4) .bingo-called-header { background:#e87922; border-color:#ffc17e; }
+        .bingo-called-column:nth-child(5) .bingo-called-header { background:#d94f91; border-color:#ffacd0; }
+        .bingo-called-number {
+            border: 1.5px solid #806b99;
+            box-shadow: inset 0 1px 2px rgba(255,255,255,.07);
+        }
+        .bingo-called-number.called {
+            border-width: 2px;
+            border-color: #f3e7ff;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), 0 0 5px rgba(210,180,255,.25);
+        }
+        .bingo-called-number.b.called { border-color:#a9d5ff; }
+        .bingo-called-number.i.called { border-color:#e0c9ff; }
+        .bingo-called-number.n.called { border-color:#d0b7ff; }
+        .bingo-called-number.g.called { border-color:#a6ffd0; }
+        .bingo-called-number.o.called { border-color:#ffd0a3; }
+        .bingo-card th {
+            border: 2px solid rgba(255,255,255,.72);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
+        }
+        .bingo-card th:nth-child(1) { background:#2679dc; border-color:#83c1ff; }
+        .bingo-card th:nth-child(2) { background:#8c52d8; border-color:#d0adff; }
+        .bingo-card th:nth-child(3) { background:#209b65; border-color:#82edb8; }
+        .bingo-card th:nth-child(4) { background:#e87922; border-color:#ffc17e; }
+        .bingo-card th:nth-child(5) { background:#d94f91; border-color:#ffacd0; }
+        .bingo-card td {
+            border: 1.5px solid #c5b4dc;
+            box-shadow: inset 0 1px 1px rgba(255,255,255,.45);
+        }
+        .bingo-card td.marked { border:2px solid #168a54; box-shadow:inset 0 0 0 1px rgba(255,255,255,.28); }
+        .bingo-card td.free { border:1.5px solid #e5a900; }
+        .bingo-latest-ball {
+            animation: bingoLatestBounce 1.25s ease-in-out infinite;
+            transform-origin: center bottom;
+            will-change: transform;
+        }
+        .bingo-latest-ball.pop {
+            animation: bingoLatestBounce 1.25s ease-in-out infinite, bingoLatestGlow .55s ease-out;
+        }
+        @keyframes bingoLatestBounce {
+            0%,100% { transform:translateY(0) scale(1); }
+            18% { transform:translateY(-9px) scale(1.025); }
+            36% { transform:translateY(0) scale(.985,1.015); }
+            52% { transform:translateY(-4px) scale(1.01); }
+            68% { transform:translateY(0) scale(1); }
+        }
+        @keyframes bingoLatestGlow {
+            0% { filter:drop-shadow(0 0 0 rgba(255,204,68,0)); }
+            55% { filter:drop-shadow(0 0 16px rgba(255,204,68,.95)); }
+            100% { filter:drop-shadow(0 0 4px rgba(255,204,68,.45)); }
+        }
+
     </style>
 </head>
 <body>
