@@ -14,7 +14,7 @@ const pool = new Pool({
   port: Number(process.env.DB_PORT || 5432),
   database: process.env.DB_NAME || 'winzo_sql',
   user: process.env.DB_USER || 'admin_winzo_sql',
-  password: process.env.DB_PASSWORD || 'avR9@t+ItYe-Mqa3Ulmb2Wk7U:D:Qsla',
+  password: process.env.DB_PASSWORD || '',
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -33,6 +33,7 @@ const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authentication will fail.');
+if (!process.env.DB_PASSWORD) console.warn('WARNING: DB_PASSWORD is not set. Configure it in the deployment environment.');
 
 const SELECTION_SECONDS = 30;
 const SPINNING_SECONDS = 3;
@@ -1339,47 +1340,6 @@ async function toSpinning(room) {
   room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
   room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
 
-  if (winners.length && prizePool > 0) {
-    const share = Math.floor(prizePool / winners.length);
-    for (const uid of winners) {
-      if (share <= 0) break;
-      if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-
-      const player = room.players.get(uid);
-      if (player?.isBot) continue;
-
-      const displayName = player?.displayName || uid;
-
-      await recordHumanWinner({
-        username: uid,
-        displayName,
-        roomId: room.id,
-        round: room.round,
-        winAmount: share,
-        winningNumber,
-        prizePool
-      });
-
-      try {
-        await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` });
-      } catch (e) {
-        console.error('[WIN-NOTIFY]', e.message, { uid });
-      }
-
-      try {
-        const refRes = await pool.query('SELECT referred_by FROM users WHERE username = $1', [uid]);
-        const refBy = refRes.rows[0]?.referred_by;
-        if (refBy && refBy !== uid) {
-          const commission = Math.floor(share * REFERRAL_RATE);
-          if (commission > 0) {
-            await creditReferral(refBy, commission, room.id, room.round, uid);
-          }
-        }
-      } catch (e) {
-        console.error('[REFERRAL] credit failed:', e.message, { uid, share });
-      }
-    }
-  }
 
   try {
     await recordRoundSnapshot({
@@ -1409,6 +1369,34 @@ async function toSpinning(room) {
 
 async function toResults(room) {
   if (room.phase !== 'spinning') return;
+  // Credit prizes only after the server-side spinning phase has fully elapsed.
+  // claimPayout's unique marker keeps retries/idempotent calls from double-paying.
+  const winners = Array.isArray(room.winners) ? room.winners : [];
+  const prizePool = Number(room.prizePool || 0);
+  if (winners.length && prizePool > 0) {
+    const share = Math.floor(prizePool / winners.length);
+    for (const uid of winners) {
+      if (share <= 0) break;
+      if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
+
+      const player = room.players.get(uid);
+      if (player?.isBot) continue;
+      const displayName = player?.displayName || uid;
+      await recordHumanWinner({ username: uid, displayName, roomId: room.id, round: room.round,
+        winAmount: share, winningNumber: room.winningNumber, prizePool });
+      try {
+        await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` });
+      } catch (e) { console.error('[WIN-NOTIFY]', e.message, { uid }); }
+      try {
+        const refRes = await pool.query('SELECT referred_by FROM users WHERE username = $1', [uid]);
+        const refBy = refRes.rows[0]?.referred_by;
+        if (refBy && refBy !== uid) {
+          const commission = Math.floor(share * REFERRAL_RATE);
+          if (commission > 0) await creditReferral(refBy, commission, room.id, room.round, uid);
+        }
+      } catch (e) { console.error('[REFERRAL] credit failed:', e.message, { uid, share }); }
+    }
+  }
   if (room.winningNumber != null && !room.lastResult) {
     room.lastResult = {
       round: room.round,
@@ -1530,8 +1518,10 @@ function bingoNewCard() {
   for(let c=0;c<5;c++){const start=c*15+1,pool=Array.from({length:15},(_,i)=>start+i);for(let i=pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}for(let r=0;r<5;r++)grid[r][c]=pool[r];}
   grid[2][2]=0;return grid;
 }
-function bingoPattern(grid,called){
-  const set=new Set(called),marked=(r,c)=>r===2&&c===2||set.has(grid[r][c]);
+function bingoPattern(grid,called,calledSet=null){
+  // Reuse one called-number Set when evaluating every card in the same tick.
+  // The optional argument preserves the existing two-argument call sites.
+  const set=calledSet||new Set(called),marked=(r,c)=>r===2&&c===2||set.has(grid[r][c]);
   for(let r=0;r<5;r++)if([0,1,2,3,4].every(c=>marked(r,c)))return 'Horizontal Line';
   for(let c=0;c<5;c++)if([0,1,2,3,4].every(r=>marked(r,c)))return 'Vertical Line';
   if([0,1,2,3,4].every(i=>marked(i,i))||[0,1,2,3,4].every(i=>marked(i,4-i)))return 'Diagonal Line';
@@ -1651,8 +1641,11 @@ async function restoreOneBingoRound(stake){
   if(!latest.rows.length)return bingoNewRound(stake);
   const r=latest.rows[0],round={stake,id:r.id,gameId:r.game_id,roundNumber:Number(r.round_number),phase:r.phase,prizePool:Number(r.prize_pool),startedAt:Number(r.started_at),endsAt:Number(r.ends_at),called:Array.isArray(r.called_numbers)?r.called_numbers:[],pool:[],entries:new Map(),winners:Array.isArray(r.winners)?r.winners:[],botTimers:[],tickRunning:false};
   round.pool=bingoShuffle(Array.from({length:75},(_,i)=>i+1).filter(n=>!round.called.includes(n)));
-  const entries=await pool.query('SELECT id,username,card_number,card_data,stake FROM bingo_entries WHERE round_id=$1',[round.id]),found=[];
-  for(const e of entries.rows){const user=await pool.query('SELECT display_name FROM users WHERE username=$1',[e.username]);const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called);const entry={id:e.id,uid:e.username,name:user.rows[0]?.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing')found.push({...entry,pattern});}
+  // Load entries and display names in one JOIN instead of one user query per card.
+  // This avoids an N+1 query burst when restoring a busy round after a restart.
+  const entries=await pool.query('SELECT e.id,e.username,e.card_number,e.card_data,e.stake,u.display_name FROM bingo_entries e LEFT JOIN users u ON u.username=e.username WHERE e.round_id=$1',[round.id]),found=[];
+  const restoredCalledSet=new Set(round.called);
+  for(const e of entries.rows){const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called,restoredCalledSet);const entry={id:e.id,uid:e.username,name:e.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing')found.push({...entry,pattern});}
   bingoRounds.set(stake,round);
   if(round.phase==='playing'&&found.length){await bingoFinish(round,found);return round;}
   if(round.phase==='selection'&&round.endsAt<=Date.now())round.endsAt=Date.now()+BINGO_SELECTION_SECONDS*1000;
@@ -1663,9 +1656,65 @@ async function restoreOneBingoRound(stake){
 }
 async function restoreBingoRound(){for(const stake of BINGO_STAKES)await restoreOneBingoRound(stake);}
 async function persistBingoRound(round){if(!round)return;await pool.query(`INSERT INTO bingo_rounds(id,game_id,round_number,phase,stake,prize_pool,called_numbers,started_at,ends_at,completed_at,winners) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb) ON CONFLICT(id) DO UPDATE SET phase=EXCLUDED.phase,prize_pool=EXCLUDED.prize_pool,called_numbers=EXCLUDED.called_numbers,ends_at=EXCLUDED.ends_at,completed_at=EXCLUDED.completed_at,winners=EXCLUDED.winners`,[round.id,round.gameId,round.roundNumber,round.phase,round.stake,round.prizePool,JSON.stringify(round.called),round.startedAt,round.endsAt,round.completedAt||null,JSON.stringify(round.winners)]);}
-function bingoPublicState(round,uid){if(!round)return null;const entries=[...round.entries.values()],mine=entries.filter(e=>e.uid===uid);return {roundId:round.id,gameId:round.gameId,roundNumber:round.roundNumber,phase:round.phase,stake:round.stake,prizePool:Number(round.prizePool.toFixed(2)),called:[...round.called],taken:entries.map(e=>e.cardNumber),playerCount:new Set(entries.map(e=>e.uid)).size,endsAt:round.endsAt,mySelections:mine.map(e=>e.cardNumber),myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:round.winners};}
-function bingoSendState(ws){if(ws?.readyState===1&&ws.authed)send(ws,{type:'bingo-state',state:bingoPublicState(bingoRoundFor(ws),ws.uid)});}
-function bingoBroadcast(stake){for(const ws of bingoMembers)if(ws.readyState===1&&ws.authed&&(!stake||bingoStake(ws._bingoStake)===stake))bingoSendState(ws);}
+function bingoBuildBroadcastSnapshot(round){
+  // Build room-wide fields once per broadcast, not once per connected player.
+  // The previous implementation scanned every entry and rebuilt the taken-card
+  // list and unique-player Set for each recipient (O(players × cards)).
+  const entries=[...round.entries.values()];
+  const byUid=new Map();
+  for(const entry of entries){
+    let mine=byUid.get(entry.uid);
+    if(!mine){mine=[];byUid.set(entry.uid,mine);}
+    mine.push(entry);
+  }
+  return {
+    roundId:round.id,gameId:round.gameId,roundNumber:round.roundNumber,
+    phase:round.phase,stake:round.stake,prizePool:Number(round.prizePool.toFixed(2)),
+    called:[...round.called],taken:entries.map(e=>e.cardNumber),
+    playerCount:byUid.size,endsAt:round.endsAt,winners:round.winners,byUid
+  };
+}
+function bingoPublicState(round,uid,snapshot=null){
+  if(!round)return null;
+  const shared=snapshot||bingoBuildBroadcastSnapshot(round);
+  const mine=shared.byUid.get(uid)||[];
+  return {
+    roundId:shared.roundId,gameId:shared.gameId,roundNumber:shared.roundNumber,
+    phase:shared.phase,stake:shared.stake,prizePool:shared.prizePool,
+    called:shared.called,taken:shared.taken,playerCount:shared.playerCount,
+    endsAt:shared.endsAt,mySelections:mine.map(e=>e.cardNumber),
+    myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:shared.winners
+  };
+}
+function bingoSendState(ws,snapshot=null){if(ws?.readyState===1&&ws.authed){const round=bingoRoundFor(ws);send(ws,{type:'bingo-state',state:bingoPublicState(round,ws.uid,snapshot)});}}
+const bingoBroadcastPending = new Set();
+function bingoBroadcastNow(stake){
+  // One snapshot per round broadcast keeps shared state consistent while
+  // avoiding repeated full-room scans for every recipient.
+  const snapshots=new Map();
+  for(const ws of bingoMembers){
+    if(ws.readyState!==1||!ws.authed)continue;
+    const wsStake=bingoStake(ws._bingoStake);
+    if(stake&&wsStake!==stake)continue;
+    const round=bingoRounds.get(wsStake);
+    if(!round){bingoSendState(ws);continue;}
+    let snapshot=snapshots.get(round);
+    if(!snapshot){snapshot=bingoBuildBroadcastSnapshot(round);snapshots.set(round,snapshot);}
+    bingoSendState(ws,snapshot);
+  }
+}
+function bingoBroadcast(stake){
+  // Coalesce multiple same-tick updates into one room broadcast. This reduces
+  // duplicate full-room payloads during selection bursts without dropping the
+  // final state: each stake is broadcast once with the latest in-memory state.
+  const key=stake?bingoStake(stake):'__all__';
+  if(bingoBroadcastPending.has(key))return;
+  bingoBroadcastPending.add(key);
+  setImmediate(()=>{
+    bingoBroadcastPending.delete(key);
+    bingoBroadcastNow(key==='__all__'?null:key);
+  });
+}
 
 // ✅ Allow up to 2 cards per round per user
 async function bingoSelectUnlocked(ws,numbers){
@@ -1676,7 +1725,10 @@ async function bingoSelectUnlocked(ws,numbers){
   try{
     await db.query('BEGIN');const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
     if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))throw new Error('Card selection is closed for this round.');
-    const usedRows=await db.query('SELECT card_number FROM bingo_entries WHERE round_id=$1',[round.id]),used=new Set(usedRows.rows.map(r=>Number(r.card_number)));
+    // Check only the requested card numbers. The round/card unique index makes
+    // this a small indexed lookup instead of returning every taken card for
+    // every player's selection attempt. The database check remains authoritative.
+    const usedRows=await db.query('SELECT card_number FROM bingo_entries WHERE round_id=$1 AND card_number = ANY($2::int[])',[round.id,numbers]),used=new Set(usedRows.rows.map(r=>Number(r.card_number)));
     const priorCountRes = await db.query('SELECT COUNT(*)::int AS c FROM bingo_entries WHERE round_id=$1 AND username=$2',[round.id,ws.uid]);
     const existingCount = priorCountRes.rows[0]?.c || 0;
     if (existingCount + numbers.length > 2) throw new Error('You can select up to 2 cards per round (you already have ' + existingCount + ').');
@@ -1685,7 +1737,15 @@ async function bingoSelectUnlocked(ws,numbers){
     await db.query('UPDATE users SET play_wallet=play_wallet-$1,wallet_updated_at=$2 WHERE username=$3',[cost,Date.now(),ws.uid]);
     for(const n of numbers){const grid=bingoNewCard(),id=crypto.randomUUID();await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[crypto.randomUUID(),round.id,ws.uid,'stake',round.stake,'bingo-stake:'+round.id+':'+ws.uid+':'+n,Date.now()]);newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,won:false});}
     await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[cost,round.id]);await db.query('COMMIT');
-    for(const e of newEntries)round.entries.set(e.id,e);round.prizePool+=cost;send(ws,{type:'bingo-selected',message:'Selection confirmed. '+numbers.length+' card(s) reserved.',state:bingoPublicState(round,ws.uid)});await sendWallet(ws.uid);await persistBingoRound(round);bingoBroadcast(round.stake);
+    for(const e of newEntries)round.entries.set(e.id,e);
+    round.prizePool+=cost;
+    // The transaction already persisted prize_pool and the entries. Avoid a
+    // second round UPSERT inside the serialized selection queue.
+    send(ws,{type:'bingo-selected',message:'Selection confirmed. '+numbers.length+' card(s) reserved.',state:bingoPublicState(round,ws.uid)});
+    // Wallet refresh and room fan-out are post-commit side effects; don't make
+    // the next player's selection wait for them. Errors are logged, not lost.
+    Promise.resolve().then(()=>sendWallet(ws.uid)).catch(e=>console.error('[BINGO] wallet refresh failed',e.message));
+    bingoBroadcast(round.stake);
   }catch(e){await db.query('ROLLBACK').catch(()=>{});send(ws,{type:'bingo-error',message:e.message||'Could not reserve your Bingo card.'});}finally{db.release();}
 }
 async function bingoSelect(ws,numbers){
@@ -1735,8 +1795,9 @@ async function bingoUnselectUnlocked(ws,number){
     round.entries.delete(removed.id);
     round.prizePool=Math.max(0,Number((round.prizePool-refund).toFixed(2)));
     send(ws,{type:'bingo-unselected',number:n,message:'Card '+n+' removed. '+refund+' Birr refunded to your play wallet.',state:bingoPublicState(round,ws.uid)});
-    await sendWallet(ws.uid);
-    await persistBingoRound(round);
+    // The transaction already updated prize_pool; avoid a redundant UPSERT and
+    // keep wallet notification work outside the serialized round operation.
+    Promise.resolve().then(()=>sendWallet(ws.uid)).catch(e=>console.error('[BINGO] wallet refresh failed',e.message));
     bingoBroadcast(round.stake);
   }catch(e){
     await db.query('ROLLBACK').catch(()=>{});
@@ -1832,8 +1893,10 @@ async function bingoTickUnlocked(round) {
       round.called.push(n);
 
       const winners = [];
+      // All cards are checked against the same called-number set for this call.
+      const calledSet = new Set(round.called);
       for (const e of round.entries.values()) {
-        const pattern = bingoPattern(e.grid, round.called);
+        const pattern = bingoPattern(e.grid, round.called, calledSet);
         if (pattern && !e.won) {
           e.won = true;
           // ✅ Bots and humans have equal win chance
@@ -1927,7 +1990,19 @@ async function handle(ws, m) {
     }
 
     const telegramUser = verification.user;
-    const resolved = await resolveTelegramUser(telegramUser, m.ref || null);
+    // Login is strictly for an existing Telegram account. Only the Sign Up action
+    // is allowed to create a new account through resolveTelegramUser/ensureUser.
+    if (m.authMode === 'login') {
+      const existing = await pool.query(
+        'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
+        [Number(telegramUser.id)]
+      );
+      if (!existing.rows.length) {
+        send(ws, { type: 'login-required-signup', message: 'No account exists for this Telegram user. Please choose Sign Up first.' });
+        return;
+      }
+    }
+    const resolved = await resolveTelegramUser(telegramUser, m.authMode === 'signup' ? (m.ref || null) : null);
     if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed', reason: 'identity-failed' });
 
     const uid = resolved.uid;
