@@ -312,7 +312,7 @@
         .winning-card-winners:empty { display: none; }
 
         .winner-celebration { position: fixed; z-index: 100002; top: 18%; left: 50%; transform: translate(-50%, -12px) scale(0.92); width: max-content; max-width: 90vw; padding: 14px 22px; border: 2px solid #8affb0; border-radius: 24px; background: linear-gradient(135deg, rgba(18, 80, 54, 0.97), rgba(20, 35, 70, 0.97)); color: #ffffff; text-align: center; font-weight: 900; font-size: 1.05rem; letter-spacing: 0.4px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 30px rgba(138, 255, 176, 0.35); opacity: 0; pointer-events: none; visibility: hidden; }
-        .winner-celebration.active { visibility: visible; animation: winnerToastIn 0.35s ease-out forwards, winnerToastOut 0.35s ease-in 3.65s forwards; }
+        .winner-celebration.active { visibility: visible; animation: winnerToastIn 0.35s ease-out forwards, winnerToastOut 0.35s ease-in-out 3.65s forwards; }
         @keyframes winnerToastIn { to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
         @keyframes winnerToastOut { to { opacity: 0; transform: translate(-50%, -14px) scale(0.96); visibility: hidden; } }
 
@@ -667,123 +667,7 @@
         .chooser-more-dropdown { z-index:1000; bottom:calc(100% + 8px); top:auto; right:0; }
         .bingo-congratulations-badge { display:inline-flex; align-items:center; justify-content:center; margin:0 auto 8px; padding:5px 13px; border-radius:999px; color:#281400; background:linear-gradient(135deg,#ffe783,#ffb52e); border:1px solid rgba(255,255,255,.5); font-weight:900; font-size:.72rem; letter-spacing:.6px; text-shadow:0 1px rgba(255,255,255,.35); box-shadow:0 0 18px rgba(255,204,68,.25); animation:pulse 1s infinite alternate; }
 
-
-
-        /* Winzo Bingo visual-only refinements: number borders, column colors and ball bounce. */
-        .bingo-called-header {
-            border: 2px solid rgba(255,255,255,.82);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 2px 5px rgba(0,0,0,.22);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            padding-bottom: 7px;
-        }
-        /* A distinct underline separates each B-I-N-G-O heading from its numbers. */
-        .bingo-called-header::after {
-            content: "";
-            display: block;
-            width: 58%;
-            height: 2px;
-            border-radius: 2px;
-            background: rgba(255,255,255,.95);
-            box-shadow: 0 1px 3px rgba(0,0,0,.35);
-        }
-        .bingo-called-header:nth-child(1) { background:#2679dc; border-color:#83c1ff; }
-        .bingo-called-header:nth-child(1) { color:#fff; }
-        .bingo-called-column:nth-child(1) .bingo-called-header { background:#2679dc; border-color:#83c1ff; }
-        .bingo-called-column:nth-child(2) .bingo-called-header { background:#8c52d8; border-color:#d0adff; }
-        .bingo-called-column:nth-child(3) .bingo-called-header { background:#209b65; border-color:#82edb8; }
-        .bingo-called-column:nth-child(4) .bingo-called-header { background:#e87922; border-color:#ffc17e; }
-        .bingo-called-column:nth-child(5) .bingo-called-header { background:#d94f91; border-color:#ffacd0; }
-        .bingo-called-number {
-            border: 1.5px solid #806b99;
-            box-shadow: inset 0 1px 2px rgba(255,255,255,.07);
-        }
-        .bingo-called-number.called {
-            border-width: 2px;
-            border-color: #f3e7ff;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), 0 0 5px rgba(210,180,255,.25);
-        }
-        .bingo-called-number.b.called { border-color:#a9d5ff; }
-        .bingo-called-number.i.called { border-color:#e0c9ff; }
-        .bingo-called-number.n.called { border-color:#d0b7ff; }
-        .bingo-called-number.g.called { border-color:#a6ffd0; }
-        .bingo-called-number.o.called { border-color:#ffd0a3; }
-        .bingo-card th {
-            border: 2px solid rgba(255,255,255,.72);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
-        }
-        .bingo-card th:nth-child(1) { background:#2679dc; border-color:#83c1ff; }
-        .bingo-card th:nth-child(2) { background:#8c52d8; border-color:#d0adff; }
-        .bingo-card th:nth-child(3) { background:#209b65; border-color:#82edb8; }
-        .bingo-card th:nth-child(4) { background:#e87922; border-color:#ffc17e; }
-        .bingo-card th:nth-child(5) { background:#d94f91; border-color:#ffacd0; }
-        .bingo-card td {
-            border: 1.5px solid #c5b4dc;
-            box-shadow: inset 0 1px 1px rgba(255,255,255,.45);
-        }
-        .bingo-card td.marked { border:2px solid #168a54; box-shadow:inset 0 0 0 1px rgba(255,255,255,.28); }
-        .bingo-card td.free { border:1.5px solid #e5a900; }
-        .bingo-latest-ball {
-            animation: bingoLatestBounce 1.25s ease-in-out infinite;
-            transform-origin: center bottom;
-            will-change: transform;
-        }
-        .bingo-latest-ball.pop {
-            animation: bingoLatestBounce 1.25s ease-in-out infinite, bingoLatestGlow .55s ease-out;
-        }
-        @keyframes bingoLatestBounce {
-            0%,100% { transform:translateY(0) scale(1); }
-            18% { transform:translateY(-9px) scale(1.025); }
-            36% { transform:translateY(0) scale(.985,1.015); }
-            52% { transform:translateY(-4px) scale(1.01); }
-            68% { transform:translateY(0) scale(1); }
-        }
-        @keyframes bingoLatestGlow {
-            0% { filter:drop-shadow(0 0 0 rgba(255,204,68,0)); }
-            55% { filter:drop-shadow(0 0 16px rgba(255,204,68,.95)); }
-            100% { filter:drop-shadow(0 0 4px rgba(255,204,68,.45)); }
-        }
-
-    
-        /* Winzo Bingo: keep the B-I-N-G-O column palette identical everywhere. */
-        .bingo-called-column:nth-child(1) .bingo-called-number.b.called,
-        .bingo-called-number.b.called { background:#2679dc; border-color:#83c1ff; color:#fff; }
-        .bingo-called-column:nth-child(2) .bingo-called-number.i.called,
-        .bingo-called-number.i.called { background:#8c52d8; border-color:#d0adff; color:#fff; }
-        .bingo-called-column:nth-child(3) .bingo-called-number.n.called,
-        .bingo-called-number.n.called { background:#209b65; border-color:#82edb8; color:#fff; }
-        .bingo-called-column:nth-child(4) .bingo-called-number.g.called,
-        .bingo-called-number.g.called { background:#e87922; border-color:#ffc17e; color:#fff; }
-        .bingo-called-column:nth-child(5) .bingo-called-number.o.called,
-        .bingo-called-number.o.called { background:#d94f91; border-color:#ffacd0; color:#fff; }
-
-        /* Recent-call balls use the same five column colors as the caller board. */
-        .bingo-ball.b { background:#2679dc; }
-        .bingo-ball.i { background:#8c52d8; }
-        .bingo-ball.n { background:#209b65; }
-        .bingo-ball.g { background:#e87922; }
-        .bingo-ball.o { background:#d94f91; }
-
-        /* Dark-blue glass tiles: wallet/stake/countdown and live-game stat grids only. */
-        .bingo-wallet-grid > div,
-        .bingo-stats > div {
-            background:linear-gradient(145deg, #173b68 0%, #102b50 52%, #0b203e 100%);
-            border:2px solid #426b9b;
-            border-radius:12px;
-            box-shadow:
-                inset 0 1px 0 rgba(225,240,255,.18),
-                0 4px 12px rgba(0,0,0,.38),
-                0 0 0 1px rgba(7,20,42,.55);
-        }
-        .bingo-wallet-grid small,
-        .bingo-stats small { color:#c5d9f2; }
-        .bingo-wallet-grid strong,
-        .bingo-stats strong { color:#f5f8ff; }
-
-</style>
+    </style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
@@ -1113,6 +997,14 @@
         };
         const SERVER_WS_URL = String((window.WINZO_CONFIG && window.WINZO_CONFIG.WS_URL) || '').trim().replace(/\/$/, '');
         let client = null;
+        let pendingMenuAction = null; // <-- ADDED FOR MENU ACTIONS
+
+        // ADDED TO READ URL PARAMETERS
+        function checkUrlForAction() {
+            const params = new URLSearchParams(window.location.search);
+            const action = params.get('action');
+            if (action) pendingMenuAction = action;
+        }
 
         window.WINZO_ERRORS = [];
         window.WINZO_RECORD_ERROR = function (kind, payload) {
@@ -3760,6 +3652,43 @@
         };
         setInterval(()=>{if(bingoUi.active&&bingoUi.state){const e=document.getElementById('bingoCountdown');if(e)e.textContent=Math.max(0,Math.ceil((Number(bingoUi.state.endsAt||0)-Date.now())/1000))+'s';}},500);
 
+        // ADDED FUNCTION TO HANDLE URL ACTIONS
+        function handleMenuAction(action) {
+            console.log('Executing menu action:', action);
+            switch(action) {
+                case 'play':
+                case 'register':
+                    // They are already at the chooser screen after login
+                    break;
+                case 'balance':
+                    showToast(`Main: ${walletData.main} Birr | Play: ${walletData.play} Birr`, 'info');
+                    break;
+                case 'deposit':
+                    openDepositModal();
+                    break;
+                case 'instructions':
+                    showToast('Instructions will be available soon.', 'info');
+                    break;
+                case 'transfer':
+                    const amount = prompt('Enter amount to transfer from Main to Play wallet:', '10');
+                    if (amount !== null) {
+                        const num = parseInt(amount);
+                        if (!isNaN(num) && num > 0) transferToPlay(num);
+                        else alert('Please enter a valid positive number.');
+                    }
+                    break;
+                case 'withdraw':
+                    document.getElementById('withdrawBtn').click();
+                    break;
+                case 'invite':
+                    openReferralModal();
+                    break;
+                case 'convert':
+                    showToast('Convert Bonus feature is coming soon.', 'info');
+                    break;
+            }
+        }
+
         function init() {
             const ladderBtn = document.getElementById('chooseLadderBtn');
             const ladderOverlay = document.getElementById('ladderAdOverlay');
@@ -3906,6 +3835,14 @@
                     } else {
                         showGameChooser();
                     }
+                    
+                    // ADDED: Trigger menu action if URL param exists
+                    if (pendingMenuAction) {
+                        setTimeout(() => {
+                            handleMenuAction(pendingMenuAction);
+                            pendingMenuAction = null;
+                        }, 800);
+                    }
                 },
                 onState: (state, room) => {
                     if (!state || (room && room !== currentRoom)) return;
@@ -3964,6 +3901,8 @@
             console.info('WINZO client booted (server-authoritative mode)');
             console.info('Firebase wallet WS endpoint:', SERVER_WS_URL);
         }
+        
+        checkUrlForAction(); // <-- ADDED
         init();
     </script>
 
