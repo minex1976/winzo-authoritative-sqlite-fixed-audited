@@ -747,7 +747,41 @@
             100% { filter:drop-shadow(0 0 4px rgba(255,204,68,.45)); }
         }
 
-    </style>
+    
+        /* Winzo Bingo: keep the B-I-N-G-O column palette identical everywhere. */
+        .bingo-called-column:nth-child(1) .bingo-called-number.b.called,
+        .bingo-called-number.b.called { background:#2679dc; border-color:#83c1ff; color:#fff; }
+        .bingo-called-column:nth-child(2) .bingo-called-number.i.called,
+        .bingo-called-number.i.called { background:#8c52d8; border-color:#d0adff; color:#fff; }
+        .bingo-called-column:nth-child(3) .bingo-called-number.n.called,
+        .bingo-called-number.n.called { background:#209b65; border-color:#82edb8; color:#fff; }
+        .bingo-called-column:nth-child(4) .bingo-called-number.g.called,
+        .bingo-called-number.g.called { background:#e87922; border-color:#ffc17e; color:#fff; }
+        .bingo-called-column:nth-child(5) .bingo-called-number.o.called,
+        .bingo-called-number.o.called { background:#d94f91; border-color:#ffacd0; color:#fff; }
+
+        /* Recent-call balls use the same five column colors as the caller board. */
+        .bingo-ball.b { background:#2679dc; }
+        .bingo-ball.i { background:#8c52d8; }
+        .bingo-ball.n { background:#209b65; }
+        .bingo-ball.g { background:#e87922; }
+        .bingo-ball.o { background:#d94f91; }
+
+        /* Shared tile treatment for the picking-page wallet and live-page stats. */
+        .bingo-wallet-grid > div,
+        .bingo-stats > div {
+            background:linear-gradient(145deg, rgba(58,39,91,.98), rgba(43,29,70,.98));
+            border:1px solid rgba(150,112,190,.62);
+            border-radius:12px;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.09),
+                0 3px 10px rgba(0,0,0,.24),
+                0 0 0 1px rgba(120,80,160,.08);
+        }
+        .bingo-wallet-grid small,
+        .bingo-stats small { color:#cbb8e6; }
+
+</style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
