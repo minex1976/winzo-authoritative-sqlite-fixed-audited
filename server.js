@@ -26,9 +26,26 @@ const pool = new Pool({
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
-const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '9f8a7b6c5d4e3f2a1b0c1976';
-const NODE_ENV = process.env.NODE_ENV || 'production';
 
+// 🔒 FIX #3: SMS webhook secret is REQUIRED. No hardcoded fallback.
+const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '';
+if (!SMS_WEBHOOK_SECRET) {
+  console.error('FATAL: SMS_WEBHOOK_SECRET is not set. SMS auto-deposit webhook will be disabled.');
+}
+
+// 🔒 FIX #2/#13: Session secret for HTTP auth. Falls back to random per-process.
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.SESSION_SECRET) {
+  console.warn('WARNING: SESSION_SECRET not set. HTTP sessions will not survive restart or work across instances.');
+}
+
+// 🔒 FIX #4: No hardcoded IP salt. Random per-process if unset.
+const IP_HASH_SALT = process.env.IP_HASH_SALT || crypto.randomBytes(32).toString('hex');
+if (!process.env.IP_HASH_SALT) {
+  console.warn('WARNING: IP_HASH_SALT not set. Multi-account detection will not work across restarts.');
+}
+
+const NODE_ENV = process.env.NODE_ENV || 'production';
 const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
@@ -58,6 +75,17 @@ const DEPOSIT_RATE_LIMIT_MAX = Number(process.env.DEPOSIT_RATE_MAX || 15);
 const DUPLICATE_SMS_WINDOW_MS = 60 * 1000;
 const MAX_IMAGE_BYTES = 2_000_000;
 const WS_MAX_PAYLOAD = 5 * 1024 * 1024;
+
+// 🔒 FIX #5: Multi-account detection thresholds.
+const MULTI_ACCOUNT_IP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_IP_THRESHOLD || 5);
+const MULTI_ACCOUNT_FP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_FP_THRESHOLD || 3);
+
+// 🔒 FIX #10: Admin idle timeout.
+const ADMIN_IDLE_MS = Number(process.env.ADMIN_IDLE_MS || 30 * 60 * 1000);
+
+// 🔒 FIX #12: Transfer rate limit (in-memory; per-instance).
+const TRANSFER_RATE_WINDOW_MS = 60 * 1000;
+const TRANSFER_RATE_MAX = 10;
 
 const BOT_NAMES = [
   "Abebe", "Kebede", "Selam", "Hana", "Dawit", "Meron", "Yonas", "Sara",
@@ -121,79 +149,39 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS deposit_attempts (
           id VARCHAR(128) PRIMARY KEY, username VARCHAR(64), created_at BIGINT
       );
-
       CREATE TABLE IF NOT EXISTS request_trace (
-          trace_id VARCHAR(64) PRIMARY KEY,
-          uid VARCHAR(64),
-          stage VARCHAR(64) NOT NULL,
-          status VARCHAR(32) NOT NULL,
-          type VARCHAR(32),
-          amount NUMERIC,
-          reference VARCHAR(128),
-          client_request_id VARCHAR(128),
-          tx_id VARCHAR(128),
-          reason VARCHAR(256),
-          detail JSONB DEFAULT '{}'::jsonb,
-          at BIGINT NOT NULL
+          trace_id VARCHAR(64) PRIMARY KEY, uid VARCHAR(64), stage VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL,
+          type VARCHAR(32), amount NUMERIC, reference VARCHAR(128), client_request_id VARCHAR(128), tx_id VARCHAR(128),
+          reason VARCHAR(256), detail JSONB DEFAULT '{}'::jsonb, at BIGINT NOT NULL
       );
-
       CREATE TABLE IF NOT EXISTS game_winners (
-          id VARCHAR(128) PRIMARY KEY,
-          username VARCHAR(64) NOT NULL,
-          display_name VARCHAR(128),
-          room_id VARCHAR(64) NOT NULL,
-          round INT NOT NULL,
-          win_amount NUMERIC NOT NULL,
-          winning_number INT,
-          prize_pool NUMERIC,
-          created_at BIGINT NOT NULL
+          id VARCHAR(128) PRIMARY KEY, username VARCHAR(64) NOT NULL, display_name VARCHAR(128),
+          room_id VARCHAR(64) NOT NULL, round INT NOT NULL, win_amount NUMERIC NOT NULL,
+          winning_number INT, prize_pool NUMERIC, created_at BIGINT NOT NULL
       );
-
       CREATE TABLE IF NOT EXISTS round_snapshots (
-          id VARCHAR(160) PRIMARY KEY,
-          room_id VARCHAR(64) NOT NULL,
-          round INT NOT NULL,
-          bet NUMERIC NOT NULL,
-          human_count INT NOT NULL DEFAULT 0,
-          human_picks INT NOT NULL DEFAULT 0,
-          bot_count INT NOT NULL DEFAULT 0,
-          bot_picks INT NOT NULL DEFAULT 0,
-          total_picks INT NOT NULL DEFAULT 0,
-          prize_pool NUMERIC NOT NULL DEFAULT 0,
-          winning_number INT,
-          winner_count INT NOT NULL DEFAULT 0,
-          human_winner_count INT NOT NULL DEFAULT 0,
-          human_win_amount NUMERIC NOT NULL DEFAULT 0,
-          human_player_ids JSONB DEFAULT '[]'::jsonb,
-          started_at BIGINT NOT NULL,
-          ended_at BIGINT NOT NULL,
-          created_at BIGINT NOT NULL
+          id VARCHAR(160) PRIMARY KEY, room_id VARCHAR(64) NOT NULL, round INT NOT NULL, bet NUMERIC NOT NULL,
+          human_count INT NOT NULL DEFAULT 0, human_picks INT NOT NULL DEFAULT 0, bot_count INT NOT NULL DEFAULT 0,
+          bot_picks INT NOT NULL DEFAULT 0, total_picks INT NOT NULL DEFAULT 0, prize_pool NUMERIC NOT NULL DEFAULT 0,
+          winning_number INT, winner_count INT NOT NULL DEFAULT 0, human_winner_count INT NOT NULL DEFAULT 0,
+          human_win_amount NUMERIC NOT NULL DEFAULT 0, human_player_ids JSONB DEFAULT '[]'::jsonb,
+          started_at BIGINT NOT NULL, ended_at BIGINT NOT NULL, created_at BIGINT NOT NULL
       );
     `);
 
     await client.query(`ALTER TABLE request_trace ADD COLUMN IF NOT EXISTS trace_row_id BIGSERIAL;`);
     await client.query(`
       DO $$
-      DECLARE pk_name text;
-      DECLARE pk_is_trace_row_id boolean;
+      DECLARE pk_name text; DECLARE pk_is_trace_row_id boolean;
       BEGIN
-        SELECT c.conname,
-               (array_length(c.conkey, 1) = 1 AND a.attname = 'trace_row_id')
+        SELECT c.conname, (array_length(c.conkey, 1) = 1 AND a.attname = 'trace_row_id')
           INTO pk_name, pk_is_trace_row_id
-          FROM pg_constraint c
-          JOIN pg_attribute a
-            ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
-         WHERE c.conrelid = 'request_trace'::regclass AND c.contype = 'p'
-         LIMIT 1;
-
+          FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+         WHERE c.conrelid = 'request_trace'::regclass AND c.contype = 'p' LIMIT 1;
         IF pk_name IS NOT NULL AND NOT COALESCE(pk_is_trace_row_id, false) THEN
-          EXECUTE format('ALTER TABLE request_trace DROP CONSTRAINT %I', pk_name);
-          pk_name := NULL;
+          EXECUTE format('ALTER TABLE request_trace DROP CONSTRAINT %I', pk_name); pk_name := NULL;
         END IF;
-
-        IF pk_name IS NULL THEN
-          ALTER TABLE request_trace ADD CONSTRAINT request_trace_pkey PRIMARY KEY (trace_row_id);
-        END IF;
+        IF pk_name IS NULL THEN ALTER TABLE request_trace ADD CONSTRAINT request_trace_pkey PRIMARY KEY (trace_row_id); END IF;
       END $$;
     `);
 
@@ -205,6 +193,9 @@ async function initDb() {
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
+      -- 🔒 FIX #1/#7: provably-fair commit-reveal seeds
+      ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);
+      ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);
     `);
 
     await client.query(`
@@ -212,7 +203,8 @@ async function initDb() {
         id VARCHAR(64) PRIMARY KEY, game_id VARCHAR(32) NOT NULL, round_number INTEGER NOT NULL,
         phase VARCHAR(24) NOT NULL, stake NUMERIC NOT NULL, prize_pool NUMERIC NOT NULL DEFAULT 0,
         called_numbers JSONB NOT NULL DEFAULT '[]'::jsonb, started_at BIGINT NOT NULL, ends_at BIGINT NOT NULL,
-        completed_at BIGINT, winners JSONB NOT NULL DEFAULT '[]'::jsonb
+        completed_at BIGINT, winners JSONB NOT NULL DEFAULT '[]'::jsonb,
+        server_seed VARCHAR(128), server_seed_hash VARCHAR(128)
       );
       CREATE TABLE IF NOT EXISTS bingo_entries (
         id VARCHAR(128) PRIMARY KEY, round_id VARCHAR(64) NOT NULL REFERENCES bingo_rounds(id),
@@ -234,14 +226,15 @@ async function initDb() {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bingo_entries_round_card ON bingo_entries(round_id, card_number);
       CREATE INDEX IF NOT EXISTS idx_bingo_results_user ON bingo_results(username, created_at DESC);
     `);
+    await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);`);
+    await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);`);
 
     await client.query(`UPDATE users SET referral_earnings = 0 WHERE referral_earnings IS NULL;`);
 
     console.log('✅ Migrations applied.');
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_tx_pending_deposit
-        ON transactions (status, type) WHERE status = 'pending' AND type = 'deposit';
+      CREATE INDEX IF NOT EXISTS idx_tx_pending_deposit ON transactions (status, type) WHERE status = 'pending' AND type = 'deposit';
       CREATE INDEX IF NOT EXISTS idx_tx_reference ON transactions (reference);
       CREATE INDEX IF NOT EXISTS idx_sms_unprocessed ON incoming_sms (processed) WHERE processed = false;
       CREATE INDEX IF NOT EXISTS idx_sms_text_hash ON incoming_sms (text_hash);
@@ -252,6 +245,8 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_game_winners_username ON game_winners (username, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_game_winners_room ON game_winners (room_id, round);
       CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by) WHERE referred_by IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_users_ip_hash ON users (last_ip_hash) WHERE last_ip_hash IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_users_fingerprint ON users (device_fingerprint) WHERE device_fingerprint IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_time ON round_snapshots (ended_at DESC);
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_round ON round_snapshots (room_id, round);
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_time ON round_snapshots (room_id, ended_at DESC);
@@ -286,9 +281,10 @@ function normalizedClientIp(ip) {
   if (value === '::1') return '127.0.0.1';
   return value;
 }
+// 🔒 FIX #4: use module-level salt (no hardcoded fallback string)
 function hashWithRotatingSalt(value, dayOffset = 0) {
   const d = new Date(Date.now() - dayOffset * DAY).toISOString().slice(0, 10);
-  const salt = `${process.env.IP_HASH_SALT || 'winzo-ip-salt'}|${d}`;
+  const salt = `${IP_HASH_SALT}|${d}`;
   return hashText(`${salt}|${String(value || '')}`);
 }
 function websocketClientIp(ws) {
@@ -299,9 +295,71 @@ function websocketClientIp(ws) {
   return normalizedClientIp(ws?._socket?.remoteAddress || '');
 }
 
+// 🔒 FIX #2/#13: session tokens for authenticated HTTP endpoints.
+function issueSessionToken(uid) {
+  const ts = Date.now();
+  const payload = `${uid}:${ts}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${sig}`).toString('base64url');
+}
+function verifySessionToken(token) {
+  try {
+    const decoded = Buffer.from(String(token || ''), 'base64url').toString();
+    const parts = decoded.split(':');
+    if (parts.length !== 3) return null;
+    const [uid, ts, sig] = parts;
+    const expected = crypto.createHmac('sha256', SESSION_SECRET).update(`${uid}:${ts}`).digest('hex');
+    if (!constantTimeEqual(sig, expected)) return null;
+    if (Date.now() - Number(ts) > 24 * 60 * 60 * 1000) return null;
+    return uid;
+  } catch { return null; }
+}
+
+// 🔒 FIX #12: transfer rate limiter (per-process; swap for Redis for multi-instance).
+const transferRate = new Map();
+function checkTransferRate(uid) {
+  const since = now() - TRANSFER_RATE_WINDOW_MS;
+  const arr = (transferRate.get(uid) || []).filter(t => t > since);
+  if (arr.length >= TRANSFER_RATE_MAX) return false;
+  arr.push(now());
+  transferRate.set(uid, arr);
+  return true;
+}
+
 class Mutex {
   constructor() { this._t = Promise.resolve(); }
   run(fn) { const n = this._t.then(fn, fn); this._t = n.then(() => {}, () => {}); return n; }
+}
+
+// 🔒 FIX #1/#7: deterministic seeded RNG (HMAC-based, verifiable).
+class SeededRNG {
+  constructor(seedHex) {
+    this.seed = Buffer.from(String(seedHex), 'hex');
+    this.counter = 0;
+    this.buffer = Buffer.alloc(0);
+    this.bufferPos = 0;
+  }
+  _refill() {
+    const chunk = crypto.createHmac('sha256', this.seed).update(`ctr:${this.counter++}`).digest();
+    this.buffer = Buffer.concat([this.buffer.slice(this.bufferPos), chunk]);
+    this.bufferPos = 0;
+  }
+  nextUInt32() {
+    if (this.bufferPos + 4 > this.buffer.length) this._refill();
+    const v = this.buffer.readUInt32BE(this.bufferPos);
+    this.bufferPos += 4;
+    return v;
+  }
+  nextInt(n) { return this.nextUInt32() % n; }
+}
+
+function seededShuffle(pool, seedOrRng) {
+  const rng = seedOrRng instanceof SeededRNG ? seedOrRng : new SeededRNG(seedOrRng);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = rng.nextInt(i + 1);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
 }
 
 // ============================================================================
@@ -313,30 +371,24 @@ async function trace(traceId, uid, stage, status, opts = {}) {
       `INSERT INTO request_trace (trace_id, uid, stage, status, type, amount, reference, client_request_id, tx_id, reason, detail, at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
-        String(traceId).slice(0, 64),
-        uid ? String(uid).slice(0, 64) : null,
-        String(stage).slice(0, 64),
-        String(status).slice(0, 32),
+        String(traceId).slice(0, 64), uid ? String(uid).slice(0, 64) : null,
+        String(stage).slice(0, 64), String(status).slice(0, 32),
         opts.type ? String(opts.type).slice(0, 32) : null,
         Number.isFinite(Number(opts.amount)) ? Number(opts.amount) : null,
         opts.reference ? String(opts.reference).slice(0, 128) : null,
         opts.clientRequestId ? String(opts.clientRequestId).slice(0, 128) : null,
         opts.txId ? String(opts.txId).slice(0, 128) : null,
         opts.reason ? String(opts.reason).slice(0, 256) : null,
-        JSON.stringify(opts.detail || {}),
-        now(),
+        JSON.stringify(opts.detail || {}), now(),
       ]
     );
-  } catch (e) {
-    console.error('[TRACE] insert failed:', e.message, { traceId, stage, status });
-  }
+  } catch (e) { console.error('[TRACE] insert failed:', e.message, { traceId, stage, status }); }
   console.log(`[TRACE] ${traceId} stage=${stage} status=${status}` +
     (opts.reason ? ` reason=${opts.reason}` : '') +
     (opts.txId ? ` tx=${opts.txId}` : '') +
     (opts.amount ? ` amount=${opts.amount}` : '') +
     (opts.reference ? ` ref=${String(opts.reference).slice(0, 20)}` : ''));
 }
-
 function newTraceId() { return crypto.randomUUID(); }
 
 // ============================================================================
@@ -345,40 +397,63 @@ function newTraceId() { return crypto.randomUUID(); }
 function validateInitData(initData, maxAge = 300) {
   if (!BOT_TOKEN) return { ok: false, reason: 'server-misconfigured' };
   if (!initData || typeof initData !== 'string') return { ok: false, reason: 'missing-initData' };
-
   let params;
   try { params = new URLSearchParams(initData); }
   catch { return { ok: false, reason: 'malformed-query-string' }; }
-
   const receivedHash = params.get('hash');
   if (!receivedHash || !/^[a-f0-9]{64}$/i.test(receivedHash)) return { ok: false, reason: 'missing-hash' };
-
   params.delete('hash');
   const entries = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const dataCheckString = entries.map(([k, v]) => `${k}=${v}`).join('\n');
-
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
   const computed = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-
   const a = Buffer.from(computed, 'hex');
   const b = Buffer.from(receivedHash, 'hex');
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { ok: false, reason: 'invalid-signature' };
-
   const authDate = Number(params.get('auth_date') || 0);
   if (!authDate || !Number.isFinite(authDate)) return { ok: false, reason: 'missing-auth_date' };
   const ageSeconds = Math.floor(Date.now() / 1000) - authDate;
-  if (ageSeconds > maxAge) return { ok: false, reason: `expired` };
-  if (ageSeconds < -300) return { ok: false, reason: `future-date` };
-
+  if (ageSeconds > maxAge) return { ok: false, reason: 'expired' };
+  if (ageSeconds < -300) return { ok: false, reason: 'future-date' };
   let user = null;
-  try {
-    const rawUser = params.get('user');
-    user = rawUser ? JSON.parse(rawUser) : null;
-  } catch { return { ok: false, reason: 'user-not-json' }; }
-
+  try { const rawUser = params.get('user'); user = rawUser ? JSON.parse(rawUser) : null; }
+  catch { return { ok: false, reason: 'user-not-json' }; }
   if (!user || typeof user.id !== 'number' || !Number.isSafeInteger(user.id) || user.id <= 0) return { ok: false, reason: 'invalid-user' };
-
   return { ok: true, user, authDate, params };
+}
+
+// ============================================================================
+// 🔒 FIX #5: multi-account detection
+// ============================================================================
+async function detectMultiAccount(username, ipHash = null, fingerprint = null) {
+  const signals = [];
+  try {
+    if (ipHash) {
+      const r = await pool.query(
+        'SELECT COUNT(*)::int AS c FROM users WHERE last_ip_hash = $1 AND username <> $2',
+        [ipHash, username]
+      );
+      if (r.rows[0].c >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind: 'ip-cluster', count: r.rows[0].c });
+    }
+    if (fingerprint) {
+      const r = await pool.query(
+        'SELECT COUNT(*)::int AS c FROM users WHERE device_fingerprint = $1 AND username <> $2',
+        [fingerprint, username]
+      );
+      if (r.rows[0].c >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind: 'fingerprint-cluster', count: r.rows[0].c });
+    }
+    if (!signals.length) return { suspicious: false };
+    await pool.query(
+      `UPDATE users SET fraud_status = 'flagged', block_signals = $1, updated_at = $2
+        WHERE username = $3 AND (fraud_status IS NULL OR fraud_status <> 'frozen')`,
+      [JSON.stringify({ signals, detectedAt: now() }), now(), username]
+    );
+    console.warn(`[MULTI-ACCOUNT] flagged ${username}:`, JSON.stringify(signals));
+    return { suspicious: true, signals };
+  } catch (e) {
+    console.error('[MULTI-ACCOUNT] error:', e.message);
+    return { suspicious: false };
+  }
 }
 
 // ============================================================================
@@ -387,7 +462,6 @@ function validateInitData(initData, maxAge = 300) {
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
   if (!clean) return null;
-
   const client = await pool.connect();
   try {
     const res = await client.query('SELECT * FROM users WHERE username = $1', [clean]);
@@ -399,7 +473,9 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       if (extra.last_ip && current.last_ip_hash !== hashWithRotatingSalt(normalizedClientIp(extra.last_ip))) {
         patch.last_ip_hash = hashWithRotatingSalt(normalizedClientIp(extra.last_ip));
       }
-
+      if (extra.device_fingerprint && current.device_fingerprint !== String(extra.device_fingerprint).slice(0, 128)) {
+        patch.device_fingerprint = String(extra.device_fingerprint).slice(0, 128);
+      }
       if (Object.keys(patch).length) {
         const setClauses = Object.keys(patch).map((key, i) => `${key} = $${i + 2}`).join(', ');
         const values = [clean, ...Object.values(patch)];
@@ -407,7 +483,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       }
       return { ...current, ...patch };
     }
-
     const t = now();
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
@@ -417,19 +492,16 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
       withdrawal_hold_until: bot ? 0 : t + DAY, withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
-      last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : (extra.last_ip_hash || null),
+      last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
+      device_fingerprint: extra.device_fingerprint ? String(extra.device_fingerprint).slice(0, 128) : null,
       created_at: t, updated_at: t
     };
-
     await client.query(`
-      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, device_fingerprint, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
     `, Object.values(newUser));
-
     return newUser;
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 }
 
 async function resolveTelegramUser(user, referredBy = null) {
@@ -438,7 +510,6 @@ async function resolveTelegramUser(user, referredBy = null) {
   const telegramUsername = safeUser(user.username || '');
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || telegramUsername || `tg_${telegramId}`;
   const canonicalUid = `tg_${telegramId}`;
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -452,10 +523,8 @@ async function resolveTelegramUser(user, referredBy = null) {
         return { uid: mappedUid, user: (await ensureUser(mappedUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null })) };
       }
     }
-
     let found = await client.query('SELECT * FROM users WHERE username = $1 OR telegram_id = $2 LIMIT 1', [canonicalUid, telegramId]);
     let finalUid = canonicalUid;
-
     if (found.rows.length > 0) {
       const row = found.rows[0];
       if (row.telegram_id && Number(row.telegram_id) !== telegramId) throw new Error('conflicting-user');
@@ -464,7 +533,6 @@ async function resolveTelegramUser(user, referredBy = null) {
         finalUid = canonicalUid;
       }
     }
-
     await client.query('COMMIT');
     const created = await ensureUser(finalUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null });
     await pool.query('INSERT INTO telegram_users (telegram_id, uid, username, telegram_username, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (telegram_id) DO UPDATE SET uid=EXCLUDED.uid, username=EXCLUDED.username, updated_at=EXCLUDED.updated_at',
@@ -474,9 +542,7 @@ async function resolveTelegramUser(user, referredBy = null) {
     await client.query('ROLLBACK');
     console.error('[IDENTITY] error', e.message);
     return null;
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 }
 
 async function walletFor(username) {
@@ -498,20 +564,11 @@ async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const timestamp = Number(data.timestamp || now());
   const dbType = data.type || 'notification';
-
-  const wsPayload = {
-    ...data,
-    type: 'notification',
-    notificationType: dbType,
-    id,
-    timestamp
-  };
-
+  const wsPayload = { ...data, type: 'notification', notificationType: dbType, id, timestamp };
   await pool.query(
     'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)',
     [id, username, dbType, String(data.message || ''), data.status || null, data.txType || null, data.txId || null, timestamp]
   );
-
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
@@ -526,11 +583,26 @@ async function notifyTransaction(username, tx) {
     message = 'Your request was rejected by admin.';
   }
   await addNotification(username, {
-    type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '',
-    message
+    type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '', message
   });
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '' }));
+}
+
+// ============================================================================
+// 🔒 FIX #8: audit trail for direct wallet credits
+// ============================================================================
+async function recordWalletCredit(client, username, amount, type, meta = {}) {
+  const id = crypto.randomUUID();
+  const t = now();
+  await client.query(
+    `INSERT INTO transactions (id, username, uid, wallet_uid, type, amount, status, timestamp, reference, reason, wallet_applied, updated_at)
+     VALUES ($1,$2,$2,$2,$3,$4,'approved',$5,$6,$7,1,$5)`,
+    [id, username, type, Number(amount), t,
+     String(meta.reference || '').slice(0, 128),
+     String(meta.reason || '').slice(0, 256)]
+  );
+  return id;
 }
 
 // ============================================================================
@@ -544,10 +616,7 @@ async function transactionRequest(uid, data) {
   const clientRequestId = String(data.clientRequestId || '').slice(0, 128);
   const imgLen = String(data.imageData || '').length;
 
-  await trace(traceId, uid, 'tx.received', 'ok', {
-    type, amount, reference: rawRef, clientRequestId,
-    detail: { imgLen, hasImage: imgLen > 0 }
-  });
+  await trace(traceId, uid, 'tx.received', 'ok', { type, amount, reference: rawRef, clientRequestId, detail: { imgLen, hasImage: imgLen > 0 } });
 
   if (!['deposit', 'withdraw'].includes(type)) {
     await trace(traceId, uid, 'tx.validate', 'fail', { type, reason: 'bad-type' });
@@ -564,19 +633,12 @@ async function transactionRequest(uid, data) {
       return { ok: false, reason: 'amount-out-of-range', traceId };
     }
     const since = now() - DEPOSIT_RATE_LIMIT_WINDOW_MS;
-    const recent = await pool.query(
-      'SELECT COUNT(*)::int AS c FROM deposit_attempts WHERE username = $1 AND created_at > $2',
-      [uid, since]
-    );
+    const recent = await pool.query('SELECT COUNT(*)::int AS c FROM deposit_attempts WHERE username = $1 AND created_at > $2', [uid, since]);
     if (recent.rows[0].c >= DEPOSIT_RATE_LIMIT_MAX) {
-      await trace(traceId, uid, 'tx.ratelimit', 'fail', {
-        type, amount, reason: 'rate-limited',
-        detail: { count: recent.rows[0].c, max: DEPOSIT_RATE_LIMIT_MAX, windowMs: DEPOSIT_RATE_LIMIT_WINDOW_MS }
-      });
+      await trace(traceId, uid, 'tx.ratelimit', 'fail', { type, amount, reason: 'rate-limited', detail: { count: recent.rows[0].c, max: DEPOSIT_RATE_LIMIT_MAX, windowMs: DEPOSIT_RATE_LIMIT_WINDOW_MS } });
       return { ok: false, reason: 'rate-limited', traceId };
     }
-    await pool.query('INSERT INTO deposit_attempts (id, username, created_at) VALUES ($1,$2,$3)',
-      [crypto.randomUUID(), uid, now()]);
+    await pool.query('INSERT INTO deposit_attempts (id, username, created_at) VALUES ($1,$2,$3)', [crypto.randomUUID(), uid, now()]);
     await trace(traceId, uid, 'tx.ratelimit', 'ok', { type, amount, detail: { count: recent.rows[0].c + 1 } });
   }
 
@@ -586,7 +648,6 @@ async function transactionRequest(uid, data) {
   try {
     await client.query('BEGIN');
     await trace(traceId, uid, 'tx.begin', 'ok', { type, amount });
-
     const userRes = await client.query('SELECT * FROM users WHERE username = $1 FOR UPDATE', [uid]);
     if (userRes.rows.length === 0) throw new Error('user-not-found');
     const user = userRes.rows[0];
@@ -620,7 +681,6 @@ async function transactionRequest(uid, data) {
 
     const id = crypto.randomUUID();
     txId = id;
-
     await client.query(`
       INSERT INTO transactions (id, username, uid, wallet_uid, telegram_id, telegram_username, display_name, type, amount, status, timestamp, reference, full_name, phone_number, image_data, reason, wallet_applied, client_request_id, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
@@ -632,27 +692,18 @@ async function transactionRequest(uid, data) {
       await client.query('INSERT INTO transaction_requests (uid, client_request_id, tx_id, type, amount, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
         [uid, clientRequestId, id, type, amount, now()]);
     }
-
     await client.query('COMMIT');
     committed = true;
     await trace(traceId, uid, 'tx.commit', 'ok', { type, amount, reference: rawRef, txId: id, clientRequestId });
   } catch (e) {
-    if (!committed) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
-    }
+    if (!committed) { try { await client.query('ROLLBACK'); } catch (_) {} }
     await trace(traceId, uid, 'tx.rollback', 'fail', { type, amount, reference: rawRef, reason: e.message });
     console.error('[TX-REQUEST] FAILED', { traceId, uid, type, amount, reason: e.message });
     return { ok: false, reason: e.message, traceId };
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 
-  try {
-    await sendWallet(uid);
-    await trace(traceId, uid, 'tx.wallet-push', 'ok', { type, amount, txId });
-  } catch (e) {
-    await trace(traceId, uid, 'tx.wallet-push', 'fail', { type, amount, txId, reason: e.message });
-  }
+  try { await sendWallet(uid); await trace(traceId, uid, 'tx.wallet-push', 'ok', { type, amount, txId }); }
+  catch (e) { await trace(traceId, uid, 'tx.wallet-push', 'fail', { type, amount, txId, reason: e.message }); }
 
   if (type === 'deposit') {
     rescanPendingSms(traceId)
@@ -660,37 +711,26 @@ async function transactionRequest(uid, data) {
         try {
           const statusCheck = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
           if (statusCheck.rows[0]?.status === 'pending') {
-            await addNotification(uid, {
-              type: 'notification',
-              message: 'ገንዘብ ገቢ ማድረግዎን የሚያሳይ ማስረጃ አልተገኘም።'
-            });
+            await addNotification(uid, { type: 'notification', message: 'ገንዘብ ገቢ ማድረግዎን የሚያሳይ ማስረጃ አልተገኘም።' });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
           }
-        } catch (e) {
-          console.error('[TX-WAIT-MSG]', e.message);
-        }
+        } catch (e) { console.error('[TX-WAIT-MSG]', e.message); }
       })
-      .catch(err => {
-        console.error('[TX-RESCAN]', err.message);
-        trace(traceId, uid, 'tx.rescan', 'fail', { txId, reason: err.message }).catch(() => {});
-      });
+      .catch(err => { console.error('[TX-RESCAN]', err.message); trace(traceId, uid, 'tx.rescan', 'fail', { txId, reason: err.message }).catch(() => {}); });
     await trace(traceId, uid, 'tx.rescan', 'ok', { txId });
   }
-
   return { ok: true, id: txId, traceId, clientRequestId };
 }
 
 async function transactionImage(uid, id, imageData) {
-  if (!id || !imageData || String(imageData).length > 2_500_000) return false;
+  if (!id || !imageData || String(imageData).length > MAX_IMAGE_BYTES) return false;
   const res = await pool.query('UPDATE transactions SET image_data = $1, updated_at = $2 WHERE id = $3 AND username = $4 AND status = $5 RETURNING id',
     [String(imageData), now(), id, uid, 'pending']);
   return res.rowCount > 0;
 }
 
 async function adminListTransactions() {
-  const res = await pool.query(
-    "SELECT * FROM transactions WHERE status = 'pending' ORDER BY timestamp DESC LIMIT 500"
-  );
+  const res = await pool.query("SELECT * FROM transactions WHERE status = 'pending' ORDER BY timestamp DESC LIMIT 500");
   console.log(`[ADMIN] Returning ${res.rows.length} pending transactions.`);
   return res.rows.map(d => ({
     id: d.id, username: d.username, uid: d.uid || d.wallet_uid, walletUid: d.wallet_uid,
@@ -704,7 +744,6 @@ async function adminDecision(id, decision, reason = '') {
   if (decision === 'approve') decision = 'approved';
   if (decision === 'reject') decision = 'rejected';
   if (!['approved', 'rejected'].includes(decision)) return { ok: false, reason: 'bad-decision' };
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -712,35 +751,26 @@ async function adminDecision(id, decision, reason = '') {
     if (txRes.rows.length === 0) throw new Error('not-found');
     const tx = txRes.rows[0];
     if (tx.status !== 'pending') throw new Error('already-decided');
-
     const userRes = await client.query('SELECT * FROM users WHERE username = $1 FOR UPDATE', [tx.wallet_uid || tx.uid]);
     if (userRes.rows.length === 0) throw new Error('wallet-user-not-found');
     const user = userRes.rows[0];
-
     let newMain = Number(user.main_wallet);
     let newPlay = Number(user.play_wallet);
     let newPending = Number(user.pending_withdrawal);
     const amount = Number(tx.amount);
-
-    if (tx.type === 'deposit' && decision === 'approved') {
-      newPlay += amount;
-    } else if (tx.type === 'withdraw' && decision === 'approved') {
+    if (tx.type === 'deposit' && decision === 'approved') { newPlay += amount; }
+    else if (tx.type === 'withdraw' && decision === 'approved') {
       if (newMain < amount || newPending < amount) throw new Error('insufficient-funds');
-      newMain -= amount;
-      newPending -= amount;
+      newMain -= amount; newPending -= amount;
     } else if (tx.type === 'withdraw' && decision === 'rejected') {
       if (newPending < amount) throw new Error('insufficient-pending');
       newPending -= amount;
     }
-
     await client.query('UPDATE users SET main_wallet = $1, play_wallet = $2, pending_withdrawal = $3, updated_at = $4 WHERE username = $5',
       [newMain, newPlay, newPending, now(), tx.wallet_uid || tx.uid]);
-
     await client.query('UPDATE transactions SET status = $1, reason = $2, wallet_applied = 1, updated_at = $3 WHERE id = $4',
       [decision, String(reason).slice(0, 256), now(), id]);
-
     await client.query('COMMIT');
-
     const updatedTx = { ...tx, status: decision, reason };
     await sendWallet(tx.wallet_uid || tx.uid);
     await notifyTransaction(tx.wallet_uid || tx.uid, updatedTx);
@@ -749,9 +779,7 @@ async function adminDecision(id, decision, reason = '') {
     await client.query('ROLLBACK');
     console.error('[ADMIN] decision failed', e.message);
     return { ok: false, reason: e.message };
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 }
 
 // ============================================================================
@@ -760,7 +788,6 @@ async function adminDecision(id, decision, reason = '') {
 function normalizeSender(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
-
 function isTrustedSmsSender(record) {
   const raw = [record.from, record.sender, record.address, record.originator, record.source]
     .filter(Boolean).map(v => normalizeSender(v)).filter(Boolean);
@@ -775,11 +802,9 @@ function isTrustedSmsSender(record) {
   }
   return false;
 }
-
 function normalizePaymentReference(value) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, MAX_REFERENCE_LENGTH);
 }
-
 function isValidReference(ref) {
   if (!ref || typeof ref !== 'string') return false;
   if (ref.length < MIN_REFERENCE_LENGTH || ref.length > MAX_REFERENCE_LENGTH) return false;
@@ -787,7 +812,6 @@ function isValidReference(ref) {
   if (/^[0-9]+$/.test(ref) && ref.length < MIN_TELEBIRR_REF_LENGTH) return false;
   return true;
 }
-
 function parsePaymentRecord(r) {
   const text = String(r.text || r.message || '').replace(/\s+/g, ' ').trim();
   let reference = r.reference || '';
@@ -801,21 +825,14 @@ function parsePaymentRecord(r) {
     const m = text.match(/(?:ETB|Birr|ብር|Br\b|Amt|Amount)\s*[:\-]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
     if (m) amount = Number(String(m[1]).replace(/,/g, ''));
   }
-  return {
-    reference: normalizePaymentReference(reference),
-    amount: Number.isFinite(amount) ? amount : 0,
-    isTrusted: isTrustedSmsSender(r),
-    text,
-  };
+  return { reference: normalizePaymentReference(reference), amount: Number.isFinite(amount) ? amount : 0, isTrusted: isTrustedSmsSender(r), text };
 }
-
 async function logAutoActivity(kind, smsId, reference, amount, txId, reason) {
   try {
     await pool.query('INSERT INTO auto_activity (id, kind, sms_id, reference, amount, tx_id, reason, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
       [crypto.randomUUID(), kind, String(smsId||''), reference || '', Number(amount)||0, txId || '', reason || '', now()]);
   } catch (e) { console.error('[AUTO-LOG]', e.message); }
 }
-
 function smsMatchesDepositIdentity(smsText, tx) {
   const text = String(smsText || '').toLowerCase();
   if (!text) return false;
@@ -831,153 +848,73 @@ function smsMatchesDepositIdentity(smsText, tx) {
   }
   return true;
 }
-
 async function autoApproveMatchingDeposits(smsId, smsRecord, parentTraceId = null) {
   const traceId = parentTraceId || newTraceId();
   await trace(traceId, null, 'auto.sms', 'ok', { detail: { smsId, sender: smsRecord.sender || smsRecord.from } });
-
   const payment = parsePaymentRecord(smsRecord);
-  if (!payment.isTrusted) {
-    await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference });
-    return { ok: false, reason: 'untrusted-sender', traceId };
-  }
-  if (!payment.reference) {
-    await trace(traceId, null, 'auto.ref', 'fail', { reason: 'no-reference' });
-    return { ok: false, reason: 'no-reference', traceId };
-  }
-  if (!isValidReference(payment.reference)) {
-    await trace(traceId, null, 'auto.ref', 'fail', { reason: 'invalid-reference', reference: payment.reference });
-    return { ok: false, reason: 'invalid-reference', traceId };
-  }
-
+  if (!payment.isTrusted) { await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference }); return { ok: false, reason: 'untrusted-sender', traceId }; }
+  if (!payment.reference) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'no-reference' }); return { ok: false, reason: 'no-reference', traceId }; }
+  if (!isValidReference(payment.reference)) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'invalid-reference', reference: payment.reference }); return { ok: false, reason: 'invalid-reference', traceId }; }
   const smsAt = Number(smsRecord.timestamp || now());
-  if (!Number.isFinite(smsAt) || (now() - smsAt) > SMS_MAX_AGE_MS) {
-    await trace(traceId, null, 'auto.age', 'fail', { reason: 'stale-sms', reference: payment.reference });
-    return { ok: false, reason: 'stale-sms', traceId };
-  }
-  if (!(payment.amount > 0)) {
-    await trace(traceId, null, 'auto.amount', 'fail', { reason: 'no-amount', reference: payment.reference });
-    return { ok: false, reason: 'no-amount', traceId };
-  }
-  if (payment.amount < MIN_DEPOSIT_AMOUNT || payment.amount > MAX_DEPOSIT_AMOUNT) {
-    await trace(traceId, null, 'auto.amount', 'fail', { reason: 'amount-out-of-range', reference: payment.reference, amount: payment.amount });
-    return { ok: false, reason: 'amount-out-of-range', traceId };
-  }
-
+  if (!Number.isFinite(smsAt) || (now() - smsAt) > SMS_MAX_AGE_MS) { await trace(traceId, null, 'auto.age', 'fail', { reason: 'stale-sms', reference: payment.reference }); return { ok: false, reason: 'stale-sms', traceId }; }
+  if (!(payment.amount > 0)) { await trace(traceId, null, 'auto.amount', 'fail', { reason: 'no-amount', reference: payment.reference }); return { ok: false, reason: 'no-amount', traceId }; }
+  if (payment.amount < MIN_DEPOSIT_AMOUNT || payment.amount > MAX_DEPOSIT_AMOUNT) { await trace(traceId, null, 'auto.amount', 'fail', { reason: 'amount-out-of-range', reference: payment.reference, amount: payment.amount }); return { ok: false, reason: 'amount-out-of-range', traceId }; }
   const used = await pool.query('SELECT tx_id FROM used_references WHERE reference = $1', [payment.reference]);
   if (used.rows.length > 0) {
     await logAutoActivity('skipped', smsId, payment.reference, payment.amount, used.rows[0].tx_id, 'reference-reused');
     await trace(traceId, null, 'auto.reuse', 'fail', { reason: 'reference-reused', reference: payment.reference, txId: used.rows[0].tx_id });
     return { ok: false, reason: 'reference-reused', traceId };
   }
-
   const lockKey = advisoryKeyForReference(payment.reference);
   const lockClient = await pool.connect();
   try {
     const lockRes = await lockClient.query('SELECT pg_try_advisory_lock($1) AS got', [lockKey]);
-    if (!lockRes.rows[0]?.got) {
-      await trace(traceId, null, 'auto.lock', 'fail', { reason: 'reference-locked', reference: payment.reference });
-      return { ok: false, reason: 'reference-locked', traceId };
-    }
-
+    if (!lockRes.rows[0]?.got) { await trace(traceId, null, 'auto.lock', 'fail', { reason: 'reference-locked', reference: payment.reference }); return { ok: false, reason: 'reference-locked', traceId }; }
     try {
       const recheck = await pool.query('SELECT tx_id FROM used_references WHERE reference = $1', [payment.reference]);
-      if (recheck.rows.length > 0) {
-        await trace(traceId, null, 'auto.reuse-recheck', 'fail', { reason: 'reference-reused', reference: payment.reference });
-        return { ok: false, reason: 'reference-reused', traceId };
-      }
-
-      const txRes = await pool.query(
-        "SELECT * FROM transactions WHERE status = 'pending' AND type = 'deposit' AND timestamp > $1",
-        [now() - DEPOSIT_MAX_AGE_MS]
-      );
-
+      if (recheck.rows.length > 0) { await trace(traceId, null, 'auto.reuse-recheck', 'fail', { reason: 'reference-reused', reference: payment.reference }); return { ok: false, reason: 'reference-reused', traceId }; }
+      const txRes = await pool.query("SELECT * FROM transactions WHERE status = 'pending' AND type = 'deposit' AND timestamp > $1", [now() - DEPOSIT_MAX_AGE_MS]);
       const candidates = [];
       for (const tx of txRes.rows) {
         const txRef = normalizePaymentReference(tx.reference);
-        if (!txRef) continue;
-        if (txRef !== payment.reference) continue;
+        if (!txRef || txRef !== payment.reference) continue;
         const txAmt = Number(tx.amount);
         if (!Number.isFinite(txAmt)) continue;
         if (Math.abs(txAmt - payment.amount) > AUTO_DEPOSIT_AMOUNT_TOLERANCE) continue;
         candidates.push(tx);
       }
-
-      if (candidates.length === 0) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, '', 'no-match');
-        await trace(traceId, null, 'auto.match', 'fail', { reason: 'no-match', reference: payment.reference, amount: payment.amount, detail: { scanned: txRes.rows.length } });
-        return { ok: false, reason: 'no-match', traceId };
-      }
-      if (candidates.length > 1) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, '', 'ambiguous-tx');
-        await trace(traceId, null, 'auto.match', 'fail', { reason: 'ambiguous-tx', reference: payment.reference, amount: payment.amount, detail: { count: candidates.length } });
-        return { ok: false, reason: 'ambiguous-tx', traceId };
-      }
-
+      if (candidates.length === 0) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, '', 'no-match'); await trace(traceId, null, 'auto.match', 'fail', { reason: 'no-match', reference: payment.reference, amount: payment.amount, detail: { scanned: txRes.rows.length } }); return { ok: false, reason: 'no-match', traceId }; }
+      if (candidates.length > 1) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, '', 'ambiguous-tx'); await trace(traceId, null, 'auto.match', 'fail', { reason: 'ambiguous-tx', reference: payment.reference, amount: payment.amount, detail: { count: candidates.length } }); return { ok: false, reason: 'ambiguous-tx', traceId }; }
       const tx = candidates[0];
       await trace(traceId, tx.username, 'auto.candidate', 'ok', { txId: tx.id, reference: payment.reference, amount: payment.amount });
-
       const owner = await pool.query('SELECT blocked, fraud_status, account_status FROM users WHERE username = $1', [tx.wallet_uid || tx.uid]);
-      if (owner.rows.length === 0) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-missing');
-        await trace(traceId, tx.username, 'auto.owner', 'fail', { txId: tx.id, reason: 'owner-missing' });
-        return { ok: false, reason: 'owner-missing', traceId };
-      }
+      if (owner.rows.length === 0) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-missing'); return { ok: false, reason: 'owner-missing', traceId }; }
       const o = owner.rows[0];
-      if (o.blocked) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-blocked');
-        await trace(traceId, tx.username, 'auto.owner', 'fail', { txId: tx.id, reason: 'owner-blocked' });
-        return { ok: false, reason: 'owner-blocked', traceId };
-      }
-      if (String(o.fraud_status || '').toLowerCase() === 'frozen') {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-frozen');
-        await trace(traceId, tx.username, 'auto.owner', 'fail', { txId: tx.id, reason: 'owner-frozen' });
-        return { ok: false, reason: 'owner-frozen', traceId };
-      }
-
-      if (!smsMatchesDepositIdentity(payment.text, tx)) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'identity-mismatch');
-        await trace(traceId, tx.username, 'auto.identity', 'fail', { txId: tx.id, reason: 'identity-mismatch' });
-        return { ok: false, reason: 'identity-mismatch', traceId };
-      }
-
+      if (o.blocked) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-blocked'); return { ok: false, reason: 'owner-blocked', traceId }; }
+      if (String(o.fraud_status || '').toLowerCase() === 'frozen') { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'owner-frozen'); return { ok: false, reason: 'owner-frozen', traceId }; }
+      if (!smsMatchesDepositIdentity(payment.text, tx)) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'identity-mismatch'); return { ok: false, reason: 'identity-mismatch', traceId }; }
       const reserve = await pool.query(
-        `INSERT INTO used_references (reference, sms_id, tx_id, amount, sender, username, consumed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (reference) DO NOTHING
-         RETURNING reference`,
+        `INSERT INTO used_references (reference, sms_id, tx_id, amount, sender, username, consumed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (reference) DO NOTHING RETURNING reference`,
         [payment.reference, smsId, tx.id, payment.amount, String(smsRecord.sender || smsRecord.from || ''), tx.username, now()]
       );
-      if (reserve.rowCount === 0) {
-        await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'reference-reused');
-        await trace(traceId, tx.username, 'auto.reserve', 'fail', { txId: tx.id, reason: 'reference-reused' });
-        return { ok: false, reason: 'reference-reused', traceId };
-      }
-      await trace(traceId, tx.username, 'auto.reserve', 'ok', { txId: tx.id, reference: payment.reference });
-
+      if (reserve.rowCount === 0) { await logAutoActivity('skipped', smsId, payment.reference, payment.amount, tx.id, 'reference-reused'); return { ok: false, reason: 'reference-reused', traceId }; }
       const result = await adminDecision(tx.id, 'approved', `Auto-approved: SMS ${String(smsId).slice(0, 80)} (ref ${payment.reference})`);
       if (!result.ok) {
         await pool.query('DELETE FROM used_references WHERE reference = $1 AND tx_id = $2', [payment.reference, tx.id]);
         await logAutoActivity('error', smsId, payment.reference, payment.amount, tx.id, result.reason);
-        await trace(traceId, tx.username, 'auto.decision', 'fail', { txId: tx.id, reason: result.reason });
         return { ok: false, reason: result.reason, traceId };
       }
-
       await logAutoActivity('approved', smsId, payment.reference, payment.amount, tx.id, 'verified');
       await trace(traceId, tx.username, 'auto.decision', 'ok', { txId: tx.id, reference: payment.reference, amount: payment.amount });
       return { ok: true, txId: tx.id, tx: result.tx, traceId };
-    } finally {
-      try { await lockClient.query('SELECT pg_advisory_unlock($1)', [lockKey]); } catch {}
-    }
-  } finally {
-    lockClient.release();
-  }
+    } finally { try { await lockClient.query('SELECT pg_advisory_unlock($1)', [lockKey]); } catch {} }
+  } finally { lockClient.release(); }
 }
 
 function advisoryKeyForReference(ref) {
   const h = crypto.createHash('sha256').update('ref:' + String(ref || '')).digest();
-  const n = h.readUIntBE(0, 6);
-  return Number(n);
+  return Number(h.readUIntBE(0, 6));
 }
 
 async function processIncomingSmsSnapshot(row, parentTraceId = null) {
@@ -985,55 +922,29 @@ async function processIncomingSmsSnapshot(row, parentTraceId = null) {
   const traceId = parentTraceId || newTraceId();
   try {
     const res = await autoApproveMatchingDeposits(row.id, row, traceId);
-    const definitive = res.ok || ['untrusted-sender', 'no-reference', 'invalid-reference',
-      'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(res.reason);
+    const definitive = res.ok || ['untrusted-sender', 'no-reference', 'invalid-reference', 'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(res.reason);
     if (definitive) {
       try {
-        await pool.query(
-          'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
-          [res.ok ? res.txId : null, row.id]
-        );
-      } catch (updErr) {
-        try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [row.id]); } catch (_) {}
-      }
-      await trace(traceId, null, 'auto.sms-processed', res.ok ? 'ok' : 'skipped', {
-        detail: { smsId: row.id, reason: res.reason || null }
-      });
-    } else {
-      await trace(traceId, null, 'auto.sms-queued', 'warn', {
-        reason: res.reason || 'retry-later',
-        detail: { smsId: row.id }
-      });
+        await pool.query('UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2', [res.ok ? res.txId : null, row.id]);
+      } catch { try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [row.id]); } catch (_) {} }
     }
-  } catch (e) {
-    console.error('[AUTO-DEPOSIT]', e);
-    await trace(traceId, null, 'auto.sms-error', 'fail', { reason: e.message, detail: { smsId: row.id } });
-  }
+  } catch (e) { console.error('[AUTO-DEPOSIT]', e); }
 }
 
 async function rescanPendingSms(parentTraceId = null) {
   const traceId = parentTraceId || newTraceId();
   try {
     const res = await pool.query('SELECT * FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 50');
-    if (res.rows.length > 0) {
-      await trace(traceId, null, 'rescan', 'ok', { detail: { queued: res.rows.length } });
-    }
-    for (const row of res.rows) {
-      await processIncomingSmsSnapshot(row, traceId);
-    }
-  } catch (e) {
-    console.error('[RESCAN-SMS]', e.message);
-    await trace(traceId, null, 'rescan', 'fail', { reason: e.message });
-  }
+    if (res.rows.length > 0) await trace(traceId, null, 'rescan', 'ok', { detail: { queued: res.rows.length } });
+    for (const row of res.rows) await processIncomingSmsSnapshot(row, traceId);
+  } catch (e) { console.error('[RESCAN-SMS]', e.message); }
 }
 
 function startAutomaticDepositMonitor() {
   setInterval(async () => {
     try {
       const res = await pool.query('SELECT * FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 10');
-      for (const row of res.rows) {
-        await processIncomingSmsSnapshot(row);
-      }
+      for (const row of res.rows) await processIncomingSmsSnapshot(row);
     } catch (e) { console.error('[SMS-MONITOR]', e.message); }
   }, 5000);
   console.log('[AUTO-DEPOSIT] polling monitor started');
@@ -1043,6 +954,7 @@ async function markNotificationRead(uid, id) {
   await pool.query('UPDATE notifications SET read = true WHERE id = $1 AND username = $2', [id, uid]);
 }
 
+// 🔒 FIX #8: game payouts now also appear in the `transactions` table.
 async function claimPayout(uid, amount, roomId, round, kind) {
   const key = `payout:${roomId}_${round}_${uid}_${kind}`;
   const client = await pool.connect();
@@ -1050,126 +962,64 @@ async function claimPayout(uid, amount, roomId, round, kind) {
     await client.query('BEGIN');
     const marker = await client.query('SELECT id FROM notifications WHERE id = $1', [key]);
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
-
     await client.query('UPDATE users SET main_wallet = main_wallet + $1, wallet_updated_at = $2, updated_at = $2 WHERE username = $3', [amount, now(), uid]);
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, uid, 'payout_marker', now()]);
+    await recordWalletCredit(client, uid, amount, `game_${kind}`, { reason: `${roomId} r${round}`, reference: key });
     await client.query('COMMIT');
     await sendWallet(uid);
     return true;
-  } catch (e) {
-    await client.query('ROLLBACK');
-    return false;
-  } finally {
-    client.release();
-  }
+  } catch (e) { await client.query('ROLLBACK'); return false; }
+  finally { client.release(); }
 }
 
+// 🔒 FIX #8: referral credits also audited in `transactions`.
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (!ref || ref === winnerUid || amount <= 0) return false;
   const key = `ref:${roomId}_${round}_${winnerUid}_${ref}`;
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const marker = await client.query('SELECT id FROM notifications WHERE id = $1', [key]);
     if (marker.rows.length > 0) { await client.query('ROLLBACK'); return false; }
-
+    await client.query('INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING', [ref, now()]);
     await client.query(
-      'INSERT INTO users (username, display_name, created_at, updated_at) VALUES ($1,$1,$2,$2) ON CONFLICT (username) DO NOTHING',
-      [ref, now()]
-    );
-    await client.query(
-      `UPDATE users
-          SET main_wallet = COALESCE(main_wallet,0) + $1,
-              referral_earnings = COALESCE(referral_earnings,0) + $1,
-              wallet_updated_at = $2,
-              updated_at = $2
-        WHERE username = $3`,
+      `UPDATE users SET main_wallet = COALESCE(main_wallet,0) + $1, referral_earnings = COALESCE(referral_earnings,0) + $1, wallet_updated_at = $2, updated_at = $2 WHERE username = $3`,
       [amount, now(), ref]
     );
     await client.query('INSERT INTO notifications (id, username, type, read, timestamp) VALUES ($1,$2,$3,true,$4)', [key, ref, 'referral_marker', now()]);
-
+    await recordWalletCredit(client, ref, amount, 'referral_commission', { reason: `From ${winnerUid} in ${roomId} r${round}`, reference: key });
     await client.query('COMMIT');
-    await addNotification(ref, {
-      type: 'referral_commission',
-      message: `🎁 You earned ${amount} Birr commission from a win.`
-    });
+    await addNotification(ref, { type: 'referral_commission', message: `🎁 You earned ${amount} Birr commission from a win.` });
     await sendWallet(ref);
-    console.log(`[REFERRAL] credited ${amount} Birr to ${ref} from winner ${winnerUid} (room=${roomId} round=${round})`);
     return true;
-  } catch (e) {
-    await client.query('ROLLBACK');
-    console.error('[REFERRAL] error:', e.message, { ref, amount, roomId, round, winnerUid });
-    return false;
-  } finally {
-    client.release();
-  }
+  } catch (e) { await client.query('ROLLBACK'); console.error('[REFERRAL] error:', e.message); return false; }
+  finally { client.release(); }
 }
 
 async function recordHumanWinner({ username, displayName, roomId, round, winAmount, winningNumber, prizePool }) {
   try {
     await pool.query(
       `INSERT INTO game_winners (id, username, display_name, room_id, round, win_amount, winning_number, prize_pool, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (id) DO NOTHING`,
-      [
-        `win_${roomId}_${round}_${username}`,
-        username,
-        displayName || username,
-        roomId,
-        round,
-        winAmount,
-        winningNumber,
-        prizePool,
-        now()
-      ]
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+      [`win_${roomId}_${round}_${username}`, username, displayName || username, roomId, round, winAmount, winningNumber, prizePool, now()]
     );
-    console.log(`[WINNER-RECORD] ${username} (${displayName}) won ${winAmount} in ${roomId} round ${round}`);
-  } catch (e) {
-    console.error('[WINNER-RECORD] failed:', e.message, { username, roomId, round, winAmount });
-  }
+  } catch (e) { console.error('[WINNER-RECORD] failed:', e.message); }
 }
 
-async function recordRoundSnapshot({
-  roomId, round, bet, humanCount, humanPicks, botCount, botPicks, totalPicks,
-  prizePool, winningNumber, winnerCount, humanWinnerCount, humanWinAmount,
-  humanPlayerIds, startedAt, endedAt,
-}) {
+async function recordRoundSnapshot({ roomId, round, bet, humanCount, humanPicks, botCount, botPicks, totalPicks, prizePool, winningNumber, winnerCount, humanWinnerCount, humanWinAmount, humanPlayerIds, startedAt, endedAt }) {
   try {
     const id = `snap_${roomId}_${round}`;
     await pool.query(
-      `INSERT INTO round_snapshots (
-         id, room_id, round, bet, human_count, human_picks, bot_count, bot_picks,
-         total_picks, prize_pool, winning_number, winner_count, human_winner_count,
-         human_win_amount, human_player_ids, started_at, ended_at, created_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-       ON CONFLICT (id) DO UPDATE SET
-         human_count = EXCLUDED.human_count,
-         human_picks = EXCLUDED.human_picks,
-         bot_count = EXCLUDED.bot_count,
-         bot_picks = EXCLUDED.bot_picks,
-         total_picks = EXCLUDED.total_picks,
-         prize_pool = EXCLUDED.prize_pool,
-         winning_number = EXCLUDED.winning_number,
-         winner_count = EXCLUDED.winner_count,
-         human_winner_count = EXCLUDED.human_winner_count,
-         human_win_amount = EXCLUDED.human_win_amount,
-         human_player_ids = EXCLUDED.human_player_ids,
-         ended_at = EXCLUDED.ended_at`,
-      [
-        id, roomId, round, bet, humanCount, humanPicks, botCount, botPicks,
-        totalPicks, prizePool, winningNumber, winnerCount, humanWinnerCount,
-        humanWinAmount, JSON.stringify(humanPlayerIds || []), startedAt, endedAt, now(),
-      ]
+      `INSERT INTO round_snapshots (id, room_id, round, bet, human_count, human_picks, bot_count, bot_picks, total_picks, prize_pool, winning_number, winner_count, human_winner_count, human_win_amount, human_player_ids, started_at, ended_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ON CONFLICT (id) DO UPDATE SET human_count = EXCLUDED.human_count, human_picks = EXCLUDED.human_picks, bot_count = EXCLUDED.bot_count, bot_picks = EXCLUDED.bot_picks, total_picks = EXCLUDED.total_picks, prize_pool = EXCLUDED.prize_pool, winning_number = EXCLUDED.winning_number, winner_count = EXCLUDED.winner_count, human_winner_count = EXCLUDED.human_winner_count, human_win_amount = EXCLUDED.human_win_amount, human_player_ids = EXCLUDED.human_player_ids, ended_at = EXCLUDED.ended_at`,
+      [id, roomId, round, bet, humanCount, humanPicks, botCount, botPicks, totalPicks, prizePool, winningNumber, winnerCount, humanWinnerCount, humanWinAmount, JSON.stringify(humanPlayerIds || []), startedAt, endedAt, now()]
     );
-    console.log(`[ROUND-SNAPSHOT] ${roomId} r${round}: ${humanCount} humans, ${humanPicks} picks, ${winnerCount} winners`);
-  } catch (e) {
-    console.error('[ROUND-SNAPSHOT] failed:', e.message, { roomId, round });
-  }
+  } catch (e) { console.error('[ROUND-SNAPSHOT] failed:', e.message, { roomId, round }); }
 }
 
 // ============================================================================
-// GAME ROOM
+// GAME ROOM (Number game with provably-fair commit-reveal)
 // ============================================================================
 class Room {
   constructor(id, bet, row = null) {
@@ -1185,12 +1035,17 @@ class Room {
     this.lastResult = row?.last_result_json ? JSON.parse(row.last_result_json) : null;
     this.mutex = new Mutex(); this.botTimers = []; this.dirty = true;
     this.roundStartedAt = now();
+    // 🔒 FIX #1: load or generate server seed
+    this.serverSeed = row?.server_seed || null;
+    this.serverSeedHash = row?.server_seed_hash || null;
+    if (!this.serverSeed) {
+      this.serverSeed = crypto.randomBytes(32).toString('hex');
+      this.serverSeedHash = crypto.createHash('sha256').update(this.serverSeed).digest('hex');
+    }
     if (row?.taken_json) for (const [n, uid] of Object.entries(JSON.parse(row.taken_json))) this.taken.set(Number(n), uid);
     if (row?.players_json) {
       const saved = JSON.parse(row.players_json);
-      for (const [uid, p] of Object.entries(saved)) this.players.set(uid, {
-        uid, picks: Array.isArray(p.picks) ? p.picks.map(Number) : [], isBot: !!p.isBot, active: !!p.active, displayName: String(p.displayName || uid)
-      });
+      for (const [uid, p] of Object.entries(saved)) this.players.set(uid, { uid, picks: Array.isArray(p.picks) ? p.picks.map(Number) : [], isBot: !!p.isBot, active: !!p.active, displayName: String(p.displayName || uid) });
     }
   }
   snapshot() {
@@ -1208,6 +1063,8 @@ class Room {
       totalBets, humanBets, totalPicks, displayedPrizePool: Math.floor(totalBets * PAYOUT_RATE),
       onlineCount: activePlayers.length, botCount: activePlayers.filter(p => p.isBot).length, realPlayerCount: activePlayers.filter(p => !p.isBot).length,
       serverNow: now(), lastResult: this.lastResult,
+      // 🔒 FIX #1: expose commitment so clients can verify once the round ends
+      serverSeedHash: this.serverSeedHash,
     };
   }
   async persist() {
@@ -1215,14 +1072,16 @@ class Room {
     for (const [uid, p] of this.players) players[uid] = { picks: [...p.picks], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid };
     const taken = Object.fromEntries(this.taken.entries());
     await pool.query(`
-      INSERT INTO rooms (id, bet, phase, round, ends_at, winning_number, winners_json, prize_pool, last_result_json, taken_json, players_json, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      INSERT INTO rooms (id, bet, phase, round, ends_at, winning_number, winners_json, prize_pool, last_result_json, taken_json, players_json, updated_at, server_seed, server_seed_hash)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       ON CONFLICT (id) DO UPDATE SET
         phase = EXCLUDED.phase, round = EXCLUDED.round, ends_at = EXCLUDED.ends_at, winning_number = EXCLUDED.winning_number,
         winners_json = EXCLUDED.winners_json, prize_pool = EXCLUDED.prize_pool, last_result_json = EXCLUDED.last_result_json,
-        taken_json = EXCLUDED.taken_json, players_json = EXCLUDED.players_json, updated_at = EXCLUDED.updated_at
+        taken_json = EXCLUDED.taken_json, players_json = EXCLUDED.players_json, updated_at = EXCLUDED.updated_at,
+        server_seed = EXCLUDED.server_seed, server_seed_hash = EXCLUDED.server_seed_hash
     `, [this.id, this.bet, this.phase, this.round, this.endsAt, this.winningNumber, JSON.stringify(this.winners), this.prizePool,
-        this.lastResult ? JSON.stringify(this.lastResult) : null, JSON.stringify(taken), JSON.stringify(players), now()]);
+        this.lastResult ? JSON.stringify(this.lastResult) : null, JSON.stringify(taken), JSON.stringify(players), now(),
+        this.serverSeed, this.serverSeedHash]);
     this.dirty = false;
   }
   broadcast() {
@@ -1242,7 +1101,7 @@ async function loadRooms() {
 }
 async function saveRoom(room) { await room.persist(); room.broadcast(); }
 
-async function debit(uid, amount, roomId, round) {
+async function debit(uid, amount) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
   const client = await pool.connect();
@@ -1251,7 +1110,6 @@ async function debit(uid, amount, roomId, round) {
     const res = await client.query('SELECT play_wallet FROM users WHERE username = $1 FOR UPDATE', [uid]);
     if (res.rows.length === 0) throw new Error('user-not-found');
     if (Number(res.rows[0].play_wallet) < amt) throw new Error('insufficient');
-
     await client.query('UPDATE users SET play_wallet = play_wallet - $1, updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
     await client.query('COMMIT');
     await sendWallet(uid);
@@ -1260,12 +1118,10 @@ async function debit(uid, amount, roomId, round) {
     await client.query('ROLLBACK');
     await sendWallet(uid);
     return { ok: false, reason: e.message };
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 }
 
-async function refundWager(uid, amount, roomId, round) {
+async function refundWager(uid, amount) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return false;
   try {
@@ -1285,11 +1141,9 @@ async function pickIntent(room, uid, num) {
     if (p.picks.length >= MAX_PICKS) return { ok: false, reason: 'max-picks' };
     if (p.picks.includes(num)) return { ok: false, reason: 'duplicate' };
     if (room.taken.has(num)) return { ok: false, reason: 'taken' };
-    const d = await debit(uid, room.bet, room.id, room.round);
+    const d = await debit(uid, room.bet);
     if (!d.ok) return d;
-    room.taken.set(num, uid);
-    p.picks.push(num);
-    room.dirty = true;
+    room.taken.set(num, uid); p.picks.push(num); room.dirty = true;
     return { ok: true };
   });
 }
@@ -1299,7 +1153,7 @@ async function unpickIntent(room, uid, num) {
     if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
     const p = room.players.get(uid);
     if (!p || !p.picks.includes(num) || room.taken.get(num) !== uid) return { ok: false, reason: 'not-picked' };
-    if (!(await refundWager(uid, room.bet, room.id, room.round))) return { ok: false, reason: 'refund-failed' };
+    if (!(await refundWager(uid, room.bet))) return { ok: false, reason: 'refund-failed' };
     p.picks = p.picks.filter(n => n !== num); room.taken.delete(num); room.dirty = true;
     return { ok: true };
   });
@@ -1307,11 +1161,12 @@ async function unpickIntent(room, uid, num) {
 
 async function refundDisconnectedPlayer(room, p) {
   if (!p || p.isBot || !p.picks.length) return;
-  await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round);
+  await refundWager(p.uid, room.bet * p.picks.length);
   for (const n of p.picks) if (room.taken.get(n) === p.uid) room.taken.delete(n);
   p.picks = []; p.active = false; room.dirty = true;
 }
 
+// 🔒 FIX #1: provably-fair draw using committed server seed.
 async function toSpinning(room) {
   if (room.phase !== 'selection') return;
   const allWithPicks = [...room.players.values()].filter(p => p.picks.length > 0 && (p.isBot || p.active));
@@ -1319,58 +1174,48 @@ async function toSpinning(room) {
   const allNums = [...new Set(allWithPicks.flatMap(p => p.picks))];
   if (!allNums.length) return resetRound(room, 'no-picks');
 
-  const winningNumber = allNums[Math.floor(Math.random() * allNums.length)];
+  // Deterministic draw: HMAC(serverSeed, room:round:nums). Verifiable post-round.
+  const commitment = crypto.createHmac('sha256', Buffer.from(room.serverSeed, 'hex'))
+    .update(`${room.id}:${room.round}:${allNums.join(',')}`)
+    .digest();
+  const winningNumber = allNums[commitment.readUInt32BE(0) % allNums.length];
+
   const winners = allWithPicks.filter(p => p.picks.includes(winningNumber)).map(p => p.uid);
   const totalPicksInRoom = allWithPicks.reduce((s, p) => s + p.picks.length, 0);
   const prizePool = Math.floor(totalPicksInRoom * room.bet * PAYOUT_RATE);
-
   const humans = allWithPicks.filter(p => !p.isBot);
   const bots = allWithPicks.filter(p => p.isBot);
-  const humanCount = humans.length;
-  const humanPicks = humans.reduce((s, p) => s + p.picks.length, 0);
-  const botCount = bots.length;
-  const botPicks = bots.reduce((s, p) => s + p.picks.length, 0);
-  const humanPlayerIds = humans.map(p => p.uid);
   const humanWinners = winners.filter(uid => !room.players.get(uid)?.isBot);
-  const humanWinAmount = winners.length && prizePool > 0
-    ? Math.floor(prizePool / winners.length) * humanWinners.length
-    : 0;
   const roundStartedAt = room.roundStartedAt || (now() - SELECTION_SECONDS * 1000);
 
   room.winningNumber = winningNumber; room.winners = winners; room.prizePool = prizePool;
   room.phase = 'spinning'; room.endsAt = now() + SPINNING_SECONDS * 1000; room.dirty = true;
 
-
   try {
     await recordRoundSnapshot({
-      roomId: room.id,
-      round: room.round,
-      bet: room.bet,
-      humanCount,
-      humanPicks,
-      botCount,
-      botPicks,
-      totalPicks: totalPicksInRoom,
-      prizePool,
-      winningNumber,
-      winnerCount: winners.length,
-      humanWinnerCount: humanWinners.length,
-      humanWinAmount,
-      humanPlayerIds,
-      startedAt: roundStartedAt,
-      endedAt: now(),
+      roomId: room.id, round: room.round, bet: room.bet,
+      humanCount: humans.length, humanPicks: humans.reduce((s, p) => s + p.picks.length, 0),
+      botCount: bots.length, botPicks: bots.reduce((s, p) => s + p.picks.length, 0),
+      totalPicks: totalPicksInRoom, prizePool, winningNumber,
+      winnerCount: winners.length, humanWinnerCount: humanWinners.length,
+      humanWinAmount: winners.length && prizePool > 0 ? Math.floor(prizePool / winners.length) * humanWinners.length : 0,
+      humanPlayerIds: humans.map(p => p.uid),
+      startedAt: roundStartedAt, endedAt: now(),
     });
-  } catch (e) {
-    console.error('[ROUND-SNAPSHOT] persist failed:', e.message);
-  }
+  } catch (e) { console.error('[ROUND-SNAPSHOT] persist failed:', e.message); }
 
-  room.lastResult = { round: room.round, winningNumber, winners: winners.map(uid => room.players.get(uid)?.displayName || uid), winAmount: (winners.length && prizePool > 0) ? Math.floor(prizePool / winners.length) : 0, setAt: now() };
+  // 🔒 FIX #1: reveal seed after commit
+  room.lastResult = {
+    round: room.round, winningNumber,
+    winners: winners.map(uid => room.players.get(uid)?.displayName || uid),
+    winAmount: (winners.length && prizePool > 0) ? Math.floor(prizePool / winners.length) : 0,
+    serverSeed: room.serverSeed, serverSeedHash: room.serverSeedHash,
+    setAt: now()
+  };
 }
 
 async function toResults(room) {
   if (room.phase !== 'spinning') return;
-  // Credit prizes only after the server-side spinning phase has fully elapsed.
-  // claimPayout's unique marker keeps retries/idempotent calls from double-paying.
   const winners = Array.isArray(room.winners) ? room.winners : [];
   const prizePool = Number(room.prizePool || 0);
   if (winners.length && prizePool > 0) {
@@ -1378,15 +1223,11 @@ async function toResults(room) {
     for (const uid of winners) {
       if (share <= 0) break;
       if (!(await claimPayout(uid, share, room.id, room.round, 'win'))) continue;
-
       const player = room.players.get(uid);
       if (player?.isBot) continue;
-      const displayName = player?.displayName || uid;
-      await recordHumanWinner({ username: uid, displayName, roomId: room.id, round: room.round,
-        winAmount: share, winningNumber: room.winningNumber, prizePool });
-      try {
-        await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` });
-      } catch (e) { console.error('[WIN-NOTIFY]', e.message, { uid }); }
+      await recordHumanWinner({ username: uid, displayName: player?.displayName || uid, roomId: room.id, round: room.round, winAmount: share, winningNumber: room.winningNumber, prizePool });
+      try { await addNotification(uid, { message: `🏆 You won ${share} Birr in round ${room.round}!` }); }
+      catch (e) { console.error('[WIN-NOTIFY]', e.message, { uid }); }
       try {
         const refRes = await pool.query('SELECT referred_by FROM users WHERE username = $1', [uid]);
         const refBy = refRes.rows[0]?.referred_by;
@@ -1397,15 +1238,6 @@ async function toResults(room) {
       } catch (e) { console.error('[REFERRAL] credit failed:', e.message, { uid, share }); }
     }
   }
-  if (room.winningNumber != null && !room.lastResult) {
-    room.lastResult = {
-      round: room.round,
-      winningNumber: Number(room.winningNumber),
-      winners: [...room.winners].map(uid => room.players.get(uid)?.displayName || uid),
-      winAmount: Number(room.prizePool || 0),
-      setAt: now()
-    };
-  }
   room.phase = 'results';
   room.endsAt = now() + RESULTS_SECONDS * 1000;
   room.dirty = true;
@@ -1414,12 +1246,15 @@ async function toResults(room) {
 async function resetRound(room, why) {
   for (const p of room.players.values()) {
     if (p.isBot || !p.picks.length) continue;
-    if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length, room.id, room.round);
+    if (room.phase === 'selection' || !p.active) await refundWager(p.uid, room.bet * p.picks.length);
   }
   room.round += 1; room.phase = 'selection'; room.endsAt = now() + SELECTION_SECONDS * 1000;
   room.taken.clear(); room.winningNumber = null; room.winners = []; room.prizePool = 0; room.lastResult = null;
   for (const p of room.players.values()) { p.picks = []; p.active = false; }
   room.roundStartedAt = now();
+  // 🔒 FIX #1: rotate server seed per round
+  room.serverSeed = crypto.randomBytes(32).toString('hex');
+  room.serverSeedHash = crypto.createHash('sha256').update(room.serverSeed).digest('hex');
   room.dirty = true;
   scheduleBots(room);
 }
@@ -1454,7 +1289,7 @@ function scheduleBots(room) {
   const order = [];
   for (let pickNo = 0; pickNo < MAX_PICKS; pickNo++) {
     const pass = [...names];
-    for (let i = pass.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pass[i], pass[j]] = [pass[j], pass[i]]; }
+    for (let i = pass.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [pass[i], pass[j]] = [pass[j], pass[i]]; }
     for (const name of pass) order.push(name);
   }
   let index = 0;
@@ -1472,7 +1307,7 @@ function scheduleBots(room) {
         if (p.picks.length >= MAX_PICKS) return;
         let num = null;
         for (let attempt = 0; attempt < 12; attempt++) {
-          const candidate = 1 + Math.floor(Math.random() * 200);
+          const candidate = 1 + crypto.randomInt(200);
           if (!room.taken.has(candidate) && !p.picks.includes(candidate)) { num = candidate; break; }
         }
         if (num == null) { for (let candidate = 1; candidate <= 200; candidate++) if (!room.taken.has(candidate)) { num = candidate; break; } }
@@ -1499,7 +1334,7 @@ setInterval(async () => {
 }, 500);
 
 // ============================================================================
-/* WINZO BINGO */
+/* WINZO BINGO (with provably-fair commit-reveal) */
 // ============================================================================
 const BINGO_DEFAULT_STAKE = [15,30].includes(Number(process.env.BINGO_STAKE)) ? Number(process.env.BINGO_STAKE) : 15;
 const BINGO_STAKES = [15, 30];
@@ -1519,8 +1354,6 @@ function bingoNewCard() {
   grid[2][2]=0;return grid;
 }
 function bingoPattern(grid,called,calledSet=null){
-  // Reuse one called-number Set when evaluating every card in the same tick.
-  // The optional argument preserves the existing two-argument call sites.
   const set=calledSet||new Set(called),marked=(r,c)=>r===2&&c===2||set.has(grid[r][c]);
   for(let r=0;r<5;r++)if([0,1,2,3,4].every(c=>marked(r,c)))return 'Horizontal Line';
   for(let c=0;c<5;c++)if([0,1,2,3,4].every(r=>marked(r,c)))return 'Vertical Line';
@@ -1539,14 +1372,18 @@ function bingoWithRoundLock(round, fn) {
 function clearBingoBots(round){for(const t of (round.botTimers||[]))clearTimeout(t);round.botTimers=[];}
 function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}return pool;}
 
-// ✅ Build a ball pool biased toward numbers on the cards in the round,
-//    guaranteeing at least one winner. Winner card is chosen uniformly
-//    from ALL entries (bots and humans have equal chance).
+// 🔒 FIX #7: deterministic given (serverSeed, sorted entry IDs). Verifier can reproduce.
 function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
-  const entries = [...round.entries.values()];
+  const entries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!entries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
 
-  const shuffledEntries = bingoShuffle([...entries]);
+  const entryFingerprint = crypto.createHash('sha256').update(entries.map(e => e.id).join(',')).digest('hex');
+  const effectiveSeed = crypto.createHmac('sha256', Buffer.from(round.serverSeed, 'hex'))
+    .update(`bingo:${round.id}:${round.roundNumber}:${entryFingerprint}`)
+    .digest('hex');
+  const rng = new SeededRNG(effectiveSeed);
+
+  const shuffledEntries = seededShuffle([...entries], rng);
   const designated = shuffledEntries.slice(0, Math.min(guaranteedWinnerCount, shuffledEntries.length));
   const winnerCard = designated[0];
 
@@ -1557,19 +1394,17 @@ function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
   patternChoices.push([0,1,2,3,4].map(i => g[i][i]));
   patternChoices.push([0,1,2,3,4].map(i => g[i][4 - i]));
 
-  const chosen = patternChoices[crypto.randomInt(patternChoices.length)];
+  const chosen = patternChoices[rng.nextInt(patternChoices.length)];
   const mustCall = chosen.filter(n => n > 0);
-
   const allNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
-  const fillerPool = bingoShuffle(allNumbers.filter(n => !mustCall.includes(n)));
+  const fillerPool = seededShuffle(allNumbers.filter(n => !mustCall.includes(n)), rng);
 
   const pool = [];
   let mustIdx = 0;
   const maxMustPos = Math.min(30, mustCall.length * 5);
   for (let pos = 0; pos < 75 && (mustIdx < mustCall.length || fillerPool.length); pos++) {
     const placeMust = mustIdx < mustCall.length && (
-      pos >= maxMustPos - mustCall.length + mustIdx
-      || crypto.randomInt(4) === 0
+      pos >= maxMustPos - mustCall.length + mustIdx || rng.nextInt(4) === 0
     );
     if (placeMust) pool.push(mustCall[mustIdx++]);
     else if (fillerPool.length) pool.push(fillerPool.shift());
@@ -1578,27 +1413,22 @@ function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
   return pool;
 }
 
-// ✅ Fallback: guarantee a winner exists. Considers all entries equally.
 function bingoForceWinner(round) {
   const allCards = [...round.entries.values()];
   if (!allCards.length) return null;
-
   let best = null, bestMissing = Infinity, bestPattern = null;
   for (const card of allCards) {
     const g = card.grid;
     const patterns = [];
     for (let r = 0; r < 5; r++) patterns.push({ name: 'Horizontal Line', nums: [0,1,2,3,4].map(c => g[r][c]) });
-    for (let c = 0; c < 5; c++) patterns.push({ name: 'Vertical Line',   nums: [0,1,2,3,4].map(r => g[r][c]) });
+    for (let c = 0; c < 5; c++) patterns.push({ name: 'Vertical Line', nums: [0,1,2,3,4].map(r => g[r][c]) });
     patterns.push({ name: 'Diagonal Line', nums: [0,1,2,3,4].map(i => g[i][i]) });
     patterns.push({ name: 'Diagonal Line', nums: [0,1,2,3,4].map(i => g[i][4 - i]) });
-    patterns.push({ name: 'Four Corners',  nums: [g[0][0], g[0][4], g[4][0], g[4][4]] });
-    patterns.push({ name: 'Full House',    nums: g.flat() });
-
+    patterns.push({ name: 'Four Corners', nums: [g[0][0], g[0][4], g[4][0], g[4][4]] });
+    patterns.push({ name: 'Full House', nums: g.flat() });
     for (const p of patterns) {
       const need = p.nums.filter(n => n > 0 && !round.called.includes(n));
-      if (need.length < bestMissing) {
-        bestMissing = need.length; best = card; bestPattern = p;
-      }
+      if (need.length < bestMissing) { bestMissing = need.length; best = card; bestPattern = p; }
       if (need.length === 0) return { ...card, pattern: p.name };
     }
   }
@@ -1607,6 +1437,7 @@ function bingoForceWinner(round) {
   return { ...best, pattern: bestPattern.name };
 }
 
+// 🔒 FIX #6: bot inserts now serialized inside the round lock + DB transaction
 function scheduleBingoBots(round){
   clearBingoBots(round);if(!round||round.phase!=='selection')return;
   const shuffled=[...BOT_NAMES].sort(()=>0.5-Math.random());
@@ -1614,17 +1445,30 @@ function scheduleBingoBots(round){
   active.forEach((botName)=>{
     const timer=setTimeout(async()=>{
       if(bingoRounds.get(round.stake)!==round||round.phase!=='selection')return;
-      const uid=botUid(botName);if([...round.entries.values()].some(e=>e.uid===uid))return;
-      const taken=new Set([...round.entries.values()].map(e=>e.cardNumber));let card=Math.floor(Math.random()*400)+1,attempts=0;
-      while(taken.has(card)&&attempts++<100)card=Math.floor(Math.random()*400)+1;if(taken.has(card))return;
-      const grid=bingoNewCard(),id=crypto.randomUUID();
-      try{
-        await pool.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,uid,card,JSON.stringify(grid),round.stake,Date.now()]);
-        round.entries.set(id,{id,uid,name:botName,cardNumber:card,grid,stake:round.stake,won:false});
-        round.prizePool+=round.stake;
-        await pool.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[round.stake,round.id]);
-        bingoBroadcast(round.stake);
-      }catch(e){console.error(`[BINGO-BOT ${round.stake}] pick failed`,e.message);}
+      try {
+        await bingoWithRoundLock(round, async () => {
+          if(bingoRounds.get(round.stake)!==round||round.phase!=='selection')return;
+          const uid=botUid(botName);
+          if([...round.entries.values()].some(e=>e.uid===uid))return;
+          const taken=new Set([...round.entries.values()].map(e=>e.cardNumber));
+          let card=crypto.randomInt(400)+1,attempts=0;
+          while(taken.has(card)&&attempts++<100)card=crypto.randomInt(400)+1;
+          if(taken.has(card))return;
+          const grid=bingoNewCard(),id=crypto.randomUUID();
+          const db=await pool.connect();
+          try {
+            await db.query('BEGIN');
+            const locked=await db.query('SELECT phase FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
+            if(!locked.rows.length||locked.rows[0].phase!=='selection'){await db.query('ROLLBACK');return;}
+            await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,uid,card,JSON.stringify(grid),round.stake,Date.now()]);
+            await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[round.stake,round.id]);
+            await db.query('COMMIT');
+          } catch(e){await db.query('ROLLBACK').catch(()=>{});throw e;} finally{db.release();}
+          round.entries.set(id,{id,uid,name:botName,cardNumber:card,grid,stake:round.stake,won:false});
+          round.prizePool+=round.stake;
+          bingoBroadcast(round.stake);
+        });
+      } catch(e){console.error(`[BINGO-BOT ${round.stake}] pick failed`,e.message);}
     },1000+Math.random()*15000);
     round.botTimers.push(timer);
   });
@@ -1632,17 +1476,25 @@ function scheduleBingoBots(round){
 
 async function bingoNewRound(stake){
   stake=bingoStake(stake);const counter=(bingoRoundCounters.get(stake)||0)+1;bingoRoundCounters.set(stake,counter);
-  const round={stake,id:crypto.randomUUID(),gameId:'B'+bingoId(),roundNumber:counter,phase:'selection',prizePool:0,startedAt:Date.now(),endsAt:Date.now()+BINGO_SELECTION_SECONDS*1000,called:[],pool:bingoShuffle(Array.from({length:75},(_,i)=>i+1)),entries:new Map(),winners:[],botTimers:[],tickRunning:false};
+  // 🔒 FIX #7: commit-reveal seed
+  const serverSeed=crypto.randomBytes(32).toString('hex');
+  const serverSeedHash=crypto.createHash('sha256').update(serverSeed).digest('hex');
+  const round={stake,id:crypto.randomUUID(),gameId:'B'+bingoId(),roundNumber:counter,phase:'selection',prizePool:0,startedAt:Date.now(),endsAt:Date.now()+BINGO_SELECTION_SECONDS*1000,called:[],pool:bingoShuffle(Array.from({length:75},(_,i)=>i+1)),entries:new Map(),winners:[],botTimers:[],tickRunning:false,operationQueue:Promise.resolve(),serverSeed,serverSeedHash};
   bingoRounds.set(stake,round);await persistBingoRound(round);scheduleBingoBots(round);return round;
 }
+
 async function restoreOneBingoRound(stake){
   const latest=await pool.query("SELECT * FROM bingo_rounds WHERE stake=$1 AND phase IN ('selection','playing') ORDER BY started_at DESC LIMIT 1",[stake]);
   const counter=await pool.query('SELECT COALESCE(MAX(round_number),0) AS n FROM bingo_rounds WHERE stake=$1',[stake]);bingoRoundCounters.set(stake,Number(counter.rows[0]?.n||0));
   if(!latest.rows.length)return bingoNewRound(stake);
-  const r=latest.rows[0],round={stake,id:r.id,gameId:r.game_id,roundNumber:Number(r.round_number),phase:r.phase,prizePool:Number(r.prize_pool),startedAt:Number(r.started_at),endsAt:Number(r.ends_at),called:Array.isArray(r.called_numbers)?r.called_numbers:[],pool:[],entries:new Map(),winners:Array.isArray(r.winners)?r.winners:[],botTimers:[],tickRunning:false};
+  const r=latest.rows[0];
+  const round={stake,id:r.id,gameId:r.game_id,roundNumber:Number(r.round_number),phase:r.phase,prizePool:Number(r.prize_pool),startedAt:Number(r.started_at),endsAt:Number(r.ends_at),called:Array.isArray(r.called_numbers)?r.called_numbers:[],pool:[],entries:new Map(),winners:Array.isArray(r.winners)?r.winners:[],botTimers:[],tickRunning:false,operationQueue:Promise.resolve(),serverSeed:r.server_seed,serverSeedHash:r.server_seed_hash};
+  if (!round.serverSeed) {
+    // legacy row without seed — generate fresh
+    round.serverSeed = crypto.randomBytes(32).toString('hex');
+    round.serverSeedHash = crypto.createHash('sha256').update(round.serverSeed).digest('hex');
+  }
   round.pool=bingoShuffle(Array.from({length:75},(_,i)=>i+1).filter(n=>!round.called.includes(n)));
-  // Load entries and display names in one JOIN instead of one user query per card.
-  // This avoids an N+1 query burst when restoring a busy round after a restart.
   const entries=await pool.query('SELECT e.id,e.username,e.card_number,e.card_data,e.stake,u.display_name FROM bingo_entries e LEFT JOIN users u ON u.username=e.username WHERE e.round_id=$1',[round.id]),found=[];
   const restoredCalledSet=new Set(round.called);
   for(const e of entries.rows){const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called,restoredCalledSet);const entry={id:e.id,uid:e.username,name:e.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing')found.push({...entry,pattern});}
@@ -1655,11 +1507,18 @@ async function restoreOneBingoRound(stake){
   console.log(`[BINGO] Restored ${stake}-Birr round ${round.gameId} (${round.phase})`);return round;
 }
 async function restoreBingoRound(){for(const stake of BINGO_STAKES)await restoreOneBingoRound(stake);}
-async function persistBingoRound(round){if(!round)return;await pool.query(`INSERT INTO bingo_rounds(id,game_id,round_number,phase,stake,prize_pool,called_numbers,started_at,ends_at,completed_at,winners) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb) ON CONFLICT(id) DO UPDATE SET phase=EXCLUDED.phase,prize_pool=EXCLUDED.prize_pool,called_numbers=EXCLUDED.called_numbers,ends_at=EXCLUDED.ends_at,completed_at=EXCLUDED.completed_at,winners=EXCLUDED.winners`,[round.id,round.gameId,round.roundNumber,round.phase,round.stake,round.prizePool,JSON.stringify(round.called),round.startedAt,round.endsAt,round.completedAt||null,JSON.stringify(round.winners)]);}
+
+async function persistBingoRound(round){
+  if(!round)return;
+  await pool.query(
+    `INSERT INTO bingo_rounds(id,game_id,round_number,phase,stake,prize_pool,called_numbers,started_at,ends_at,completed_at,winners,server_seed,server_seed_hash)
+     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12,$13)
+     ON CONFLICT(id) DO UPDATE SET phase=EXCLUDED.phase,prize_pool=EXCLUDED.prize_pool,called_numbers=EXCLUDED.called_numbers,ends_at=EXCLUDED.ends_at,completed_at=EXCLUDED.completed_at,winners=EXCLUDED.winners,server_seed=EXCLUDED.server_seed,server_seed_hash=EXCLUDED.server_seed_hash`,
+    [round.id,round.gameId,round.roundNumber,round.phase,round.stake,round.prizePool,JSON.stringify(round.called),round.startedAt,round.endsAt,round.completedAt||null,JSON.stringify(round.winners),round.serverSeed,round.serverSeedHash]
+  );
+}
+
 function bingoBuildBroadcastSnapshot(round){
-  // Build room-wide fields once per broadcast, not once per connected player.
-  // The previous implementation scanned every entry and rebuilt the taken-card
-  // list and unique-player Set for each recipient (O(players × cards)).
   const entries=[...round.entries.values()];
   const byUid=new Map();
   for(const entry of entries){
@@ -1671,7 +1530,8 @@ function bingoBuildBroadcastSnapshot(round){
     roundId:round.id,gameId:round.gameId,roundNumber:round.roundNumber,
     phase:round.phase,stake:round.stake,prizePool:Number(round.prizePool.toFixed(2)),
     called:[...round.called],taken:entries.map(e=>e.cardNumber),
-    playerCount:byUid.size,endsAt:round.endsAt,winners:round.winners,byUid
+    playerCount:byUid.size,endsAt:round.endsAt,winners:round.winners,byUid,
+    serverSeedHash:round.serverSeedHash,  // 🔒 FIX #7
   };
 }
 function bingoPublicState(round,uid,snapshot=null){
@@ -1683,14 +1543,13 @@ function bingoPublicState(round,uid,snapshot=null){
     phase:shared.phase,stake:shared.stake,prizePool:shared.prizePool,
     called:shared.called,taken:shared.taken,playerCount:shared.playerCount,
     endsAt:shared.endsAt,mySelections:mine.map(e=>e.cardNumber),
-    myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:shared.winners
+    myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:shared.winners,
+    serverSeedHash:shared.serverSeedHash,  // 🔒 FIX #7
   };
 }
 function bingoSendState(ws,snapshot=null){if(ws?.readyState===1&&ws.authed){const round=bingoRoundFor(ws);send(ws,{type:'bingo-state',state:bingoPublicState(round,ws.uid,snapshot)});}}
 const bingoBroadcastPending = new Set();
 function bingoBroadcastNow(stake){
-  // One snapshot per round broadcast keeps shared state consistent while
-  // avoiding repeated full-room scans for every recipient.
   const snapshots=new Map();
   for(const ws of bingoMembers){
     if(ws.readyState!==1||!ws.authed)continue;
@@ -1704,30 +1563,22 @@ function bingoBroadcastNow(stake){
   }
 }
 function bingoBroadcast(stake){
-  // Coalesce multiple same-tick updates into one room broadcast. This reduces
-  // duplicate full-room payloads during selection bursts without dropping the
-  // final state: each stake is broadcast once with the latest in-memory state.
   const key=stake?bingoStake(stake):'__all__';
   if(bingoBroadcastPending.has(key))return;
   bingoBroadcastPending.add(key);
-  setImmediate(()=>{
-    bingoBroadcastPending.delete(key);
-    bingoBroadcastNow(key==='__all__'?null:key);
-  });
+  setImmediate(()=>{bingoBroadcastPending.delete(key);bingoBroadcastNow(key==='__all__'?null:key);});
 }
 
-// ✅ Allow up to 2 cards per round per user
+// 🔒 FIX #11: idempotency key uses per-entry UUID (not card number) so re-select/unselect cycles refund correctly.
 async function bingoSelectUnlocked(ws,numbers){
   const round=bingoRoundFor(ws);if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)return send(ws,{type:'bingo-error',message:'Card selection is closed for this round.'});
   if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>400)||new Set(numbers).size!==numbers.length)return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 400.'});
   for(const n of numbers)if([...round.entries.values()].some(e=>e.cardNumber===n))return send(ws,{type:'bingo-error',message:'Card number '+n+' has already been taken.'});
   const cost=Number((round.stake*numbers.length).toFixed(2)),db=await pool.connect(),newEntries=[];
   try{
-    await db.query('BEGIN');const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
+    await db.query('BEGIN');
+    const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
     if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))throw new Error('Card selection is closed for this round.');
-    // Check only the requested card numbers. The round/card unique index makes
-    // this a small indexed lookup instead of returning every taken card for
-    // every player's selection attempt. The database check remains authoritative.
     const usedRows=await db.query('SELECT card_number FROM bingo_entries WHERE round_id=$1 AND card_number = ANY($2::int[])',[round.id,numbers]),used=new Set(usedRows.rows.map(r=>Number(r.card_number)));
     const priorCountRes = await db.query('SELECT COUNT(*)::int AS c FROM bingo_entries WHERE round_id=$1 AND username=$2',[round.id,ws.uid]);
     const existingCount = priorCountRes.rows[0]?.c || 0;
@@ -1735,15 +1586,17 @@ async function bingoSelectUnlocked(ws,numbers){
     for(const n of numbers)if(used.has(n))throw new Error('Card number '+n+' has already been taken.');
     const user=await db.query('SELECT play_wallet FROM users WHERE username=$1 FOR UPDATE',[ws.uid]);if(!user.rows.length)throw new Error('Account not found.');if(Number(user.rows[0].play_wallet)<cost)throw new Error('Insufficient play-wallet balance.');
     await db.query('UPDATE users SET play_wallet=play_wallet-$1,wallet_updated_at=$2 WHERE username=$3',[cost,Date.now(),ws.uid]);
-    for(const n of numbers){const grid=bingoNewCard(),id=crypto.randomUUID();await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[crypto.randomUUID(),round.id,ws.uid,'stake',round.stake,'bingo-stake:'+round.id+':'+ws.uid+':'+n,Date.now()]);newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,won:false});}
+    for(const n of numbers){
+      const grid=bingoNewCard(),id=crypto.randomUUID();
+      await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);
+      // 🔒 FIX #11: use entry UUID in key
+      await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[crypto.randomUUID(),round.id,ws.uid,'stake',round.stake,'bingo-stake:'+id,Date.now()]);
+      newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,won:false});
+    }
     await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[cost,round.id]);await db.query('COMMIT');
     for(const e of newEntries)round.entries.set(e.id,e);
     round.prizePool+=cost;
-    // The transaction already persisted prize_pool and the entries. Avoid a
-    // second round UPSERT inside the serialized selection queue.
     send(ws,{type:'bingo-selected',message:'Selection confirmed. '+numbers.length+' card(s) reserved.',state:bingoPublicState(round,ws.uid)});
-    // Wallet refresh and room fan-out are post-commit side effects; don't make
-    // the next player's selection wait for them. Errors are logged, not lost.
     Promise.resolve().then(()=>sendWallet(ws.uid)).catch(e=>console.error('[BINGO] wallet refresh failed',e.message));
     bingoBroadcast(round.stake);
   }catch(e){await db.query('ROLLBACK').catch(()=>{});send(ws,{type:'bingo-error',message:e.message||'Could not reserve your Bingo card.'});}finally{db.release();}
@@ -1754,8 +1607,6 @@ async function bingoSelect(ws,numbers){
   return bingoWithRoundLock(round,()=>bingoSelectUnlocked(ws,numbers));
 }
 
-// Remove one of the current player's reserved cards during the selection phase.
-// The original stake is refunded to the play wallet in the same database transaction.
 async function bingoUnselectUnlocked(ws,number){
   const round=bingoRoundFor(ws);
   const n=Number(number);
@@ -1770,23 +1621,18 @@ async function bingoUnselectUnlocked(ws,number){
     const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
     if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))
       throw new Error('Card selection is closed for this round.');
-    const entryRes=await db.query(
-      'SELECT id,stake FROM bingo_entries WHERE round_id=$1 AND username=$2 AND card_number=$3 FOR UPDATE',
-      [round.id,ws.uid,n]
-    );
+    const entryRes=await db.query('SELECT id,stake FROM bingo_entries WHERE round_id=$1 AND username=$2 AND card_number=$3 FOR UPDATE',[round.id,ws.uid,n]);
     if(!entryRes.rows.length)throw new Error('That card is not reserved by your account.');
     removed=entryRes.rows[0];
     const refund=Number(removed.stake);
+    // 🔒 FIX #11: use entry UUID in key
     const ledger=await db.query(
       `INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at)
        VALUES($1,$2,$3,'refund',$4,$5,$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id`,
-      [crypto.randomUUID(),round.id,ws.uid,refund,'bingo-refund:'+round.id+':'+ws.uid+':'+n,Date.now()]
+      [crypto.randomUUID(),round.id,ws.uid,refund,'bingo-refund:'+removed.id,Date.now()]
     );
     if(ledger.rowCount){
-      const upd=await db.query(
-        'UPDATE users SET play_wallet=play_wallet+$1,wallet_updated_at=$2 WHERE username=$3',
-        [refund,Date.now(),ws.uid]
-      );
+      const upd=await db.query('UPDATE users SET play_wallet=play_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[refund,Date.now(),ws.uid]);
       if(!upd.rowCount)throw new Error('Wallet refund failed.');
     }
     await db.query('DELETE FROM bingo_entries WHERE id=$1',[removed.id]);
@@ -1795,8 +1641,6 @@ async function bingoUnselectUnlocked(ws,number){
     round.entries.delete(removed.id);
     round.prizePool=Math.max(0,Number((round.prizePool-refund).toFixed(2)));
     send(ws,{type:'bingo-unselected',number:n,message:'Card '+n+' removed. '+refund+' Birr refunded to your play wallet.',state:bingoPublicState(round,ws.uid)});
-    // The transaction already updated prize_pool; avoid a redundant UPSERT and
-    // keep wallet notification work outside the serialized round operation.
     Promise.resolve().then(()=>sendWallet(ws.uid)).catch(e=>console.error('[BINGO] wallet refresh failed',e.message));
     bingoBroadcast(round.stake);
   }catch(e){
@@ -1810,7 +1654,6 @@ async function bingoUnselect(ws,number){
   return bingoWithRoundLock(round,()=>bingoUnselectUnlocked(ws,number));
 }
 
-// ✅ Finish round: broadcast ALL winners (with card grids) to every player
 async function bingoFinish(round,winners){
   if(!round||round.phase!=='playing')return;
   round.phase='results';round.completedAt=Date.now();
@@ -1824,6 +1667,7 @@ async function bingoFinish(round,winners){
       if(prize>0 && !String(w.uid).startsWith('__bot_')){
         const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',[crypto.randomUUID(),round.id,w.uid,'prize',prize,'bingo-prize:'+round.id+':'+w.id,Date.now()]);
         if(ledger.rowCount){const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);if(!upd.rowCount)throw new Error('Winner wallet update failed');}
+        await recordWalletCredit(db, w.uid, prize, 'bingo_win', { reason: `Bingo ${round.id} card ${w.cardNumber}`, reference: `bingo-prize:${round.id}:${w.id}` });
       }
       await db.query('INSERT INTO bingo_results(id,round_id,username,display_name,card_number,pattern,prize,call_number,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(round_id,username,card_number) DO NOTHING',[w.id,round.id,w.uid,w.name,w.cardNumber,w.pattern,prize,round.called.at(-1)||null,Date.now()]);
       w.prize=prize;
@@ -1833,31 +1677,20 @@ async function bingoFinish(round,winners){
   }catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}finally{db.release();}
 
   round.winners=eligible;
-
-  // ✅ Single popup containing ALL winning cards + their grids, sent to EVERY player in this stake room.
-  const winnersPayload = eligible.map(w => ({
-    name: w.name,
-    prize: w.prize,
-    cardNumber: w.cardNumber,
-    grid: w.grid,
-    pattern: w.pattern
-  }));
+  const winnersPayload = eligible.map(w => ({ name: w.name, prize: w.prize, cardNumber: w.cardNumber, grid: w.grid, pattern: w.pattern }));
   const calledSnapshot = [...round.called];
   for (const ws of bingoMembers) {
     if (ws.readyState === 1 && ws.authed && bingoStake(ws._bingoStake) === round.stake) {
       send(ws, {
         type: 'bingo-winner-popup',
-        winners: winnersPayload,
-        called: calledSnapshot,
+        winners: winnersPayload, called: calledSnapshot,
         winningNumber: calledSnapshot.length ? calledSnapshot[calledSnapshot.length - 1] : null,
-        roundId: round.id,
-        gameId: round.gameId,
-        prizePool: round.prizePool
+        roundId: round.id, gameId: round.gameId, prizePool: round.prizePool,
+        // 🔒 FIX #7: reveal seed for verification
+        serverSeed: round.serverSeed, serverSeedHash: round.serverSeedHash,
       });
     }
   }
-  // The result popup is queued first; then push the newly credited main-wallet
-  // balance to each human winner without waiting for another player action.
   for(const uid of new Set(eligible.filter(w=>!String(w.uid).startsWith('__bot_')).map(w=>w.uid))){
     await sendWallet(uid);
   }
@@ -1869,58 +1702,35 @@ async function bingoTickUnlocked(round) {
   if (!round) return;
   try {
     if (round.phase === 'selection' && Date.now() >= round.endsAt) {
-      if (!round.entries.size) {
-        await bingoNewRound(round.stake);
-        bingoBroadcast(round.stake);
-        return;
-      }
+      if (!round.entries.size) { await bingoNewRound(round.stake); bingoBroadcast(round.stake); return; }
       round.phase = 'playing';
       round.endsAt = Date.now() + BINGO_CALL_INTERVAL_MS;
-      // ✅ Rebuild pool so at least one card (bot or human, equally likely) wins
       round.pool = bingoBuildGuaranteedPool(round, 1);
       await persistBingoRound(round);
       bingoBroadcast(round.stake);
       return;
     }
-
     if (round.phase === 'playing' && Date.now() >= round.endsAt) {
       const n = round.pool.shift();
-      if (n == null) {
-        const forced = bingoForceWinner(round);
-        await bingoFinish(round, forced ? [forced] : []);
-        return;
-      }
+      if (n == null) { const forced = bingoForceWinner(round); await bingoFinish(round, forced ? [forced] : []); return; }
       round.called.push(n);
-
       const winners = [];
-      // All cards are checked against the same called-number set for this call.
       const calledSet = new Set(round.called);
       for (const e of round.entries.values()) {
         const pattern = bingoPattern(e.grid, round.called, calledSet);
-        if (pattern && !e.won) {
-          e.won = true;
-          // ✅ Bots and humans have equal win chance
-          winners.push({ ...e, pattern });
-        }
+        if (pattern && !e.won) { e.won = true; winners.push({ ...e, pattern }); }
       }
       round.endsAt = Date.now() + BINGO_CALL_INTERVAL_MS;
-
       const tooManyCalls = round.called.length >= 45;
       const nearPoolEnd = round.pool.length <= 5;
       if (winners.length || !round.pool.length || tooManyCalls || nearPoolEnd) {
-        if (!winners.length) {
-          const forced = bingoForceWinner(round);
-          if (forced) winners.push(forced);
-        }
-        await bingoFinish(round, winners);
-        return;
+        if (!winners.length) { const forced = bingoForceWinner(round); if (forced) winners.push(forced); }
+        await bingoFinish(round, winners); return;
       }
       await persistBingoRound(round);
       bingoBroadcast(round.stake);
     }
-  } finally {
-    round.tickRunning = false;
-  }
+  } finally { round.tickRunning = false; }
 }
 async function bingoTick(round){
   if(!round||round.tickRunning)return;
@@ -1939,17 +1749,13 @@ function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); 
 wss.on('connection', (ws) => {
   ws.isAlive = true; ws.authenticatedAt = null;
   ws.authTimer = setTimeout(() => { if (!ws.authed) { try { ws.close(4001, 'authentication timeout'); } catch {} } }, 10000);
-  ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false;
+  ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false; ws.lastAdminActivity = 0;
 
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', async raw => {
     const size = raw?.length || raw?.byteLength || 0;
     let m;
-    try { m = JSON.parse(raw.toString()); }
-    catch (e) {
-      console.warn(`[WS-PARSE] uid=${ws.uid || '?'} size=${size} err=${e.message}`);
-      return;
-    }
+    try { m = JSON.parse(raw.toString()); } catch (e) { console.warn(`[WS-PARSE] uid=${ws.uid || '?'} size=${size} err=${e.message}`); return; }
     try { await handle(ws, m); }
     catch (e) { console.error('[WS-MSG]', { type: m?.type, err: e.message }); send(ws, { type: 'error', message: 'server-error' }); }
   });
@@ -1983,15 +1789,10 @@ async function handle(ws, m) {
     const verification = validateInitData(m.initData || '');
     if (!verification.ok) {
       send(ws, { type: 'error', message: 'auth-failed', reason: verification.reason || 'unknown' });
-      if (verification.reason === 'expired') {
-        try { ws.close(4001, 'auth-expired'); } catch {}
-      }
+      if (verification.reason === 'expired') { try { ws.close(4001, 'auth-expired'); } catch {} }
       return;
     }
-
     const telegramUser = verification.user;
-    // Login is strictly for an existing Telegram account. Only the Sign Up action
-    // is allowed to create a new account through resolveTelegramUser/ensureUser.
     if (m.authMode === 'login') {
       const existing = await pool.query(
         'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
@@ -2013,9 +1814,17 @@ async function handle(ws, m) {
       return;
     }
 
+    const clientIp = websocketClientIp(ws);
     await ensureUser(uid, m.ref || null, false, {
-      telegram_id: telegramUser.id, display_name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || uid, last_ip: websocketClientIp(ws)
+      telegram_id: telegramUser.id,
+      display_name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ') || uid,
+      last_ip: clientIp,
+      device_fingerprint: m.deviceFingerprint || null,
     });
+
+    // 🔒 FIX #5: multi-account detection (non-blocking, flags for review)
+    const ipHash = clientIp ? hashWithRotatingSalt(clientIp) : null;
+    detectMultiAccount(uid, ipHash, m.deviceFingerprint || null).catch(e => console.error('[MULTI-ACCOUNT]', e.message));
 
     clearTimeout(ws.authTimer);
     ws.authenticatedAt = now(); ws.uid = uid; ws.authed = true;
@@ -2026,7 +1835,9 @@ async function handle(ws, m) {
     set.add(ws);
 
     const holdRes = await pool.query('SELECT withdrawal_hold_until FROM users WHERE username = $1', [uid]);
-    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0) });
+    // 🔒 FIX #2/#13: issue session token for HTTP endpoints
+    const sessionToken = issueSessionToken(uid);
+    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
 
     const txSnap = await pool.query("SELECT id, type, amount, status, timestamp FROM transactions WHERE wallet_uid = $1 AND status = 'pending' ORDER BY timestamp DESC LIMIT 10", [uid]);
@@ -2036,10 +1847,11 @@ async function handle(ws, m) {
 
   if (m.type === 'admin-auth') {
     if (!ADMIN_KEY || typeof m.key !== 'string' || !constantTimeEqual(m.key, ADMIN_KEY)) return ws.close(4003, 'admin auth failed');
-    ws.authed = true; ws.isAdmin = true; send(ws, { type: 'admin-authed' }); return;
+    ws.authed = true; ws.isAdmin = true; ws.lastAdminActivity = now(); send(ws, { type: 'admin-authed' }); return;
   }
 
   if (ws.isAdmin) {
+    ws.lastAdminActivity = now();  // 🔒 FIX #10
     if (m.type === 'admin-list-transactions') return send(ws, { type: 'admin-transactions', transactions: await adminListTransactions() });
     if (m.type === 'admin-decision') {
       const r = await adminDecision(String(m.id || ''), String(m.decision || ''), String(m.reason || ''));
@@ -2066,20 +1878,12 @@ async function handle(ws, m) {
     if(!bingoRounds.has(bingoStake(ws._bingoStake))) await bingoNewRound(bingoStake(ws._bingoStake));
     return bingoSendState(ws);
   }
-  if (m.type === 'bingo-leave') {
-    bingoMembers.delete(ws);
-    ws._bingoStake = undefined;
-    return;
-  }
-  if (m.type === 'bingo-select') {
-    if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake);
-    return bingoSelect(ws,m.numbers);
-  }
-  if (m.type === 'bingo-unselect') {
-    if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake);
-    return bingoUnselect(ws,m.number);
-  }
+  if (m.type === 'bingo-leave') { bingoMembers.delete(ws); ws._bingoStake = undefined; return; }
+  if (m.type === 'bingo-select') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoSelect(ws,m.numbers); }
+  if (m.type === 'bingo-unselect') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoUnselect(ws,m.number); }
   if (m.type === 'bingo-history') {
+    // 🔒 FIX #12: rate-limit history query
+    if (!checkTransferRate(`bingo-history:${ws.uid}`)) return send(ws, { type: 'error', message: 'rate-limited' });
     const r=await pool.query(`SELECT DISTINCT r.game_id,r.round_number,r.phase,r.prize_pool,r.called_numbers,r.completed_at
       FROM bingo_rounds r JOIN bingo_entries e ON e.round_id=r.id
       WHERE e.username=$1 ORDER BY r.completed_at DESC NULLS LAST, r.round_number DESC LIMIT 20`,[ws.uid]);
@@ -2121,6 +1925,8 @@ async function handle(ws, m) {
   }
 
   if (m.type === 'transfer') {
+    // 🔒 FIX #12: rate limit transfers
+    if (!checkTransferRate(ws.uid)) return send(ws, { type: 'error', message: 'rate-limited' });
     const amount = Number(m.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return send(ws, { type: 'error', message: 'bad-amount' });
     try {
@@ -2135,20 +1941,14 @@ async function handle(ws, m) {
   if (m.type === 'transaction-request') {
     const traceId = newTraceId();
     const imgLen = String(m.imageData || '').length;
-    console.log(`[WS-TX] trace=${traceId} uid=${ws.uid} type=${m.txType} amount=${m.amount} ref=${String(m.reference||'').slice(0,20)} imgLen=${imgLen} clientRequestId=${String(m.clientRequestId||'').slice(0,32)}`);
-    await trace(traceId, ws.uid, 'ws.arrived', 'ok', {
-      type: m.txType, amount: m.amount, reference: normalizePaymentReference(m.reference),
-      clientRequestId: m.clientRequestId,
-      detail: { imgLen }
-    });
-
+    console.log(`[WS-TX] trace=${traceId} uid=${ws.uid} type=${m.txType} amount=${m.amount} ref=${String(m.reference||'').slice(0,20)} imgLen=${imgLen}`);
+    await trace(traceId, ws.uid, 'ws.arrived', 'ok', { type: m.txType, amount: m.amount, reference: normalizePaymentReference(m.reference), clientRequestId: m.clientRequestId, detail: { imgLen } });
     if (imgLen > MAX_IMAGE_BYTES) {
       await trace(traceId, ws.uid, 'ws.image-guard', 'fail', { type: m.txType, reason: 'image-too-large', detail: { imgLen, max: MAX_IMAGE_BYTES } });
       send(ws, { type: 'error', message: 'image-too-large' });
       send(ws, { type: 'transaction-rejected', reason: 'image-too-large', traceId });
       return;
     }
-
     let r;
     try { r = await transactionRequest(ws.uid, { ...m, __traceId: traceId }); }
     catch (e) {
@@ -2158,17 +1958,10 @@ async function handle(ws, m) {
       send(ws, { type: 'transaction-rejected', reason: 'server-error', traceId });
       return;
     }
-
     if (!r.ok) {
       if (r.reason === 'reference-already-used') {
-        try {
-          await addNotification(ws.uid, {
-            type: 'notification',
-            message: 'አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። እባክዎ በድጋሚ ይሞክሩ።'
-          });
-        } catch (e) {
-          console.error('[TX-USED-REF-MSG]', e.message);
-        }
+        try { await addNotification(ws.uid, { type: 'notification', message: 'አገልግሎት ላይ የዋለ Reference code ተጠቅመዋል። እባክዎ በድጋሚ ይሞክሩ።' }); }
+        catch (e) { console.error('[TX-USED-REF-MSG]', e.message); }
       }
       send(ws, { type: 'error', message: r.reason });
       send(ws, { type: 'transaction-rejected', reason: r.reason, traceId });
@@ -2188,89 +1981,60 @@ async function handle(ws, m) {
   if (m.type === 'notification-read') { await markNotificationRead(ws.uid, String(m.id || '')); return; }
 }
 
-setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch {} } }, 60000);
+// 🔒 FIX #10: admin idle timeout in ping loop
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) { ws.terminate(); continue; }
+    if (ws.isAdmin && now() - ws.lastAdminActivity > ADMIN_IDLE_MS) {
+      try { ws.close(4002, 'admin-idle-timeout'); } catch {}
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  }
+}, 60000);
 
 // ============================================================================
 // EXPRESS API
 // ============================================================================
 const app = express();
 
+// 🔒 FIX #3: fail closed + constant-time compare.
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
+  if (!SMS_WEBHOOK_SECRET) {
+    console.warn('[SECURITY] SMS webhook called but SMS_WEBHOOK_SECRET is not configured.');
+    return res.status(503).json({ ok: false, error: 'sms-webhook-disabled' });
+  }
   const providedSecret = req.headers['x-sms-secret'];
-  if (!providedSecret || providedSecret !== SMS_WEBHOOK_SECRET) {
-    console.warn('[SECURITY] Unauthorized SMS attempt. Header received:', providedSecret);
+  if (!providedSecret || !constantTimeEqual(providedSecret, SMS_WEBHOOK_SECRET)) {
+    console.warn('[SECURITY] Unauthorized SMS attempt.');
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   const traceId = newTraceId();
   try {
     const { from, text } = req.body || {};
-    if (!text) {
-      await trace(traceId, null, 'sms.validate', 'fail', { reason: 'missing-text' });
-      return res.status(400).json({ ok: false, error: 'Missing text' });
-    }
-
+    if (!text) { await trace(traceId, null, 'sms.validate', 'fail', { reason: 'missing-text' }); return res.status(400).json({ ok: false, error: 'Missing text' }); }
     const id = crypto.randomUUID();
     const timestamp = now();
     const textHash = crypto.createHash('sha256').update(String(from || '') + '|' + String(text)).digest('hex');
-
-    await trace(traceId, null, 'sms.received', 'ok', {
-      reference: '', detail: { smsId: id, sender: from, textLen: String(text).length }
-    });
-
+    await trace(traceId, null, 'sms.received', 'ok', { reference: '', detail: { smsId: id, sender: from, textLen: String(text).length } });
     try {
-      const dupe = await pool.query(
-        'SELECT id FROM incoming_sms WHERE text_hash = $1 AND timestamp > $2 LIMIT 1',
-        [textHash, timestamp - DUPLICATE_SMS_WINDOW_MS]
-      );
-      if (dupe.rows.length > 0) {
-        await logAutoActivity('skipped', id, '', 0, '', 'duplicate-sms');
-        await trace(traceId, null, 'sms.dedupe', 'skipped', { detail: { smsId: id, originalId: dupe.rows[0].id } });
-        return res.json({ ok: true, received: true, duplicate: true, matched: false });
-      }
-    } catch (dedupeErr) {
-      console.warn('[SMS] dedupe skipped:', dedupeErr.message);
-    }
-
-    try {
-      await pool.query(
-        'INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)',
-        [id, from || 'Unknown', text, timestamp, textHash]
-      );
-    } catch (insertErr) {
-      console.warn('[SMS] extended insert failed, falling back:', insertErr.message);
-      await pool.query(
-        'INSERT INTO incoming_sms (id, sender, text, timestamp, processed) VALUES ($1,$2,$3,$4,false)',
-        [id, from || 'Unknown', text, timestamp]
-      );
-    }
+      const dupe = await pool.query('SELECT id FROM incoming_sms WHERE text_hash = $1 AND timestamp > $2 LIMIT 1', [textHash, timestamp - DUPLICATE_SMS_WINDOW_MS]);
+      if (dupe.rows.length > 0) { await logAutoActivity('skipped', id, '', 0, '', 'duplicate-sms'); await trace(traceId, null, 'sms.dedupe', 'skipped', { detail: { smsId: id, originalId: dupe.rows[0].id } }); return res.json({ ok: true, received: true, duplicate: true, matched: false }); }
+    } catch (dedupeErr) { console.warn('[SMS] dedupe skipped:', dedupeErr.message); }
+    try { await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [id, from || 'Unknown', text, timestamp, textHash]); }
+    catch (insertErr) { console.warn('[SMS] extended insert failed, falling back:', insertErr.message); await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed) VALUES ($1,$2,$3,$4,false)', [id, from || 'Unknown', text, timestamp]); }
     await trace(traceId, null, 'sms.persisted', 'ok', { detail: { smsId: id } });
-
     console.log(`[SMS] Received securely from ${from}: ${String(text).substring(0, 30)}...`);
-
     const smsRecord = { id, sender: from, text, timestamp };
     const matchResult = await autoApproveMatchingDeposits(id, smsRecord, traceId);
-
-    const definitive = matchResult.ok || ['untrusted-sender', 'no-reference', 'invalid-reference',
-      'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(matchResult.reason);
+    const definitive = matchResult.ok || ['untrusted-sender', 'no-reference', 'invalid-reference', 'no-amount', 'amount-out-of-range', 'stale-sms', 'reference-reused'].includes(matchResult.reason);
     if (definitive) {
-      try {
-        await pool.query(
-          'UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2',
-          [matchResult.ok ? matchResult.txId : null, id]
-        );
-      } catch (updErr) {
-        try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [id]); } catch (_) {}
-      }
+      try { await pool.query('UPDATE incoming_sms SET processed = true, matched_tx_id = COALESCE($1, matched_tx_id) WHERE id = $2', [matchResult.ok ? matchResult.txId : null, id]); }
+      catch { try { await pool.query('UPDATE incoming_sms SET processed = true WHERE id = $1', [id]); } catch (_) {} }
     }
-
-    return res.json({
-      ok: true,
-      received: true,
-      matched: !!matchResult.ok,
-      reason: matchResult.reason || null,
-      traceId,
-    });
+    return res.json({ ok: true, received: true, matched: !!matchResult.ok, reason: matchResult.reason || null, traceId });
   } catch (e) {
     console.error('[SMS API ERROR]', e);
     await trace(traceId, null, 'sms.error', 'fail', { reason: e.message });
@@ -2281,7 +2045,7 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
 app.use(express.json({ limit: '3mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, x-sms-secret');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -2291,31 +2055,18 @@ app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreS
 app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
+function sessionUid(req) {
+  return verifySessionToken(req.get('x-session-token')) || verifySessionToken(String(req.query.token || ''));
+}
 
+// 🔒 FIX #2: authenticated user notifications
 app.get('/user/notifications', async (req, res) => {
-  const uid = String(req.query.uid || '').trim();
-  if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
+  const uid = sessionUid(req);
+  if (!uid) return res.status(401).json({ ok: false, error: 'unauthorized' });
   try {
-    const r = await pool.query(
-      'SELECT id, type, message, status, tx_type, tx_id, timestamp, read FROM notifications WHERE username = $1 ORDER BY timestamp DESC LIMIT 50',
-      [uid]
-    );
-    res.json({
-      ok: true,
-      notifications: r.rows.map(n => ({
-        id: n.id,
-        type: n.type,
-        message: n.message,
-        status: n.status,
-        txType: n.tx_type,
-        txId: n.tx_id,
-        timestamp: Number(n.timestamp),
-        read: n.read
-      }))
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    const r = await pool.query('SELECT id, type, message, status, tx_type, tx_id, timestamp, read FROM notifications WHERE username = $1 ORDER BY timestamp DESC LIMIT 50', [uid]);
+    res.json({ ok: true, notifications: r.rows.map(n => ({ id: n.id, type: n.type, message: n.message, status: n.status, txType: n.tx_type, txId: n.tx_id, timestamp: Number(n.timestamp), read: n.read })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/pending', async (req, res) => {
@@ -2350,29 +2101,16 @@ app.get('/admin/user-details', async (req, res) => {
     const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [uid]);
     if (userRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
     const user = userRes.rows[0];
-
     const refsRes = await pool.query('SELECT username, display_name FROM users WHERE referred_by = $1', [uid]);
-
-    res.json({
-      ok: true,
-      user: {
-        uid: user.username,
-        name: user.display_name,
-        telegram_id: user.telegram_id,
-        main: Number(user.main_wallet),
-        play: Number(user.play_wallet),
-        pending: Number(user.pending_withdrawal),
-        referral_earnings: Number(user.referral_earnings),
-        referred_by: user.referred_by,
-        blocked: user.blocked,
-        block_reason: user.block_reason,
-        created_at: Number(user.created_at),
-        referrals: refsRes.rows.map(r => ({ uid: r.username, name: r.display_name }))
-      }
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    res.json({ ok: true, user: {
+      uid: user.username, name: user.display_name, telegram_id: user.telegram_id,
+      main: Number(user.main_wallet), play: Number(user.play_wallet), pending: Number(user.pending_withdrawal),
+      referral_earnings: Number(user.referral_earnings), referred_by: user.referred_by,
+      blocked: user.blocked, block_reason: user.block_reason, fraud_status: user.fraud_status,
+      created_at: Number(user.created_at),
+      referrals: refsRes.rows.map(r => ({ uid: r.username, name: r.display_name }))
+    }});
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/admin/block-user', async (req, res) => {
@@ -2383,31 +2121,17 @@ app.post('/admin/block-user', async (req, res) => {
     const isBlocked = Boolean(blocked);
     const blockReason = String(reason || 'Blocked by admin').slice(0, 256);
     const blockAt = isBlocked ? Date.now() : null;
-    await pool.query(
-      'UPDATE users SET blocked = $1, block_reason = $2, blocked_at = $3, updated_at = $4 WHERE username = $5',
-      [isBlocked, isBlocked ? blockReason : null, blockAt, Date.now(), userId]
-    );
+    await pool.query('UPDATE users SET blocked = $1, block_reason = $2, blocked_at = $3, updated_at = $4 WHERE username = $5', [isBlocked, isBlocked ? blockReason : null, blockAt, Date.now(), userId]);
     res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/admin/send-message', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   const { userId, message } = req.body;
   if (!userId || !message) return res.status(400).json({ ok: false, error: 'userId and message required' });
-  try {
-    await addNotification(userId, {
-      type: 'admin_message',
-      message: String(message),
-      status: 'info',
-      from: 'admin'
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  try { await addNotification(userId, { type: 'admin_message', message: String(message), status: 'info', from: 'admin' }); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/user-transactions', async (req, res) => {
@@ -2416,27 +2140,11 @@ app.get('/admin/user-transactions', async (req, res) => {
   if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
   try {
     const r = await pool.query(
-      `SELECT id, type, amount, status, timestamp, reference, reason, wallet_applied
-       FROM transactions WHERE username = $1 OR wallet_uid = $1
-       ORDER BY timestamp DESC LIMIT 100`,
+      `SELECT id, type, amount, status, timestamp, reference, reason, wallet_applied FROM transactions WHERE username = $1 OR wallet_uid = $1 ORDER BY timestamp DESC LIMIT 100`,
       [uid]
     );
-    res.json({
-      ok: true,
-      transactions: r.rows.map(t => ({
-        id: t.id,
-        type: t.type,
-        amount: Number(t.amount),
-        status: t.status,
-        timestamp: Number(t.timestamp),
-        reference: t.reference,
-        reason: t.reason,
-        wallet_applied: Number(t.wallet_applied)
-      }))
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    res.json({ ok: true, transactions: r.rows.map(t => ({ id: t.id, type: t.type, amount: Number(t.amount), status: t.status, timestamp: Number(t.timestamp), reference: t.reference, reason: t.reason, wallet_applied: Number(t.wallet_applied) })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/winners', async (req, res) => {
@@ -2445,40 +2153,14 @@ app.get('/admin/winners', async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const username = String(req.query.username || '').trim();
     const roomId = String(req.query.roomId || '').trim();
-
-    const conds = [];
-    const vals = [];
-    let i = 1;
+    const conds = []; const vals = []; let i = 1;
     if (username) { conds.push(`username = $${i++}`); vals.push(username); }
     if (roomId) { conds.push(`room_id = $${i++}`); vals.push(roomId); }
-
     vals.push(limit);
-    const sql = `
-      SELECT id, username, display_name, room_id, round, win_amount, winning_number, prize_pool, created_at
-      FROM game_winners
-      ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''}
-      ORDER BY created_at DESC
-      LIMIT $${i}
-    `;
+    const sql = `SELECT id, username, display_name, room_id, round, win_amount, winning_number, prize_pool, created_at FROM game_winners ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''} ORDER BY created_at DESC LIMIT $${i}`;
     const r = await pool.query(sql, vals);
-    res.json({
-      ok: true,
-      count: r.rows.length,
-      winners: r.rows.map(w => ({
-        id: w.id,
-        username: w.username,
-        displayName: w.display_name,
-        roomId: w.room_id,
-        round: Number(w.round),
-        winAmount: Number(w.win_amount),
-        winningNumber: w.winning_number == null ? null : Number(w.winning_number),
-        prizePool: Number(w.prize_pool || 0),
-        createdAt: Number(w.created_at)
-      }))
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    res.json({ ok: true, count: r.rows.length, winners: r.rows.map(w => ({ id: w.id, username: w.username, displayName: w.display_name, roomId: w.room_id, round: Number(w.round), winAmount: Number(w.win_amount), winningNumber: w.winning_number == null ? null : Number(w.winning_number), prizePool: Number(w.prize_pool || 0), createdAt: Number(w.created_at) })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/admin/auto-match', async (req, res) => {
@@ -2493,72 +2175,40 @@ app.post('/admin/auto-match', async (req, res) => {
         const after = await pool.query('SELECT processed, matched_tx_id FROM incoming_sms WHERE id = $1', [row.id]);
         if (after.rows[0]?.matched_tx_id) approved++;
         else if (after.rows[0]?.processed && before.rows[0]?.processed === false) skipped++;
-      } catch (e) {
-        errors++;
-        await logAutoActivity('error', row.id, '', 0, '', e.message);
-      }
+      } catch (e) { errors++; await logAutoActivity('error', row.id, '', 0, '', e.message); }
     }
     res.json({ ok: true, approved, skipped, errors, scanned: smsRes.rows.length });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/sms', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
     const smsRes = await pool.query('SELECT * FROM incoming_sms ORDER BY timestamp DESC LIMIT 50');
-    const data = {};
-    smsRes.rows.forEach(r => {
-      data[r.id] = { sender: r.sender, text: r.text, timestamp: Number(r.timestamp) };
-    });
+    const data = {}; smsRes.rows.forEach(r => { data[r.id] = { sender: r.sender, text: r.text, timestamp: Number(r.timestamp) }; });
     res.json({ ok: true, data });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/used-references', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
-  try {
-    const r = await pool.query('SELECT * FROM used_references ORDER BY consumed_at DESC LIMIT 100');
-    res.json({ ok: true, references: r.rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  try { const r = await pool.query('SELECT * FROM used_references ORDER BY consumed_at DESC LIMIT 100'); res.json({ ok: true, references: r.rows }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/activity', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
-  try {
-    const r = await pool.query('SELECT * FROM auto_activity ORDER BY at DESC LIMIT 100');
-    res.json({ ok: true, activity: r.rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  try { const r = await pool.query('SELECT * FROM auto_activity ORDER BY at DESC LIMIT 100'); res.json({ ok: true, activity: r.rows }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/all-transactions', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const r = await pool.query(
-      `SELECT id, username, type, amount, status, timestamp, reference, reason, client_request_id, updated_at
-       FROM transactions ORDER BY timestamp DESC LIMIT $1`,
-      [limit]
-    );
-    res.json({
-      ok: true,
-      transactions: r.rows.map(t => ({
-        ...t,
-        amount: Number(t.amount),
-        timestamp: Number(t.timestamp),
-        updated_at: Number(t.updated_at || 0),
-      }))
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    const r = await pool.query(`SELECT id, username, type, amount, status, timestamp, reference, reason, client_request_id, updated_at FROM transactions ORDER BY timestamp DESC LIMIT $1`, [limit]);
+    res.json({ ok: true, transactions: r.rows.map(t => ({ ...t, amount: Number(t.amount), timestamp: Number(t.timestamp), updated_at: Number(t.updated_at || 0) })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/trace', async (req, res) => {
@@ -2569,44 +2219,24 @@ app.get('/admin/trace', async (req, res) => {
     const clientRequestId = String(req.query.clientRequestId || '').trim();
     const txId = String(req.query.txId || '').trim();
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-
-    const conds = [];
-    const vals = [];
-    let i = 1;
+    const conds = []; const vals = []; let i = 1;
     if (traceId) { conds.push(`trace_id = $${i++}`); vals.push(traceId); }
     if (uid) { conds.push(`uid = $${i++}`); vals.push(uid); }
     if (clientRequestId) { conds.push(`client_request_id = $${i++}`); vals.push(clientRequestId); }
     if (txId) { conds.push(`tx_id = $${i++}`); vals.push(txId); }
-
-    if (!conds.length) {
-      return res.status(400).json({ ok: false, error: 'must supply traceId, uid, clientRequestId, or txId' });
-    }
+    if (!conds.length) return res.status(400).json({ ok: false, error: 'must supply traceId, uid, clientRequestId, or txId' });
     vals.push(limit);
-    const r = await pool.query(
-      `SELECT * FROM request_trace WHERE ${conds.join(' OR ')} ORDER BY at ASC LIMIT $${i}`,
-      vals
-    );
-    res.json({
-      ok: true,
-      count: r.rows.length,
-      trace: r.rows.map(t => ({
-        ...t,
-        amount: t.amount == null ? null : Number(t.amount),
-        at: Number(t.at),
-      })),
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    const r = await pool.query(`SELECT * FROM request_trace WHERE ${conds.join(' OR ')} ORDER BY at ASC LIMIT $${i}`, vals);
+    res.json({ ok: true, count: r.rows.length, trace: r.rows.map(t => ({ ...t, amount: t.amount == null ? null : Number(t.amount), at: Number(t.at) })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ============================================================================
-// ANALYTICS ENDPOINTS
+// ANALYTICS
 // ============================================================================
-
 function dayRangeToMs(fromDate, toDate) {
   const startMs = Date.parse(fromDate + 'T00:00:00Z');
-  const endMs   = Date.parse(toDate   + 'T00:00:00Z') + 24 * 60 * 60 * 1000;
+  const endMs = Date.parse(toDate + 'T00:00:00Z') + 24 * 60 * 60 * 1000;
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) return null;
   return { startMs, endMs };
 }
@@ -2614,34 +2244,17 @@ function dayRangeToMs(fromDate, toDate) {
 app.get('/admin/analytics/games', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
-    const from = String(req.query.from || '').trim();
-    const to   = String(req.query.to   || '').trim();
-    const room = String(req.query.room || 'both').trim();
-    const rng  = dayRangeToMs(from, to);
+    const from = String(req.query.from || '').trim(), to = String(req.query.to || '').trim(), room = String(req.query.room || 'both').trim();
+    const rng = dayRangeToMs(from, to);
     if (!rng) return res.status(400).json({ ok: false, error: 'invalid-date-range' });
-
     const roomsWanted = room === 'both' ? ['room_15', 'room_30'] : [room];
-    if (!roomsWanted.every(r => r === 'room_15' || r === 'room_30')) {
-      return res.status(400).json({ ok: false, error: 'invalid-room' });
-    }
-
+    if (!roomsWanted.every(r => r === 'room_15' || r === 'room_30')) return res.status(400).json({ ok: false, error: 'invalid-room' });
     const snapRes = await pool.query(
-      `SELECT room_id, round, bet, human_count, human_picks, bot_count, bot_picks,
-              total_picks, prize_pool, winning_number, winner_count, human_winner_count,
-              human_win_amount, started_at, ended_at
-         FROM round_snapshots
-        WHERE ended_at >= $1 AND ended_at < $2
-          AND room_id = ANY($3::text[])
-        ORDER BY ended_at ASC`,
+      `SELECT room_id, round, bet, human_count, human_picks, bot_count, bot_picks, total_picks, prize_pool, winning_number, winner_count, human_winner_count, human_win_amount, started_at, ended_at
+         FROM round_snapshots WHERE ended_at >= $1 AND ended_at < $2 AND room_id = ANY($3::text[]) ORDER BY ended_at ASC`,
       [rng.startMs, rng.endMs, roomsWanted]
     );
-
-    const buckets = Array.from({ length: 24 }, (_, h) => ({
-      hour: h, games: 0, totalHumans: 0, totalHumanPicks: 0,
-      totalBots: 0, totalPicks: 0, totalPrizePool: 0,
-      totalWinners: 0, humanWinners: 0, humanWinAmount: 0,
-    }));
-
+    const buckets = Array.from({ length: 24 }, (_, h) => ({ hour: h, games: 0, totalHumans: 0, totalHumanPicks: 0, totalBots: 0, totalPicks: 0, totalPrizePool: 0, totalWinners: 0, humanWinners: 0, humanWinAmount: 0 }));
     for (const row of snapRes.rows) {
       const h = new Date(Number(row.ended_at)).getUTCHours();
       buckets[h].games += 1;
@@ -2654,25 +2267,9 @@ app.get('/admin/analytics/games', async (req, res) => {
       buckets[h].humanWinners += Number(row.human_winner_count || 0);
       buckets[h].humanWinAmount += Number(row.human_win_amount || 0);
     }
-
-    const hourly = buckets.map(b => ({
-      hour: b.hour,
-      games: b.games,
-      avgHumans: b.games ? b.totalHumans / b.games : 0,
-      totalHumans: b.totalHumans,
-      totalHumanPicks: b.totalHumanPicks,
-      totalBots: b.totalBots,
-      totalPicks: b.totalPicks,
-      avgPrizePool: b.games ? b.totalPrizePool / b.games : 0,
-      totalWinners: b.totalWinners,
-      humanWinners: b.humanWinners,
-      humanWinAmount: b.humanWinAmount,
-    }));
-
+    const hourly = buckets.map(b => ({ hour: b.hour, games: b.games, avgHumans: b.games ? b.totalHumans / b.games : 0, totalHumans: b.totalHumans, totalHumanPicks: b.totalHumanPicks, totalBots: b.totalBots, totalPicks: b.totalPicks, avgPrizePool: b.games ? b.totalPrizePool / b.games : 0, totalWinners: b.totalWinners, humanWinners: b.humanWinners, humanWinAmount: b.humanWinAmount }));
     const hoursWithData = hourly.filter(h => h.games > 0).length;
-    const daily = hoursWithData
-      ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData
-      : 0;
+    const daily = hoursWithData ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData : 0;
     const peak = hourly.reduce((m, h) => Math.max(m, h.avgHumans), 0);
     const totalGames = hourly.reduce((s, h) => s + h.games, 0);
     const totalHumans = hourly.reduce((s, h) => s + h.totalHumans, 0);
@@ -2681,150 +2278,46 @@ app.get('/admin/analytics/games', async (req, res) => {
     const totalWinners = hourly.reduce((s, h) => s + h.totalWinners, 0);
     const humanWinners = hourly.reduce((s, h) => s + h.humanWinners, 0);
     const humanWinAmount = hourly.reduce((s, h) => s + h.humanWinAmount, 0);
-
-    res.json({
-      ok: true,
-      from, to, room,
-      summary: {
-        dailyAvgHumansPerGame: daily,
-        peakHourlyAvg: peak,
-        gamesRecorded: totalGames,
-        hoursWithData,
-        totalHumanParticipations: totalHumans,
-        totalHumanPicks,
-        totalBots,
-        totalWinners,
-        humanWinners,
-        humanWinAmount,
-      },
-      hourly,
-    });
-  } catch (e) {
-    console.error('[ANALYTICS/games]', e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    res.json({ ok: true, from, to, room, summary: { dailyAvgHumansPerGame: daily, peakHourlyAvg: peak, gamesRecorded: totalGames, hoursWithData, totalHumanParticipations: totalHumans, totalHumanPicks, totalBots, totalWinners, humanWinners, humanWinAmount }, hourly });
+  } catch (e) { console.error('[ANALYTICS/games]', e); res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/analytics/referrals', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
-    const refsRes = await pool.query(
-      `SELECT u.username AS referred_uid, u.display_name AS referred_name,
-              u.referred_by AS referrer_uid,
-              COALESCE(u.referral_earnings, 0) AS referred_ref_earnings,
-              COALESCE(u.created_at, 0) AS referred_created_at,
-              r.display_name AS referrer_name,
-              COALESCE(r.referral_earnings, 0) AS referrer_earnings
-         FROM users u
-         LEFT JOIN users r ON r.username = u.referred_by
-        WHERE u.referred_by IS NOT NULL AND u.referred_by <> ''`
-    );
-
+    const refsRes = await pool.query(`SELECT u.username AS referred_uid, u.display_name AS referred_name, u.referred_by AS referrer_uid, COALESCE(u.referral_earnings, 0) AS referred_ref_earnings, COALESCE(u.created_at, 0) AS referred_created_at, r.display_name AS referrer_name, COALESCE(r.referral_earnings, 0) AS referrer_earnings FROM users u LEFT JOIN users r ON r.username = u.referred_by WHERE u.referred_by IS NOT NULL AND u.referred_by <> ''`);
     const referrers = new Map();
     for (const row of refsRes.rows) {
-      const rid = row.referrer_uid;
-      if (!rid) continue;
-      if (!referrers.has(rid)) {
-        referrers.set(rid, {
-          uid: rid,
-          name: row.referrer_name || rid,
-          referralEarnings: Number(row.referrer_earnings || 0),
-          referred: [],
-        });
-      }
-      const r = referrers.get(rid);
-      r.referred.push({
-        uid: row.referred_uid,
-        name: row.referred_name || row.referred_uid,
-        earnings: Number(row.referred_ref_earnings || 0),
-        createdAt: Number(row.referred_created_at || 0),
-      });
+      const rid = row.referrer_uid; if (!rid) continue;
+      if (!referrers.has(rid)) referrers.set(rid, { uid: rid, name: row.referrer_name || rid, referralEarnings: Number(row.referrer_earnings || 0), referred: [] });
+      referrers.get(rid).referred.push({ uid: row.referred_uid, name: row.referred_name || row.referred_uid, earnings: Number(row.referred_ref_earnings || 0), createdAt: Number(row.referred_created_at || 0) });
     }
-
-    const list = [...referrers.values()].map(r => ({
-      ...r,
-      referralCount: r.referred.length,
-      referralEarnings: r.referralEarnings ||
-        r.referred.reduce((s, x) => s + x.earnings, 0),
-    }));
-
+    const list = [...referrers.values()].map(r => ({ ...r, referralCount: r.referred.length, referralEarnings: r.referralEarnings || r.referred.reduce((s, x) => s + x.earnings, 0) }));
     list.sort((a, b) => b.referralCount - a.referralCount);
-
-    const totals = {
-      referrers: list.length,
-      referredUsers: list.reduce((s, r) => s + r.referralCount, 0),
-      totalEarnings: list.reduce((s, r) => s + r.referralEarnings, 0),
-      avgPerReferrer: list.length
-        ? list.reduce((s, r) => s + r.referralCount, 0) / list.length
-        : 0,
-      topReferrer: list[0] || null,
-      topEarner: [...list].sort((a, b) => b.referralEarnings - a.referralEarnings)[0] || null,
-    };
-
+    const totals = { referrers: list.length, referredUsers: list.reduce((s, r) => s + r.referralCount, 0), totalEarnings: list.reduce((s, r) => s + r.referralEarnings, 0), avgPerReferrer: list.length ? list.reduce((s, r) => s + r.referralCount, 0) / list.length : 0, topReferrer: list[0] || null, topEarner: [...list].sort((a, b) => b.referralEarnings - a.referralEarnings)[0] || null };
     res.json({ ok: true, totals, referrers: list });
-  } catch (e) {
-    console.error('[ANALYTICS/referrals]', e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { console.error('[ANALYTICS/referrals]', e); res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/diagnostics', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
     const since = now() - 60 * 60 * 1000;
-
     const [pendingTx, unprocessedSms, approvedRefs, traced24h, failedStages] = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS c FROM transactions WHERE status = 'pending'"),
       pool.query("SELECT COUNT(*)::int AS c FROM incoming_sms WHERE processed = false"),
       pool.query("SELECT COUNT(*)::int AS c FROM used_references"),
       pool.query("SELECT COUNT(*)::int AS c FROM request_trace WHERE at > $1", [now() - DAY]),
-      pool.query(
-        `SELECT stage, status, COUNT(*)::int AS c
-         FROM request_trace WHERE at > $1 AND status IN ('fail','error')
-         GROUP BY stage, status ORDER BY c DESC LIMIT 20`,
-        [since]
-      ),
+      pool.query(`SELECT stage, status, COUNT(*)::int AS c FROM request_trace WHERE at > $1 AND status IN ('fail','error') GROUP BY stage, status ORDER BY c DESC LIMIT 20`, [since]),
     ]);
-
     const stuck = await pool.query(
-      `SELECT t.id, t.username, t.amount, t.reference, t.timestamp
-       FROM transactions t
-       LEFT JOIN used_references u
-         ON UPPER(REGEXP_REPLACE(t.reference, '[^A-Za-z0-9]', '', 'g')) = u.reference
-       WHERE t.status = 'pending' AND t.type = 'deposit' AND t.timestamp < $1 AND u.reference IS NULL
-       ORDER BY t.timestamp DESC LIMIT 50`,
+      `SELECT t.id, t.username, t.amount, t.reference, t.timestamp FROM transactions t LEFT JOIN used_references u ON UPPER(REGEXP_REPLACE(t.reference, '[^A-Za-z0-9]', '', 'g')) = u.reference WHERE t.status = 'pending' AND t.type = 'deposit' AND t.timestamp < $1 AND u.reference IS NULL ORDER BY t.timestamp DESC LIMIT 50`,
       [now() - 30 * 60 * 1000]
     );
-
-    const smsQueue = await pool.query(
-      `SELECT id, sender, LEFT(text, 80) AS preview, timestamp
-       FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 20`
-    );
-
-    const recentFails = await pool.query(
-      `SELECT trace_id, uid, stage, status, reason, at
-       FROM request_trace WHERE at > $1 AND status IN ('fail','error')
-       ORDER BY at DESC LIMIT 30`,
-      [now() - DAY]
-    );
-
-    res.json({
-      ok: true,
-      summary: {
-        pendingTransactions: pendingTx.rows[0].c,
-        unprocessedSms: unprocessedSms.rows[0].c,
-        usedReferences: approvedRefs.rows[0].c,
-        traced24h: traced24h.rows[0].c,
-        signupBonus: SIGNUP_BONUS,
-      },
-      failedStagesLastHour: failedStages.rows,
-      stuckDeposits: stuck.rows.map(r => ({ ...r, amount: Number(r.amount), timestamp: Number(r.timestamp) })),
-      smsQueue: smsQueue.rows.map(r => ({ ...r, timestamp: Number(r.timestamp) })),
-      recentFails: recentFails.rows.map(r => ({ ...r, at: Number(r.at) })),
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+    const smsQueue = await pool.query(`SELECT id, sender, LEFT(text, 80) AS preview, timestamp FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 20`);
+    const recentFails = await pool.query(`SELECT trace_id, uid, stage, status, reason, at FROM request_trace WHERE at > $1 AND status IN ('fail','error') ORDER BY at DESC LIMIT 30`, [now() - DAY]);
+    res.json({ ok: true, summary: { pendingTransactions: pendingTx.rows[0].c, unprocessedSms: unprocessedSms.rows[0].c, usedReferences: approvedRefs.rows[0].c, traced24h: traced24h.rows[0].c, signupBonus: SIGNUP_BONUS }, failedStagesLastHour: failedStages.rows, stuckDeposits: stuck.rows.map(r => ({ ...r, amount: Number(r.amount), timestamp: Number(r.timestamp) })), smsQueue: smsQueue.rows.map(r => ({ ...r, timestamp: Number(r.timestamp) })), recentFails: recentFails.rows.map(r => ({ ...r, at: Number(r.at) })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/admin/sms/reprocess', async (req, res) => {
@@ -2838,9 +2331,7 @@ app.post('/admin/sms/reprocess', async (req, res) => {
     await processIncomingSmsSnapshot(r.rows[0]);
     const after = await pool.query('SELECT processed, matched_tx_id FROM incoming_sms WHERE id = $1', [smsId]);
     res.json({ ok: true, processed: after.rows[0]?.processed, matchedTxId: after.rows[0]?.matched_tx_id || null });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/admin/force-approve', async (req, res) => {
@@ -2852,18 +2343,36 @@ app.post('/admin/force-approve', async (req, res) => {
     const r = await adminDecision(id, 'approved', reason);
     await logAutoActivity('admin-forced', '', '', 0, id, reason);
     res.json({ ok: r.ok, transaction: r.tx, error: r.reason });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+
+// ============================================================================
+// 🔒 FIX #9: data pruning
+// ============================================================================
+async function pruneOldData() {
+  const nowMs = now();
+  try {
+    const smsCutoff = nowMs - 30 * DAY;
+    const attemptsCutoff = nowMs - 7 * DAY;
+    const traceCutoff = nowMs - 30 * DAY;
+    const activityCutoff = nowMs - 30 * DAY;
+    const notifCutoff = nowMs - 90 * DAY;
+    const [a, b, c, d, e] = await Promise.all([
+      pool.query('DELETE FROM incoming_sms WHERE processed = true AND timestamp < $1', [smsCutoff]),
+      pool.query('DELETE FROM deposit_attempts WHERE created_at < $1', [attemptsCutoff]),
+      pool.query('DELETE FROM request_trace WHERE at < $1', [traceCutoff]),
+      pool.query('DELETE FROM auto_activity WHERE at < $1', [activityCutoff]),
+      pool.query(`DELETE FROM notifications WHERE timestamp < $1 AND type IN ('payout_marker','referral_marker')`, [notifCutoff]),
+    ]);
+    console.log(`[PRUNE] sms=${a.rowCount} attempts=${b.rowCount} trace=${c.rowCount} activity=${d.rowCount} notif=${e.rowCount}`);
+  } catch (err) { console.error('[PRUNE] failed:', err.message); }
+}
 
 // ============================================================================
 // SERVER BOOT
 // ============================================================================
 const server = http.createServer(app);
-server.on('upgrade', (req, socket, head) => {
-  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
-});
+server.on('upgrade', (req, socket, head) => { wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req)); });
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
@@ -2880,10 +2389,11 @@ server.listen(PORT, '0.0.0.0', () => {
         room.persist().catch(err => console.error('Room persist failed:', err));
         scheduleBots(room);
       }
+      // 🔒 FIX #9: prune every 6h
+      pruneOldData().catch(e => console.error('[PRUNE] initial', e.message));
+      setInterval(() => pruneOldData().catch(e => console.error('[PRUNE]', e.message)), 6 * 60 * 60 * 1000);
       console.log('✅ Background initialization complete.');
-    } catch (err) {
-      console.error('⚠️ Background initialization failed (DB may be slow or unreachable):', err);
-    }
+    } catch (err) { console.error('⚠️ Background initialization failed (DB may be slow or unreachable):', err); }
   })();
 });
 
