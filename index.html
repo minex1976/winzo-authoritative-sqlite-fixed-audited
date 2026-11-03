@@ -1918,12 +1918,14 @@
 
                 const size = 300; const center = size / 2; const radius = center;
 
-                // Move labels into the wider outer part of each wedge. For dense
-                // wheels, distribute labels over concentric tracks so adjacent
-                // labels do not all compete for the same narrow band.
-                const labelTrackCount = segmentCount > 120 ? 4 : segmentCount > 60 ? 2 : 1;
-                const labelFontSize = segmentCount > 120 ? 8.2
-                    : segmentCount > 60 ? 8.8
+                // Keep every number on one continuous outer track, regardless
+                // of how many segments the wheel contains (up to 200).
+                // The font scales down for dense wheels to reduce collisions.
+                const labelRadius = radius * 0.87;
+                const labelFontSize = segmentCount > 160 ? 6.2
+                    : segmentCount > 120 ? 6.8
+                    : segmentCount > 80 ? 7.4
+                    : segmentCount > 60 ? 8.2
                     : segmentCount > 36 ? 10
                     : 12.5;
 
@@ -1939,11 +1941,6 @@
                     const y1 = center + radius * Math.sin(startRad);
                     const x2 = center + radius * Math.cos(endRad);
                     const y2 = center + radius * Math.sin(endRad);
-                    const labelTrack = i % labelTrackCount;
-                    const labelRadiusRatio = labelTrackCount === 1 ? 0.84
-                        : labelTrackCount === 2 ? (labelTrack === 0 ? 0.74 : 0.90)
-                        : 0.70 + labelTrack * 0.075;
-                    const labelRadius = radius * labelRadiusRatio;
                     const textX = center + labelRadius * Math.cos(midRad);
                     const textY = center + labelRadius * Math.sin(midRad);
                     const color = i % 2 === 0 ? '#e62020' : '#ffffff';
