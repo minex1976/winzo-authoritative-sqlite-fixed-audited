@@ -790,6 +790,7 @@
     <audio id="getReadyToWinAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_READY_AUDIO_BASE64_HERE"></audio>
 
     <div class="game-wrapper">
+    <div id="signupBonusNotice" style="display:none;flex-shrink:0;margin:4px 2px 7px;padding:8px 10px;border-radius:12px;background:linear-gradient(110deg,rgba(255,204,68,.22),rgba(245,166,35,.12));border:1px solid rgba(255,204,68,.65);color:#ffe7a0;text-align:center;font-size:.72rem;font-weight:700;line-height:1.5;z-index:80"></div>
         <div class="network-offline-overlay" id="networkOfflineOverlay">
             <div class="icon">📶</div>
             <h3>No Internet Connection</h3>
@@ -2193,6 +2194,23 @@
     }
     window.WINZO_WALLET_DIAGNOSTICS = walletDiagnostics;
 
+    let signupBonusCountdownTimer = null;
+    function showSignupBonusCountdown(data) {
+        const el=document.getElementById('signupBonusNotice');
+        const expires=Number(data?.expiresAt||0);
+        if(!el || !expires || expires<=Date.now()){ if(el)el.style.display='none'; return; }
+        if(signupBonusCountdownTimer)clearInterval(signupBonusCountdownTimer);
+        const render=()=>{
+            const left=Math.max(0,expires-Date.now());
+            if(left<=0){el.style.display='none';clearInterval(signupBonusCountdownTimer);signupBonusCountdownTimer=null;return;}
+            const hours=Math.floor(left/3600000),minutes=Math.floor((left%3600000)/60000),seconds=Math.floor((left%60000)/1000);
+            const countdown=`${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+            el.textContent=`የ15 ብር ቦነስ አግኝተዋል። የቦነስ ስጦታው ከ${countdown} በሁዋላ ያበቃል።`;
+            el.style.display='block';
+        };
+        render();signupBonusCountdownTimer=setInterval(render,1000);
+    }
+
     let notificationSeenKeys = new Set();
     let txPopupQueue = [], txPopupActive = false, currentPopupNotificationKey = null;
     let broadcastPopupQueue = [], broadcastPopupActive = false, currentBroadcastNotificationKey = null;
@@ -2200,17 +2218,18 @@
     function listenNotifications() {}
     function handleIncomingNotificationData(data, key) {
         if (!data) return;
-        const isSticky = (data.type === 'sticky_broadcast') || (data.sticky === true);
+        const notificationKind = data.notificationType || data.type;
+        const isSticky = (notificationKind === 'sticky_broadcast') || (data.sticky === true);
         if (data.read === true && !isSticky) return;
         if (key && notificationSeenKeys.has(key) && !isSticky) return;
         if (key) notificationSeenKeys.add(key);
         if (isSticky) { showStickyOverlay(data.message || '', data.broadcastId || key || ('global_' + (data.timestamp || Date.now())), Number(data.timestamp) || 0); return; }
-        if (data.type === 'broadcast') { enqueueBroadcastPopup(data, key || ('broadcast_' + Date.now())); return; }
+        if (notificationKind === 'broadcast') { enqueueBroadcastPopup(data, key || ('broadcast_' + Date.now())); return; }
         const status = data.status;
         const isTxResult = data.type === 'transaction_result' || status === 'approved' || status === 'rejected';
         if (isTxResult) enqueueTransactionPopup(Object.assign({}, data, { status: status || 'approved' }), key || data.txId || ('tx_' + Date.now()));
         else if (data.message) {
-            if (data.type === 'notification' && String(data.message).includes('You won')) return;
+            if (notificationKind === 'notification' && String(data.message).includes('You won')) return;
             showToast(data.message, 'info');
         }
     }
@@ -2223,6 +2242,7 @@
         broadcastPopupActive = true;
         const item = broadcastPopupQueue.shift();
         currentBroadcastNotificationKey = item.key;
+        window.__currentBroadcastDismissPolicy = item.data.dismissPolicy || 'user';
         if (broadcastTitleEl) broadcastTitleEl.textContent = 'Message from Winzo';
         if (broadcastMsgEl) broadcastMsgEl.textContent = item.data.message || '';
         broadcastModal.classList.add('active');
@@ -2230,7 +2250,7 @@
     if (broadcastOkBtn) {
         broadcastOkBtn.onclick = function () {
             if (broadcastModal) broadcastModal.classList.remove('active');
-            if (currentBroadcastNotificationKey && client) { client.send({ type: 'notification-read', id: currentBroadcastNotificationKey }); currentBroadcastNotificationKey = null; }
+            if (currentBroadcastNotificationKey && client) { const itemPolicy = window.__currentBroadcastDismissPolicy || 'user'; client.send({ type: itemPolicy === 'user' ? 'notification-delete' : 'notification-read', id: currentBroadcastNotificationKey }); currentBroadcastNotificationKey = null; }
             broadcastPopupActive = false;
             setTimeout(showNextBroadcastPopup, 260);
         };
@@ -3052,8 +3072,10 @@
                     this.onTransactionCreated && this.onTransactionCreated(m);
                 }
                 else if (m.type === 'transaction-status') this.onTransactionStatus && this.onTransactionStatus(m);
+                else if (m.type === 'signup-bonus') showSignupBonusCountdown(m);
                 else if (m.type === 'notification') this.onNotification && this.onNotification(m, m.id);
-                else if (m.type === 'sticky-broadcast') this.onNotification && this.onNotification(m, m.id);
+                else if (m.type === 'sticky-broadcast' || m.type === 'sticky_broadcast') this.onNotification && this.onNotification(m, m.id);
+                else if (m.type === 'sticky-broadcast-remove') { if(activeStickyBroadcast && activeStickyBroadcast.id===m.broadcastId) hideStickyOverlay(); }
                 else if (m.type === 'broadcast') this.onNotification && this.onNotification(m, m.id);
                 else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                 else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
