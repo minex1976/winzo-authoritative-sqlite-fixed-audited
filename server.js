@@ -25,6 +25,7 @@ const pool = new Pool({
 // ============================================================================
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
 // 🔒 FIX #3: SMS webhook secret is REQUIRED. No hardcoded fallback.
@@ -111,7 +112,7 @@ async function initDb() {
           withdrawal_hold_until BIGINT DEFAULT 0, withdrawal_hold_reason VARCHAR(64), pending_withdrawal NUMERIC DEFAULT 0, referral_earnings NUMERIC DEFAULT 0,
           wallet_updated_at BIGINT, referred_by VARCHAR(64), last_ip VARCHAR(64), last_ip_hash VARCHAR(128), blocked BOOLEAN DEFAULT FALSE,
           blocked_at BIGINT, block_reason VARCHAR(256), block_signals TEXT, device_fingerprint VARCHAR(128), fraud_status VARCHAR(64),
-          account_status VARCHAR(64), created_at BIGINT, updated_at BIGINT, wallet_ledger JSONB DEFAULT '{}'::jsonb
+          account_status VARCHAR(64), phone_number VARCHAR(64), created_at BIGINT, updated_at BIGINT, wallet_ledger JSONB DEFAULT '{}'::jsonb
       );
       CREATE TABLE IF NOT EXISTS transactions (
           id VARCHAR(128) PRIMARY KEY, username VARCHAR(64), uid VARCHAR(64), wallet_uid VARCHAR(64), telegram_id BIGINT, telegram_username VARCHAR(64),
@@ -122,6 +123,12 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS rooms (
           id VARCHAR(64) PRIMARY KEY, bet NUMERIC, phase VARCHAR(32), round INT, ends_at BIGINT, winning_number INT,
           winners_json TEXT, prize_pool NUMERIC, last_result_json TEXT, taken_json TEXT, players_json TEXT, updated_at BIGINT
+      );
+      CREATE TABLE IF NOT EXISTS telegram_contacts (
+          telegram_id BIGINT PRIMARY KEY, phone_number VARCHAR(64) NOT NULL, first_name VARCHAR(128), last_name VARCHAR(128), updated_at BIGINT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS telegram_contact_attempts (
+          telegram_id BIGINT PRIMARY KEY, status VARCHAR(40) NOT NULL, updated_at BIGINT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS telegram_users (
           telegram_id BIGINT PRIMARY KEY, uid VARCHAR(64), username VARCHAR(64), telegram_username VARCHAR(64), updated_at BIGINT
@@ -192,6 +199,7 @@ async function initDb() {
       ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(128);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
+      ALTER TABLE users         ADD COLUMN IF NOT EXISTS phone_number VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_bonus_expires_at BIGINT DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT DEFAULT 0;
@@ -235,6 +243,30 @@ async function initDb() {
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);`);
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);`);
 
+    // Enforce one phone number per Telegram account. Normalize formatting so
+    // +251 9xx xxx xxx and +251-9xx-xxx-xxx are treated as the same number.
+    // Any legacy duplicate claims are cleared for re-verification rather than
+    // arbitrarily assigning the number to one account.
+    await client.query(`
+      ALTER TABLE telegram_contacts ADD COLUMN IF NOT EXISTS phone_normalized VARCHAR(32);
+      UPDATE telegram_contacts
+        SET phone_normalized = regexp_replace(COALESCE(phone_number, ''), '[^0-9]', '', 'g')
+        WHERE phone_normalized IS NULL;
+      WITH duplicate_numbers AS (
+        SELECT phone_normalized FROM telegram_contacts
+        WHERE phone_normalized IS NOT NULL AND phone_normalized <> ''
+        GROUP BY phone_normalized HAVING COUNT(*) > 1
+      )
+      UPDATE telegram_contacts tc
+        SET phone_number = '', phone_normalized = ''
+        WHERE tc.phone_normalized IN (SELECT phone_normalized FROM duplicate_numbers);
+      UPDATE users SET phone_number = ''
+        WHERE telegram_id IN (SELECT telegram_id FROM telegram_contacts WHERE phone_normalized = '');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_telegram_contacts_phone_normalized
+        ON telegram_contacts (phone_normalized)
+        WHERE phone_normalized IS NOT NULL AND phone_normalized <> '';
+    `);
+
     await client.query(`UPDATE users SET referral_earnings = 0 WHERE referral_earnings IS NULL;`);
 
     console.log('✅ Migrations applied.');
@@ -273,6 +305,13 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 function now() { return Date.now(); }
+function normalizeTelegramPhoneNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  // Telegram contact numbers are normally international/E.164. Reject
+  // implausible values rather than allowing empty or partial numbers to claim an account.
+  if (digits.length < 7 || digits.length > 15) return '';
+  return digits;
+}
 function safeUser(username) { return String(username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32); }
 function safeUid(value) { return String(value || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 64); }
 function constantTimeEqual(a, b) {
@@ -1800,6 +1839,14 @@ async function handle(ws, m) {
       return;
     }
     const telegramUser = verification.user;
+    // New registrations must have a Telegram-native contact share recorded by the bot webhook.
+    if (m.authMode === 'signup') {
+      const contact = await pool.query('SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1', [Number(telegramUser.id)]);
+      if (!contact.rows.length || !contact.rows[0].phone_number) {
+        send(ws, { type: 'error', message: 'phone-contact-required', reason: 'phone-contact-required' });
+        return;
+      }
+    }
     if (m.authMode === 'login') {
       const existing = await pool.query(
         'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
@@ -1828,6 +1875,9 @@ async function handle(ws, m) {
       last_ip: clientIp,
       device_fingerprint: m.deviceFingerprint || null,
     });
+    if (m.authMode === 'signup') {
+      await pool.query(`UPDATE users SET phone_number = (SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1), updated_at = $2 WHERE username = $3`, [Number(telegramUser.id), now(), uid]);
+    }
 
     // 🔒 FIX #5: multi-account detection (non-blocking, flags for review)
     const ipHash = clientIp ? hashWithRotatingSalt(clientIp) : null;
@@ -2056,6 +2106,70 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
 });
 
 app.use(express.json({ limit: '3mb' }));
+
+// Telegram delivers the phone contact to the bot as a message.contact update.
+// Only accept contacts whose contact.user_id matches the sender's Telegram ID.
+app.post('/api/telegram/webhook', async (req, res) => {
+  if (!TELEGRAM_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'telegram-webhook-secret-not-configured' });
+  const supplied = req.get('x-telegram-bot-api-secret-token') || '';
+  if (!supplied || !constantTimeEqual(supplied, TELEGRAM_WEBHOOK_SECRET)) return res.status(401).json({ ok: false });
+  try {
+    const msg = req.body?.message || req.body?.edited_message;
+    const contact = msg?.contact;
+    const senderId = Number(msg?.from?.id || 0);
+    const contactUserId = Number(contact?.user_id || 0);
+    const phone = String(contact?.phone_number || '').trim();
+    const normalizedPhone = normalizeTelegramPhoneNumber(phone);
+    if (senderId > 0 && contactUserId === senderId && normalizedPhone && phone.length <= 64) {
+      try {
+        // The unique index is the final concurrency-safe guard. A pre-check alone
+        // would allow two simultaneous webhook requests to claim the same number.
+        await pool.query(`INSERT INTO telegram_contacts
+            (telegram_id, phone_number, phone_normalized, first_name, last_name, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (telegram_id) DO UPDATE SET
+            phone_number=EXCLUDED.phone_number,
+            phone_normalized=EXCLUDED.phone_normalized,
+            first_name=EXCLUDED.first_name,
+            last_name=EXCLUDED.last_name,
+            updated_at=EXCLUDED.updated_at`,
+          [senderId, phone, normalizedPhone, String(contact.first_name || '').slice(0,128), String(contact.last_name || '').slice(0,128), now()]);
+        await pool.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
+          VALUES ($1, 'accepted', $2) ON CONFLICT (telegram_id) DO UPDATE SET status='accepted', updated_at=EXCLUDED.updated_at`,
+          [senderId, now()]);
+        await pool.query('UPDATE users SET phone_number=$1, updated_at=$2 WHERE telegram_id=$3', [phone, now(), senderId]);
+      } catch (e) {
+        if (e.code === '23505') {
+          await pool.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
+            VALUES ($1, 'phone-already-registered', $2)
+            ON CONFLICT (telegram_id) DO UPDATE SET status='phone-already-registered', updated_at=EXCLUDED.updated_at`,
+            [senderId, now()]);
+          return res.json({ ok: true, accepted: false, reason: 'phone-already-registered' });
+        }
+        throw e;
+      }
+    }
+    return res.json({ ok: true, accepted: true });
+  } catch (e) {
+    console.error('[TELEGRAM-CONTACT-WEBHOOK]', e.message);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+// Called by the Mini App after requestContact; initData is validated server-side.
+app.post('/api/telegram-contact/status', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  const verification = validateInitData(String(req.body?.initData || ''), 3600);
+  if (!verification.ok) return res.status(401).json({ ok: false, error: 'telegram-auth-invalid' });
+  try {
+    const telegramId = Number(verification.user.id);
+    const r = await pool.query('SELECT phone_number FROM telegram_contacts WHERE telegram_id=$1', [telegramId]);
+    const a = await pool.query('SELECT status FROM telegram_contact_attempts WHERE telegram_id=$1', [telegramId]);
+    return res.json({ ok: true, shared: !!r.rows[0]?.phone_number, phoneNumber: r.rows[0]?.phone_number || '', reason: a.rows[0]?.status === 'phone-already-registered' ? 'phone-already-registered' : '' });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'contact-check-failed' }); }
+});
+
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret');
@@ -2101,36 +2215,48 @@ app.get('/admin/decision', async (req, res) => {
 app.get('/admin/users', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
-    const usersRes = await pool.query('SELECT * FROM users ORDER BY updated_at DESC');
-    res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked, online: !!conns.get(u.username)?.size, last_seen: Number(u.last_seen_at||0), fraud_status:u.fraud_status, signup_bonus_expires_at:Number(u.signup_bonus_expires_at||0) })) });
+    const usersRes = await pool.query(`
+      SELECT u.*,
+        COALESCE(NULLIF(BTRIM(u.phone_number), ''), (
+          SELECT NULLIF(BTRIM(t.phone_number), '')
+          FROM transactions t
+          WHERE (t.username = u.username OR (u.telegram_id IS NOT NULL AND t.telegram_id = u.telegram_id))
+            AND NULLIF(BTRIM(t.phone_number), '') IS NOT NULL
+          ORDER BY t.timestamp DESC NULLS LAST
+          LIMIT 1
+        ), '') AS linked_phone_number
+      FROM users u
+      ORDER BY u.updated_at DESC
+    `);
+    res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, phone_number: u.linked_phone_number || '', main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked, online: !!conns.get(u.username)?.size, last_seen: Number(u.last_seen_at||0), fraud_status:u.fraud_status, signup_bonus_expires_at:Number(u.signup_bonus_expires_at||0) })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/finance-summary', async (req,res)=>{
   if(!isAdmin(req)) return res.status(403).json({ok:false});
   try {
-    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day,
+    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
       COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
       COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
       FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
-    const fee=await pool.query(`SELECT day, SUM(pool_amount)*0.20 AS fee FROM (
-        SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day, prize_pool AS pool_amount
+    const fee=await pool.query(`SELECT day_key, SUM(pool_amount)*0.20 AS fee FROM (
+        SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key, prize_pool AS pool_amount
           FROM round_snapshots
         UNION ALL
-        SELECT to_char(to_timestamp(COALESCE(completed_at,ends_at)/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day, prize_pool AS pool_amount
+        SELECT to_char(to_timestamp(COALESCE(completed_at,ends_at)/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key, prize_pool AS pool_amount
           FROM bingo_rounds WHERE phase='results'
-      ) game_pools GROUP BY day ORDER BY day DESC LIMIT 90`);
+      ) game_pools GROUP BY day_key ORDER BY day_key DESC LIMIT 90`);
     const totals=await pool.query(`SELECT COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
       COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals FROM transactions`);
     const feeTotal=await pool.query(`SELECT COALESCE(SUM(pool_amount)*0.20,0) fee FROM (
         SELECT prize_pool AS pool_amount FROM round_snapshots
         UNION ALL SELECT prize_pool AS pool_amount FROM bingo_rounds WHERE phase='results'
       ) game_pools`);
-    const todayRes=await pool.query("SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day");
-    const today=todayRes.rows[0].day;
+    const todayRes=await pool.query("SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key");
+    const today=todayRes.rows[0].day_key;
     const map=new Map();
-    for(const r of tx.rows) map.set(r.day,{date:r.day,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
-    for(const r of fee.rows){const x=map.get(r.day)||{date:r.day,deposits:0,withdrawals:0,serviceFee:0};x.serviceFee=Number(r.fee);map.set(r.day,x);}
+    for(const r of tx.rows) map.set(r.day_key,{date:r.day_key,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
+    for(const r of fee.rows){const x=map.get(r.day_key)||{date:r.day_key,deposits:0,withdrawals:0,serviceFee:0};x.serviceFee=Number(r.fee);map.set(r.day_key,x);}
     if(!map.has(today))map.set(today,{date:today,deposits:0,withdrawals:0,serviceFee:0});
     const daily=[...map.values()].sort((a,b)=>b.date.localeCompare(a.date));
     res.json({ok:true,timezone:'Africa/Addis_Ababa',totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:Number(feeTotal.rows[0].fee)},today:daily.find(x=>x.date===today),daily});
