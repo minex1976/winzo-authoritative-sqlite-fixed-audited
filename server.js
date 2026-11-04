@@ -2062,6 +2062,21 @@ setInterval(() => {
 // ============================================================================
 const app = express();
 
+// CORS must run BEFORE every route, including /api/telegram-contact/status.
+// The Mini App is commonly hosted on GitHub Pages while this API is on another
+// domain. JSON POST requests trigger an OPTIONS preflight; handling CORS after
+// the route makes that preflight fail and the browser silently blocks polling.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret, x-telegram-bot-api-secret-token');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use(express.json({ limit: '3mb' }));
+
+
 // 🔒 FIX #3: fail closed + constant-time compare.
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
   if (!SMS_WEBHOOK_SECRET) {
@@ -2104,8 +2119,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
     return res.status(200).json({ ok: false, error: e.message, traceId });
   }
 });
-
-app.use(express.json({ limit: '3mb' }));
 
 // Telegram delivers the phone contact to the bot as a message.contact update.
 // Only accept contacts whose contact.user_id matches the sender's Telegram ID.
@@ -2168,14 +2181,6 @@ app.post('/api/telegram-contact/status', async (req, res) => {
     const a = await pool.query('SELECT status FROM telegram_contact_attempts WHERE telegram_id=$1', [telegramId]);
     return res.json({ ok: true, shared: !!r.rows[0]?.phone_number, phoneNumber: r.rows[0]?.phone_number || '', reason: a.rows[0]?.status === 'phone-already-registered' ? 'phone-already-registered' : '' });
   } catch (e) { return res.status(500).json({ ok: false, error: 'contact-check-failed' }); }
-});
-
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
 });
 
 app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreSQL.'));
