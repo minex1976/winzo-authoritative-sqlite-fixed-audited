@@ -193,6 +193,12 @@ async function initDb() {
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS fraud_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS account_status VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_bonus_expires_at BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT DEFAULT 0;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismiss_policy VARCHAR(16) DEFAULT 'user';
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_by VARCHAR(64);
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS broadcast_id VARCHAR(128);
+      CREATE TABLE IF NOT EXISTS security_scan_logs(id VARCHAR(128) PRIMARY KEY, scanned INT NOT NULL, flagged INT NOT NULL, findings JSONB NOT NULL DEFAULT '[]'::jsonb, created_at BIGINT NOT NULL);
       -- 🔒 FIX #1/#7: provably-fair commit-reveal seeds
       ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);
       ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);
@@ -490,6 +496,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       play_wallet: bot ? BOT_START_WALLET : SIGNUP_BONUS,
       signup_bonus_remaining: bot ? 0 : SIGNUP_BONUS,
       signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
+      signup_bonus_expires_at: bot ? 0 : t + DAY,
       withdrawal_hold_until: bot ? 0 : t + DAY, withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
@@ -497,8 +504,8 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       created_at: t, updated_at: t
     };
     await client.query(`
-      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, device_fingerprint, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, signup_bonus_expires_at, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, device_fingerprint, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
     `, Object.values(newUser));
     return newUser;
   } finally { client.release(); }
@@ -566,8 +573,8 @@ async function addNotification(username, data) {
   const dbType = data.type || 'notification';
   const wsPayload = { ...data, type: 'notification', notificationType: dbType, id, timestamp };
   await pool.query(
-    'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)',
-    [id, username, dbType, String(data.message || ''), data.status || null, data.txType || null, data.txId || null, timestamp]
+    'INSERT INTO notifications (id, username, type, message, status, tx_type, tx_id, timestamp, read, dismiss_policy, created_by, broadcast_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false,$9,$10,$11)',
+    [id, username, dbType, String(data.message || ''), data.status || null, data.txType || null, data.txId || null, timestamp, data.dismissPolicy || 'user', data.createdBy || null, data.broadcastId || null]
   );
   const set = conns.get(username);
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
@@ -1110,7 +1117,7 @@ async function debit(uid, amount) {
     const res = await client.query('SELECT play_wallet FROM users WHERE username = $1 FOR UPDATE', [uid]);
     if (res.rows.length === 0) throw new Error('user-not-found');
     if (Number(res.rows[0].play_wallet) < amt) throw new Error('insufficient');
-    await client.query('UPDATE users SET play_wallet = play_wallet - $1, updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
+    await client.query('UPDATE users SET play_wallet = play_wallet - $1, signup_bonus_remaining = GREATEST(0,signup_bonus_remaining-GREATEST(0,$1-(play_wallet-signup_bonus_remaining))), updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
     await client.query('COMMIT');
     await sendWallet(uid);
     return { ok: true };
@@ -1125,7 +1132,7 @@ async function refundWager(uid, amount) {
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return false;
   try {
-    await pool.query('UPDATE users SET play_wallet = play_wallet + $1, updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
+    await pool.query('UPDATE users SET play_wallet = play_wallet + $1, signup_bonus_remaining = CASE WHEN signup_bonus_expires_at > $2 THEN LEAST(signup_bonus_original, signup_bonus_remaining + $1) ELSE signup_bonus_remaining END, updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
     await sendWallet(uid);
     return true;
   } catch (e) { return false; }
@@ -1585,7 +1592,7 @@ async function bingoSelectUnlocked(ws,numbers){
     if (existingCount + numbers.length > 2) throw new Error('You can select up to 2 cards per round (you already have ' + existingCount + ').');
     for(const n of numbers)if(used.has(n))throw new Error('Card number '+n+' has already been taken.');
     const user=await db.query('SELECT play_wallet FROM users WHERE username=$1 FOR UPDATE',[ws.uid]);if(!user.rows.length)throw new Error('Account not found.');if(Number(user.rows[0].play_wallet)<cost)throw new Error('Insufficient play-wallet balance.');
-    await db.query('UPDATE users SET play_wallet=play_wallet-$1,wallet_updated_at=$2 WHERE username=$3',[cost,Date.now(),ws.uid]);
+    await db.query('UPDATE users SET play_wallet=play_wallet-$1,signup_bonus_remaining=GREATEST(0,signup_bonus_remaining-GREATEST(0,$1-(play_wallet-signup_bonus_remaining))),wallet_updated_at=$2 WHERE username=$3',[cost,Date.now(),ws.uid]);
     for(const n of numbers){
       const grid=bingoNewCard(),id=crypto.randomUUID();
       await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);
@@ -1632,7 +1639,7 @@ async function bingoUnselectUnlocked(ws,number){
       [crypto.randomUUID(),round.id,ws.uid,refund,'bingo-refund:'+removed.id,Date.now()]
     );
     if(ledger.rowCount){
-      const upd=await db.query('UPDATE users SET play_wallet=play_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[refund,Date.now(),ws.uid]);
+      const upd=await db.query('UPDATE users SET play_wallet=play_wallet+$1,signup_bonus_remaining=CASE WHEN signup_bonus_expires_at>$2 THEN LEAST(signup_bonus_original,signup_bonus_remaining+$1) ELSE signup_bonus_remaining END,wallet_updated_at=$2 WHERE username=$3',[refund,Date.now(),ws.uid]);
       if(!upd.rowCount)throw new Error('Wallet refund failed.');
     }
     await db.query('DELETE FROM bingo_entries WHERE id=$1',[removed.id]);
@@ -1766,7 +1773,7 @@ wss.on('connection', (ws) => {
     bingoMembers.delete(ws);
     if (!ws.uid) return;
     const set = conns.get(ws.uid);
-    if (set) { set.delete(ws); if (!set.size) conns.delete(ws.uid); }
+    if (set) { set.delete(ws); if (!set.size) { conns.delete(ws.uid); await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), ws.uid]).catch(()=>{}); } }
     if (ws.roomId) {
       const room = rooms[ws.roomId];
       if (!room) return;
@@ -1833,11 +1840,15 @@ async function handle(ws, m) {
     let set = conns.get(uid);
     if (!set) { set = new Set(); conns.set(uid, set); }
     set.add(ws);
+    await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), uid]);
 
     const holdRes = await pool.query('SELECT withdrawal_hold_until FROM users WHERE username = $1', [uid]);
     // 🔒 FIX #2/#13: issue session token for HTTP endpoints
     const sessionToken = issueSessionToken(uid);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
+    await expireSignupBonus(uid);
+    const bonusInfo = await pool.query('SELECT signup_bonus_remaining, signup_bonus_expires_at FROM users WHERE username=$1',[uid]);
+    if (Number(bonusInfo.rows[0]?.signup_bonus_remaining||0)>0 && Number(bonusInfo.rows[0]?.signup_bonus_expires_at||0)>now()) send(ws,{type:'signup-bonus',amount:Number(bonusInfo.rows[0].signup_bonus_remaining),expiresAt:Number(bonusInfo.rows[0].signup_bonus_expires_at)});
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
 
     const txSnap = await pool.query("SELECT id, type, amount, status, timestamp FROM transactions WHERE wallet_uid = $1 AND status = 'pending' ORDER BY timestamp DESC LIMIT 10", [uid]);
@@ -1979,6 +1990,7 @@ async function handle(ws, m) {
     return;
   }
   if (m.type === 'notification-read') { await markNotificationRead(ws.uid, String(m.id || '')); return; }
+  if (m.type === 'notification-delete') { await pool.query("DELETE FROM notifications WHERE id=$1 AND username=$2 AND dismiss_policy='user'",[String(m.id||''),ws.uid]); return; }
 }
 
 // 🔒 FIX #10: admin idle timeout in ping loop
@@ -2064,8 +2076,8 @@ app.get('/user/notifications', async (req, res) => {
   const uid = sessionUid(req);
   if (!uid) return res.status(401).json({ ok: false, error: 'unauthorized' });
   try {
-    const r = await pool.query('SELECT id, type, message, status, tx_type, tx_id, timestamp, read FROM notifications WHERE username = $1 ORDER BY timestamp DESC LIMIT 50', [uid]);
-    res.json({ ok: true, notifications: r.rows.map(n => ({ id: n.id, type: n.type, message: n.message, status: n.status, txType: n.tx_type, txId: n.tx_id, timestamp: Number(n.timestamp), read: n.read })) });
+    const r = await pool.query('SELECT id, type, message, status, tx_type, tx_id, timestamp, read, dismiss_policy, broadcast_id FROM notifications WHERE username = $1 ORDER BY timestamp DESC LIMIT 50', [uid]);
+    res.json({ ok: true, notifications: r.rows.map(n => ({ id: n.id, type: n.type, message: n.message, status: n.status, txType: n.tx_type, txId: n.tx_id, timestamp: Number(n.timestamp), read: n.read, dismissPolicy:n.dismiss_policy, broadcastId:n.broadcast_id })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -2089,8 +2101,65 @@ app.get('/admin/users', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
   try {
     const usersRes = await pool.query('SELECT * FROM users ORDER BY updated_at DESC');
-    res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked })) });
+    res.json({ ok: true, users: usersRes.rows.map(u => ({ uid: u.username, name: u.display_name, telegram_id: u.telegram_id, main: Number(u.main_wallet), play: Number(u.play_wallet), pending: Number(u.pending_withdrawal), blocked: u.blocked, online: !!conns.get(u.username)?.size, last_seen: Number(u.last_seen_at||0), fraud_status:u.fraud_status, signup_bonus_expires_at:Number(u.signup_bonus_expires_at||0) })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/admin/finance-summary', async (req,res)=>{
+  if(!isAdmin(req)) return res.status(403).json({ok:false});
+  try {
+    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD') day,
+      COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
+      COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
+      FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
+    const fee=await pool.query(`SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD') day, COALESCE(SUM(prize_pool)*0.20,0) fee
+      FROM round_snapshots GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
+    const totals=await pool.query(`SELECT COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
+      COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals FROM transactions`);
+    const feeTotal=await pool.query('SELECT COALESCE(SUM(prize_pool)*0.20,0) fee FROM round_snapshots');
+    const map=new Map(); for(const r of tx.rows) map.set(r.day,{date:r.day,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
+    for(const r of fee.rows){const x=map.get(r.day)||{date:r.day,deposits:0,withdrawals:0,serviceFee:0};x.serviceFee=Number(r.fee);map.set(r.day,x);}
+    res.json({ok:true,totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:Number(feeTotal.rows[0].fee)},daily:[...map.values()].sort((a,b)=>b.date.localeCompare(a.date))});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+app.post('/admin/delete-user', async(req,res)=>{
+  if(!isAdmin(req)) return res.status(403).json({ok:false});
+  const uid=String(req.body?.userId||'').trim(); if(!uid)return res.status(400).json({ok:false,error:'userId required'});
+  const c=await pool.connect(); try { await c.query('BEGIN');
+    const exists=await c.query('SELECT username FROM users WHERE username=$1 FOR UPDATE',[uid]); if(!exists.rows.length){await c.query('ROLLBACK');return res.status(404).json({ok:false,error:'user-not-found'});}
+    await c.query('DELETE FROM notifications WHERE username=$1',[uid]); await c.query('DELETE FROM transactions WHERE username=$1 OR wallet_uid=$1 OR uid=$1',[uid]);
+    await c.query('DELETE FROM telegram_users WHERE uid=$1',[uid]);
+    await c.query('DELETE FROM transaction_requests WHERE uid=$1',[uid]); await c.query('DELETE FROM deposit_attempts WHERE username=$1',[uid]); await c.query('DELETE FROM request_trace WHERE uid=$1',[uid]); await c.query('DELETE FROM used_references WHERE username=$1',[uid]); await c.query('DELETE FROM game_winners WHERE username=$1',[uid]);
+    await c.query('DELETE FROM bingo_results WHERE username=$1',[uid]); await c.query('DELETE FROM bingo_entries WHERE username=$1',[uid]); await c.query('DELETE FROM bingo_wallet_transactions WHERE username=$1',[uid]);
+    await c.query('DELETE FROM users WHERE username=$1',[uid]); await c.query('COMMIT');
+    const sockets=conns.get(uid); if(sockets){for(const ws of sockets){try{ws.close(4003,'account-removed');}catch{}}conns.delete(uid);} res.json({ok:true});
+  }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(500).json({ok:false,error:e.message});}finally{c.release();}
+});
+
+app.post('/admin/broadcast', async(req,res)=>{
+  if(!isAdmin(req))return res.status(403).json({ok:false});
+  const message=String(req.body?.message||'').trim(), target=String(req.body?.target||'all'), dismissPolicy=req.body?.dismissPolicy==='admin'?'admin':'user';
+  if(!message)return res.status(400).json({ok:false,error:'message-required'});
+  try { const users=target==='all' ? await pool.query('SELECT username FROM users') : await pool.query('SELECT username FROM users WHERE username=$1',[target]);
+    if(!users.rows.length)return res.status(404).json({ok:false,error:'user-not-found'});
+    const id=crypto.randomUUID(); for(const u of users.rows) await addNotification(u.username,{id:crypto.randomUUID(),type:dismissPolicy==='admin'?'sticky_broadcast':'broadcast',message,status:'info',dismissPolicy,createdBy:'admin',broadcastId:id});
+    res.json({ok:true,sent:users.rows.length,broadcastId:id});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+app.post('/admin/remove-broadcast', async(req,res)=>{
+  if(!isAdmin(req))return res.status(403).json({ok:false});
+  const id=String(req.body?.broadcastId||'').trim();if(!id)return res.status(400).json({ok:false,error:'broadcastId-required'});
+  try{const r=await pool.query("DELETE FROM notifications WHERE broadcast_id=$1 AND dismiss_policy='admin'",[id]);
+    for(const set of conns.values())for(const ws of set)if(ws.readyState===1)send(ws,{type:'sticky-broadcast-remove',broadcastId:id});
+    res.json({ok:true,removed:r.rowCount});}catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/admin/security-scans',async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false});try{const r=await pool.query('SELECT scanned,flagged,findings,created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30');res.json({ok:true,scans:r.rows});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+
+app.post('/admin/scan-suspicious', async(req,res)=>{
+  if(!isAdmin(req))return res.status(403).json({ok:false});
+  try { const r=await runSuspiciousAccountScan(); res.json({ok:true,...r}); }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 
 app.get('/admin/user-details', async (req, res) => {
@@ -2107,6 +2176,7 @@ app.get('/admin/user-details', async (req, res) => {
       main: Number(user.main_wallet), play: Number(user.play_wallet), pending: Number(user.pending_withdrawal),
       referral_earnings: Number(user.referral_earnings), referred_by: user.referred_by,
       blocked: user.blocked, block_reason: user.block_reason, fraud_status: user.fraud_status,
+      online: !!conns.get(user.username)?.size, last_seen:Number(user.last_seen_at||0), signup_bonus_expires_at:Number(user.signup_bonus_expires_at||0),
       created_at: Number(user.created_at),
       referrals: refsRes.rows.map(r => ({ uid: r.username, name: r.display_name }))
     }});
@@ -2128,9 +2198,9 @@ app.post('/admin/block-user', async (req, res) => {
 
 app.post('/admin/send-message', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
-  const { userId, message } = req.body;
+  const { userId, message, dismissPolicy } = req.body;
   if (!userId || !message) return res.status(400).json({ ok: false, error: 'userId and message required' });
-  try { await addNotification(userId, { type: 'admin_message', message: String(message), status: 'info', from: 'admin' }); res.json({ ok: true }); }
+  try { await addNotification(userId, { type: dismissPolicy === 'admin' ? 'sticky_broadcast' : 'broadcast', message: String(message), status: 'info', dismissPolicy: dismissPolicy === 'admin' ? 'admin' : 'user', createdBy:'admin' }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -2349,6 +2419,20 @@ app.post('/admin/force-approve', async (req, res) => {
 // ============================================================================
 // 🔒 FIX #9: data pruning
 // ============================================================================
+async function expireAllSignupBonuses(){
+  const r=await pool.query('SELECT username FROM users WHERE signup_bonus_remaining>0 AND signup_bonus_expires_at>0 AND signup_bonus_expires_at<=$1',[now()]);
+  for(const row of r.rows){try{await expireSignupBonus(row.username);await sendWallet(row.username);}catch(e){console.error('[BONUS-EXPIRY]',row.username,e.message);}}
+}
+
+async function runSuspiciousAccountScan(){
+  const flagged=await pool.query(`SELECT username,last_ip_hash,device_fingerprint,fraud_status FROM users WHERE blocked=false AND COALESCE(fraud_status,'') NOT IN ('flagged','frozen') AND (last_ip_hash IS NOT NULL OR device_fingerprint IS NOT NULL)`);
+  let count=0; const findings=[];
+  for(const u of flagged.rows){const result=await detectMultiAccount(u.username,u.last_ip_hash,u.device_fingerprint);if(result.suspicious){count++;findings.push({uid:u.username,signals:result.signals||[]});await addNotification(u.username,{type:'notification',message:'Your account has been flagged for a routine security review. Please contact support if you believe this is an error.',status:'warning'});}}
+  const scanAt=now();
+  await pool.query('INSERT INTO security_scan_logs(id,scanned,flagged,findings,created_at) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),flagged.rowCount,count,JSON.stringify(findings),scanAt]);
+  return {scanned:flagged.rowCount,flagged:count,findings};
+}
+
 async function pruneOldData() {
   const nowMs = now();
   try {
@@ -2383,6 +2467,10 @@ server.listen(PORT, '0.0.0.0', () => {
       await restoreBingoRound();
       await loadRooms();
       startAutomaticDepositMonitor();
+      runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message));
+      expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message));
+      setInterval(()=>expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message)),60000);
+      setInterval(()=>runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message)), 6*60*60*1000);
       for (const room of Object.values(rooms)) {
         if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
         if (room.phase === 'selection') normalizeRoundBots(room);
