@@ -2659,7 +2659,63 @@
         else { console.error('[WINZO] client not initialized'); }
     }
     function handleLogin() { const u = resolveLoginUsername(); if (u) beginSession(u, 'login'); }
-    function handleSignup() { const u = resolveLoginUsername(); if (u) beginSession(u, 'signup'); }
+    async function waitForTelegramContact(initData, timeoutMs = 25000) {
+        const wsUrl = SERVER_WS_URL;
+        const apiBase = wsUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:').replace(/\/ws$/i, '');
+        const started = Date.now();
+        while (Date.now() - started < timeoutMs) {
+            try {
+                const response = await fetch(apiBase + '/api/telegram-contact/status', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ initData })
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.reason === 'phone-already-registered') return { error: 'phone-already-registered' };
+                    if (data && data.shared && data.phoneNumber) return { phoneNumber: data.phoneNumber };
+                }
+            } catch (_) {}
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return '';
+    }
+    async function handleSignup() {
+        const u = resolveLoginUsername(); if (!u) return;
+        if (!tg || typeof tg.requestContact !== 'function') {
+            if (authError) authError.textContent = 'Please update Telegram and open Winzo from the Telegram Mini App to share your phone number.';
+            return;
+        }
+        if (authSignupBtn) { authSignupBtn.disabled = true; authSignupBtn.textContent = 'Waiting for phone number…'; }
+        if (authError) authError.textContent = 'Please approve Telegram’s phone-number sharing request.';
+        try {
+            tg.requestContact(async function (shared) {
+                if (!shared) {
+                    if (authError) authError.textContent = 'Phone number sharing is required to create a new account. Please try again.';
+                    if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+                    return;
+                }
+                if (authError) authError.textContent = 'Phone number shared. Verifying it securely…';
+                const initData = tg.initData || await waitForTelegramInitData(5000);
+                const contactResult = await waitForTelegramContact(initData);
+                if (contactResult && contactResult.error === 'phone-already-registered') {
+                    if (authError) authError.textContent = 'This phone number is already linked to another Telegram account. Each phone number can be used for only one account.';
+                    if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+                    return;
+                }
+                if (!contactResult || !contactResult.phoneNumber) {
+                    if (authError) authError.textContent = 'Telegram confirmed sharing, but the server has not received your contact yet. Please try again in a moment.';
+                    if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+                    return;
+                }
+                if (authError) authError.textContent = 'Phone number verified. Creating your account…';
+                beginSession(u, 'signup');
+                if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+            });
+        } catch (e) {
+            if (authError) authError.textContent = 'Could not request your Telegram phone number. Please try again.';
+            if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+        }
+    }
     function clearAllLocalData() {
         localStorage.removeItem('bingo_current_user'); localStorage.removeItem('bingo_saved_bet');
         localStorage.removeItem('bingo_toast_shown'); localStorage.removeItem('bingo_app_version');
@@ -3080,6 +3136,10 @@
                 else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                 else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
                 else if (typeof m.type === 'string' && m.type.startsWith('bingo-')) { if (window.handleBingoMessage) window.handleBingoMessage(m); }
+                else if (m.type === 'error' && (m.message === 'phone-contact-required' || m.reason === 'phone-contact-required')) {
+                    if (authError) authError.textContent = 'Please share your phone number through Telegram before signing up.';
+                    if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
+                }
                 else if (m.type === 'login-required-signup') {
                     if (authError) authError.textContent = m.message || 'Please choose Sign Up to create your account first.';
                     this.connecting = false;
