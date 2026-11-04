@@ -1846,6 +1846,7 @@ async function handle(ws, m) {
     // 🔒 FIX #2/#13: issue session token for HTTP endpoints
     const sessionToken = issueSessionToken(uid);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
+    await sendPendingBroadcasts(uid, ws);
     await expireSignupBonus(uid);
     const bonusInfo = await pool.query('SELECT signup_bonus_remaining, signup_bonus_expires_at FROM users WHERE username=$1',[uid]);
     if (Number(bonusInfo.rows[0]?.signup_bonus_remaining||0)>0 && Number(bonusInfo.rows[0]?.signup_bonus_expires_at||0)>now()) send(ws,{type:'signup-bonus',amount:Number(bonusInfo.rows[0].signup_bonus_remaining),expiresAt:Number(bonusInfo.rows[0].signup_bonus_expires_at)});
@@ -2108,19 +2109,32 @@ app.get('/admin/users', async (req, res) => {
 app.get('/admin/finance-summary', async (req,res)=>{
   if(!isAdmin(req)) return res.status(403).json({ok:false});
   try {
-    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD') day,
+    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day,
       COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
       COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
       FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
-    const fee=await pool.query(`SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'UTC','YYYY-MM-DD') day, COALESCE(SUM(prize_pool)*0.20,0) fee
-      FROM round_snapshots GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
+    const fee=await pool.query(`SELECT day, SUM(pool_amount)*0.20 AS fee FROM (
+        SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day, prize_pool AS pool_amount
+          FROM round_snapshots
+        UNION ALL
+        SELECT to_char(to_timestamp(COALESCE(completed_at,ends_at)/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day, prize_pool AS pool_amount
+          FROM bingo_rounds WHERE phase='results'
+      ) game_pools GROUP BY day ORDER BY day DESC LIMIT 90`);
     const totals=await pool.query(`SELECT COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
       COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals FROM transactions`);
-    const feeTotal=await pool.query('SELECT COALESCE(SUM(prize_pool)*0.20,0) fee FROM round_snapshots');
-    const map=new Map(); for(const r of tx.rows) map.set(r.day,{date:r.day,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
+    const feeTotal=await pool.query(`SELECT COALESCE(SUM(pool_amount)*0.20,0) fee FROM (
+        SELECT prize_pool AS pool_amount FROM round_snapshots
+        UNION ALL SELECT prize_pool AS pool_amount FROM bingo_rounds WHERE phase='results'
+      ) game_pools`);
+    const todayRes=await pool.query("SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') day");
+    const today=todayRes.rows[0].day;
+    const map=new Map();
+    for(const r of tx.rows) map.set(r.day,{date:r.day,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
     for(const r of fee.rows){const x=map.get(r.day)||{date:r.day,deposits:0,withdrawals:0,serviceFee:0};x.serviceFee=Number(r.fee);map.set(r.day,x);}
-    res.json({ok:true,totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:Number(feeTotal.rows[0].fee)},daily:[...map.values()].sort((a,b)=>b.date.localeCompare(a.date))});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
+    if(!map.has(today))map.set(today,{date:today,deposits:0,withdrawals:0,serviceFee:0});
+    const daily=[...map.values()].sort((a,b)=>b.date.localeCompare(a.date));
+    res.json({ok:true,timezone:'Africa/Addis_Ababa',totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:Number(feeTotal.rows[0].fee)},today:daily.find(x=>x.date===today),daily});
+  }catch(e){console.error('[FINANCE-SUMMARY]',e);res.status(500).json({ok:false,error:e.message});}
 });
 
 app.post('/admin/delete-user', async(req,res)=>{
@@ -2155,11 +2169,11 @@ app.post('/admin/remove-broadcast', async(req,res)=>{
     for(const set of conns.values())for(const ws of set)if(ws.readyState===1)send(ws,{type:'sticky-broadcast-remove',broadcastId:id});
     res.json({ok:true,removed:r.rowCount});}catch(e){res.status(500).json({ok:false,error:e.message});}
 });
-app.get('/admin/security-scans',async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false});try{const r=await pool.query('SELECT scanned,flagged,findings,created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30');res.json({ok:true,scans:r.rows});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.get('/admin/security-scans',async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false});try{const [r,u]=await Promise.all([pool.query('SELECT scanned,flagged,findings,created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30'),pool.query("SELECT username,display_name,block_signals,updated_at FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC")]);const flaggedUsers=u.rows.map(x=>{let parsed=x.block_signals||{};if(typeof parsed==='string'){try{parsed=JSON.parse(parsed);}catch{parsed={raw:parsed};}}return {uid:x.username,name:x.display_name,signals:Array.isArray(parsed?.signals)?parsed.signals:[],detectedAt:Number(parsed?.detectedAt||x.updated_at||0)};});res.json({ok:true,scans:r.rows,flaggedUsers});}catch(e){res.status(500).json({ok:false,error:e.message});}});
 
 app.post('/admin/scan-suspicious', async(req,res)=>{
   if(!isAdmin(req))return res.status(403).json({ok:false});
-  try { const r=await runSuspiciousAccountScan(); res.json({ok:true,...r}); }catch(e){res.status(500).json({ok:false,error:e.message});}
+  try { const r=await runSuspiciousAccountScan(); const f=await pool.query("SELECT username,display_name,block_signals,updated_at FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC"); const flaggedUsers=f.rows.map(x=>{let p=x.block_signals||{};if(typeof p==='string'){try{p=JSON.parse(p);}catch{p={};}}return {uid:x.username,name:x.display_name,signals:Array.isArray(p?.signals)?p.signals:[],detectedAt:Number(p?.detectedAt||x.updated_at||0)};});res.json({ok:true,...r,flaggedUsers}); }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 
 app.get('/admin/user-details', async (req, res) => {
@@ -2419,6 +2433,30 @@ app.post('/admin/force-approve', async (req, res) => {
 // ============================================================================
 // 🔒 FIX #9: data pruning
 // ============================================================================
+async function expireSignupBonus(uid){
+  const c=await pool.connect();
+  try{
+    await c.query('BEGIN');
+    const r=await c.query('SELECT play_wallet,signup_bonus_remaining,signup_bonus_expires_at FROM users WHERE username=$1 FOR UPDATE',[uid]);
+    if(!r.rows.length){await c.query('COMMIT');return false;}
+    const u=r.rows[0], remaining=Number(u.signup_bonus_remaining||0), expires=Number(u.signup_bonus_expires_at||0), at=now();
+    if(remaining<=0 || !expires || expires>at){await c.query('COMMIT');return false;}
+    const deduction=Math.min(Math.max(0,Number(u.play_wallet||0)),remaining);
+    await c.query('UPDATE users SET play_wallet=GREATEST(0,play_wallet-$1),signup_bonus_remaining=0,updated_at=$2,wallet_updated_at=$2 WHERE username=$3',[deduction,at,uid]);
+    await c.query('COMMIT');
+    await addNotification(uid,{type:'notification',message:'Your 15 Birr welcome bonus has expired. Any unused bonus amount has been removed from your play wallet.',status:'info'});
+    return true;
+  }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
+}
+
+async function sendPendingBroadcasts(uid, ws){
+  const r=await pool.query("SELECT id,type,message,status,timestamp,dismiss_policy,broadcast_id FROM notifications WHERE username=$1 AND type IN ('broadcast','sticky_broadcast') ORDER BY timestamp ASC",[uid]);
+  for(const n of r.rows){
+    if(ws.readyState!==1)break;
+    send(ws,{type:'notification',notificationType:n.type,id:n.id,message:n.message,status:n.status,timestamp:Number(n.timestamp||0),dismissPolicy:n.dismiss_policy||'user',broadcastId:n.broadcast_id||null});
+  }
+}
+
 async function expireAllSignupBonuses(){
   const r=await pool.query('SELECT username FROM users WHERE signup_bonus_remaining>0 AND signup_bonus_expires_at>0 AND signup_bonus_expires_at<=$1',[now()]);
   for(const row of r.rows){try{await expireSignupBonus(row.username);await sendWallet(row.username);}catch(e){console.error('[BONUS-EXPIRY]',row.username,e.message);}}
