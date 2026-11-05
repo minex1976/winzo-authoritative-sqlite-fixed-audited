@@ -223,7 +223,7 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS bingo_entries (
         id VARCHAR(128) PRIMARY KEY, round_id VARCHAR(64) NOT NULL REFERENCES bingo_rounds(id),
         username VARCHAR(64) NOT NULL, card_number INTEGER NOT NULL, card_data JSONB NOT NULL,
-        stake NUMERIC NOT NULL, created_at BIGINT NOT NULL, UNIQUE(round_id, username, card_number)
+        stake NUMERIC NOT NULL, created_at BIGINT NOT NULL, bonus_funded BOOLEAN NOT NULL DEFAULT FALSE, UNIQUE(round_id, username, card_number)
       );
       CREATE TABLE IF NOT EXISTS bingo_wallet_transactions (
         id VARCHAR(128) PRIMARY KEY, round_id VARCHAR(64) NOT NULL, username VARCHAR(64) NOT NULL,
@@ -236,6 +236,7 @@ async function initDb() {
         prize NUMERIC NOT NULL, call_number INTEGER, created_at BIGINT NOT NULL,
         UNIQUE(round_id, username, card_number)
       );
+      ALTER TABLE bingo_entries ADD COLUMN IF NOT EXISTS bonus_funded BOOLEAN NOT NULL DEFAULT FALSE;
       CREATE INDEX IF NOT EXISTS idx_bingo_entries_round ON bingo_entries(round_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bingo_entries_round_card ON bingo_entries(round_id, card_number);
       CREATE INDEX IF NOT EXISTS idx_bingo_results_user ON bingo_results(username, created_at DESC);
@@ -594,6 +595,7 @@ async function resolveTelegramUser(user, referredBy = null) {
 async function walletFor(username) {
   const clean = safeUid(username);
   if (!clean) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
+  await expireSignupBonus(clean);
   const res = await pool.query('SELECT main_wallet, play_wallet, pending_withdrawal, referral_earnings, wallet_updated_at FROM users WHERE username = $1', [clean]);
   if (res.rows.length === 0) return { main: 0, play: 0, pending: 0, refEarn: 0, updatedAt: 0 };
   const u = res.rows[0];
@@ -1091,12 +1093,12 @@ class Room {
     if (row?.taken_json) for (const [n, uid] of Object.entries(JSON.parse(row.taken_json))) this.taken.set(Number(n), uid);
     if (row?.players_json) {
       const saved = JSON.parse(row.players_json);
-      for (const [uid, p] of Object.entries(saved)) this.players.set(uid, { uid, picks: Array.isArray(p.picks) ? p.picks.map(Number) : [], isBot: !!p.isBot, active: !!p.active, displayName: String(p.displayName || uid) });
+      for (const [uid, p] of Object.entries(saved)) this.players.set(uid, { uid, picks: Array.isArray(p.picks) ? p.picks.map(Number) : [], bonusPicks: Array.isArray(p.bonusPicks) ? p.bonusPicks.map(Number) : [], isBot: !!p.isBot, active: !!p.active, displayName: String(p.displayName || uid) });
     }
   }
   snapshot() {
     const players = {};
-    for (const [uid, p] of this.players) if (p.active || p.isBot) players[uid] = { name: p.displayName || uid, picks: [...p.picks], isBot: !!p.isBot, bet: this.bet };
+    for (const [uid, p] of this.players) if (p.active || p.isBot) players[uid] = { name: p.displayName || uid, picks: [...p.picks], bonusPicks: [...(p.bonusPicks || [])], isBot: !!p.isBot, bet: this.bet };
     const activePlayers = [...this.players.values()].filter(p => p.active);
     const totalPicks = activePlayers.reduce((sum, p) => sum + p.picks.length, 0);
     const totalBets = totalPicks * this.bet;
@@ -1115,7 +1117,7 @@ class Room {
   }
   async persist() {
     const players = {};
-    for (const [uid, p] of this.players) players[uid] = { picks: [...p.picks], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid };
+    for (const [uid, p] of this.players) players[uid] = { picks: [...p.picks], bonusPicks: [...(p.bonusPicks || [])], isBot: !!p.isBot, active: !!p.active, displayName: p.displayName || uid };
     const taken = Object.fromEntries(this.taken.entries());
     await pool.query(`
       INSERT INTO rooms (id, bet, phase, round, ends_at, winning_number, winners_json, prize_pool, last_result_json, taken_json, players_json, updated_at, server_seed, server_seed_hash)
@@ -1148,18 +1150,22 @@ async function loadRooms() {
 async function saveRoom(room) { await room.persist(); room.broadcast(); }
 
 async function debit(uid, amount) {
+  await expireSignupBonus(uid);
   const amt = toFiniteNumber(amount, 0);
   if (amt <= 0) return { ok: false, reason: 'bad-amount' };
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const res = await client.query('SELECT play_wallet FROM users WHERE username = $1 FOR UPDATE', [uid]);
+    const res = await client.query('SELECT play_wallet,signup_bonus_remaining,signup_bonus_expires_at FROM users WHERE username = $1 FOR UPDATE', [uid]);
     if (res.rows.length === 0) throw new Error('user-not-found');
     if (Number(res.rows[0].play_wallet) < amt) throw new Error('insufficient');
+    const bonusBefore = Number(res.rows[0].signup_bonus_expires_at||0) > now() ? Number(res.rows[0].signup_bonus_remaining||0) : 0;
+    const depositBalance = Math.max(0, Number(res.rows[0].play_wallet||0) - bonusBefore);
+    const bonusUsed = Math.min(bonusBefore, Math.max(0, amt - depositBalance));
     await client.query('UPDATE users SET play_wallet = play_wallet - $1, signup_bonus_remaining = GREATEST(0,signup_bonus_remaining-GREATEST(0,$1-(play_wallet-signup_bonus_remaining))), updated_at = $2, wallet_updated_at = $2 WHERE username = $3', [amt, now(), uid]);
     await client.query('COMMIT');
     await sendWallet(uid);
-    return { ok: true };
+    return { ok: true, bonusUsed };
   } catch (e) {
     await client.query('ROLLBACK');
     await sendWallet(uid);
@@ -1182,14 +1188,14 @@ async function pickIntent(room, uid, num) {
     if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
     if (!(num >= 1 && num <= 200)) return { ok: false, reason: 'range' };
     let p = room.players.get(uid);
-    if (!p) { p = { uid, picks: [], isBot: false, active: true, displayName: uid }; room.players.set(uid, p); }
+    if (!p) { p = { uid, picks: [], bonusPicks: [], isBot: false, active: true, displayName: uid }; room.players.set(uid, p); }
     p.active = true;
     if (p.picks.length >= MAX_PICKS) return { ok: false, reason: 'max-picks' };
     if (p.picks.includes(num)) return { ok: false, reason: 'duplicate' };
     if (room.taken.has(num)) return { ok: false, reason: 'taken' };
     const d = await debit(uid, room.bet);
     if (!d.ok) return d;
-    room.taken.set(num, uid); p.picks.push(num); room.dirty = true;
+    room.taken.set(num, uid); p.picks.push(num); if(d.bonusUsed>0){p.bonusPicks=p.bonusPicks||[];p.bonusPicks.push(num);} room.dirty = true;
     return { ok: true };
   });
 }
@@ -1199,8 +1205,9 @@ async function unpickIntent(room, uid, num) {
     if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
     const p = room.players.get(uid);
     if (!p || !p.picks.includes(num) || room.taken.get(num) !== uid) return { ok: false, reason: 'not-picked' };
+    if ((p.bonusPicks||[]).includes(num)) return { ok:false, reason:'bonus-pick-locked' };
     if (!(await refundWager(uid, room.bet))) return { ok: false, reason: 'refund-failed' };
-    p.picks = p.picks.filter(n => n !== num); room.taken.delete(num); room.dirty = true;
+    p.picks = p.picks.filter(n => n !== num); p.bonusPicks=(p.bonusPicks||[]).filter(n=>n!==num); room.taken.delete(num); room.dirty = true;
     return { ok: true };
   });
 }
@@ -1209,7 +1216,7 @@ async function refundDisconnectedPlayer(room, p) {
   if (!p || p.isBot || !p.picks.length) return;
   await refundWager(p.uid, room.bet * p.picks.length);
   for (const n of p.picks) if (room.taken.get(n) === p.uid) room.taken.delete(n);
-  p.picks = []; p.active = false; room.dirty = true;
+  p.picks = []; p.bonusPicks=[]; p.active = false; room.dirty = true;
 }
 
 // 🔒 FIX #1: provably-fair draw using committed server seed.
@@ -1506,7 +1513,7 @@ function scheduleBingoBots(round){
             await db.query('BEGIN');
             const locked=await db.query('SELECT phase FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
             if(!locked.rows.length||locked.rows[0].phase!=='selection'){await db.query('ROLLBACK');return;}
-            await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,uid,card,JSON.stringify(grid),round.stake,Date.now()]);
+            await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at,bonus_funded) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8)',[id,round.id,uid,card,JSON.stringify(grid),round.stake,Date.now(),false]);
             await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[round.stake,round.id]);
             await db.query('COMMIT');
           } catch(e){await db.query('ROLLBACK').catch(()=>{});throw e;} finally{db.release();}
@@ -1541,7 +1548,7 @@ async function restoreOneBingoRound(stake){
     round.serverSeedHash = crypto.createHash('sha256').update(round.serverSeed).digest('hex');
   }
   round.pool=bingoShuffle(Array.from({length:75},(_,i)=>i+1).filter(n=>!round.called.includes(n)));
-  const entries=await pool.query('SELECT e.id,e.username,e.card_number,e.card_data,e.stake,u.display_name FROM bingo_entries e LEFT JOIN users u ON u.username=e.username WHERE e.round_id=$1',[round.id]),found=[];
+  const entries=await pool.query('SELECT e.id,e.username,e.card_number,e.card_data,e.stake,e.bonus_funded,u.display_name FROM bingo_entries e LEFT JOIN users u ON u.username=e.username WHERE e.round_id=$1',[round.id]),found=[];
   const restoredCalledSet=new Set(round.called);
   for(const e of entries.rows){const grid=typeof e.card_data==='string'?JSON.parse(e.card_data):e.card_data;const pattern=bingoPattern(grid,round.called,restoredCalledSet);const entry={id:e.id,uid:e.username,name:e.display_name||e.username,cardNumber:Number(e.card_number),grid,stake:Number(e.stake),won:!!pattern};round.entries.set(e.id,entry);if(pattern&&round.phase==='playing')found.push({...entry,pattern});}
   bingoRounds.set(stake,round);
@@ -1588,7 +1595,7 @@ function bingoPublicState(round,uid,snapshot=null){
     roundId:shared.roundId,gameId:shared.gameId,roundNumber:shared.roundNumber,
     phase:shared.phase,stake:shared.stake,prizePool:shared.prizePool,
     called:shared.called,taken:shared.taken,playerCount:shared.playerCount,
-    endsAt:shared.endsAt,mySelections:mine.map(e=>e.cardNumber),
+    endsAt:shared.endsAt,mySelections:mine.map(e=>e.cardNumber),myBonusSelections:mine.filter(e=>e.bonusFunded).map(e=>e.cardNumber),
     myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:shared.winners,
     serverSeedHash:shared.serverSeedHash,  // 🔒 FIX #7
   };
@@ -1617,6 +1624,7 @@ function bingoBroadcast(stake){
 
 // 🔒 FIX #11: idempotency key uses per-entry UUID (not card number) so re-select/unselect cycles refund correctly.
 async function bingoSelectUnlocked(ws,numbers){
+  await expireSignupBonus(ws.uid);
   const round=bingoRoundFor(ws);if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)return send(ws,{type:'bingo-error',message:'Card selection is closed for this round.'});
   if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>400)||new Set(numbers).size!==numbers.length)return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 400.'});
   for(const n of numbers)if([...round.entries.values()].some(e=>e.cardNumber===n))return send(ws,{type:'bingo-error',message:'Card number '+n+' has already been taken.'});
@@ -1630,14 +1638,20 @@ async function bingoSelectUnlocked(ws,numbers){
     const existingCount = priorCountRes.rows[0]?.c || 0;
     if (existingCount + numbers.length > 2) throw new Error('You can select up to 2 cards per round (you already have ' + existingCount + ').');
     for(const n of numbers)if(used.has(n))throw new Error('Card number '+n+' has already been taken.');
-    const user=await db.query('SELECT play_wallet FROM users WHERE username=$1 FOR UPDATE',[ws.uid]);if(!user.rows.length)throw new Error('Account not found.');if(Number(user.rows[0].play_wallet)<cost)throw new Error('Insufficient play-wallet balance.');
+    const user=await db.query('SELECT play_wallet,signup_bonus_remaining,signup_bonus_expires_at FROM users WHERE username=$1 FOR UPDATE',[ws.uid]);if(!user.rows.length)throw new Error('Account not found.');if(Number(user.rows[0].play_wallet)<cost)throw new Error('Insufficient play-wallet balance.');
+    const bonusAvailable=Number(user.rows[0].signup_bonus_expires_at||0)>Date.now()?Number(user.rows[0].signup_bonus_remaining||0):0;
+    const depositBalance=Math.max(0,Number(user.rows[0].play_wallet||0)-bonusAvailable);
+    const bonusUsed=Math.min(bonusAvailable,Math.max(0,cost-depositBalance));
+    const bonusFundedCount=Math.ceil(bonusUsed/round.stake);
     await db.query('UPDATE users SET play_wallet=play_wallet-$1,signup_bonus_remaining=GREATEST(0,signup_bonus_remaining-GREATEST(0,$1-(play_wallet-signup_bonus_remaining))),wallet_updated_at=$2 WHERE username=$3',[cost,Date.now(),ws.uid]);
-    for(const n of numbers){
+    for(let entryIndex=0;entryIndex<numbers.length;entryIndex++){
+      const n=numbers[entryIndex];
+      const bonusFunded=entryIndex<bonusFundedCount;
       const grid=bingoNewCard(),id=crypto.randomUUID();
-      await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);
+      await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at,bonus_funded) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now(),bonusFunded]);
       // 🔒 FIX #11: use entry UUID in key
       await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[crypto.randomUUID(),round.id,ws.uid,'stake',round.stake,'bingo-stake:'+id,Date.now()]);
-      newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,won:false});
+      newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,bonusFunded,won:false});
     }
     await db.query('UPDATE bingo_rounds SET prize_pool=prize_pool+$1 WHERE id=$2',[cost,round.id]);await db.query('COMMIT');
     for(const e of newEntries)round.entries.set(e.id,e);
@@ -1654,6 +1668,7 @@ async function bingoSelect(ws,numbers){
 }
 
 async function bingoUnselectUnlocked(ws,number){
+  await expireSignupBonus(ws.uid);
   const round=bingoRoundFor(ws);
   const n=Number(number);
   if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)
@@ -1667,9 +1682,10 @@ async function bingoUnselectUnlocked(ws,number){
     const locked=await db.query('SELECT phase,ends_at FROM bingo_rounds WHERE id=$1 FOR UPDATE',[round.id]);
     if(!locked.rows.length||locked.rows[0].phase!=='selection'||Date.now()>=Number(locked.rows[0].ends_at))
       throw new Error('Card selection is closed for this round.');
-    const entryRes=await db.query('SELECT id,stake FROM bingo_entries WHERE round_id=$1 AND username=$2 AND card_number=$3 FOR UPDATE',[round.id,ws.uid,n]);
+    const entryRes=await db.query('SELECT id,stake,bonus_funded FROM bingo_entries WHERE round_id=$1 AND username=$2 AND card_number=$3 FOR UPDATE',[round.id,ws.uid,n]);
     if(!entryRes.rows.length)throw new Error('That card is not reserved by your account.');
     removed=entryRes.rows[0];
+    if(removed.bonus_funded)throw new Error('This number was selected using your welcome bonus and cannot be unselected.');
     const refund=Number(removed.stake);
     // 🔒 FIX #11: use entry UUID in key
     const ledger=await db.query(
@@ -2658,7 +2674,7 @@ server.listen(PORT, '0.0.0.0', () => {
       startAutomaticDepositMonitor();
       runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message));
       expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message));
-      setInterval(()=>expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message)),60000);
+      setInterval(()=>expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message)),5000);
       setInterval(()=>runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message)), 6*60*60*1000);
       for (const room of Object.values(rooms)) {
         if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
