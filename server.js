@@ -535,7 +535,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       play_wallet: bot ? BOT_START_WALLET : SIGNUP_BONUS,
       signup_bonus_remaining: bot ? 0 : SIGNUP_BONUS,
       signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
-      signup_bonus_expires_at: bot ? 0 : t + DAY,
+      signup_bonus_expires_at: bot ? 0 : t + 5 * 60 * 1000,
       withdrawal_hold_until: bot ? 0 : t + DAY, withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
@@ -2240,34 +2240,54 @@ app.get('/admin/users', async (req, res) => {
 app.get('/admin/finance-summary', async (req,res)=>{
   if(!isAdmin(req)) return res.status(403).json({ok:false});
   try {
-    const tx=await pool.query(`SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
-      COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
-      COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
-      FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 90`);
-    const fee=await pool.query(`SELECT day_key, SUM(pool_amount)*0.20 AS fee FROM (
-        SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key, prize_pool AS pool_amount
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from||'')) ? String(req.query.from) : null;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to||'')) ? String(req.query.to) : null;
+    const excluded = String(req.query.excludeUsers||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,500);
+    const tx = await pool.query(`
+      SELECT to_char(to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
+        COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved' AND NOT (COALESCE(username,uid,wallet_uid,'') = ANY($3::text[]))),0) deposits,
+        COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
+      FROM transactions
+      WHERE ( $1::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date >= $1::date )
+        AND ( $2::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date <= $2::date )
+      GROUP BY 1 ORDER BY 1 DESC`, [from,to,excluded]);
+    // Service-fee income is 20% of prizes actually paid to human winners,
+    // not 20% of the whole prize pool or deposits.
+    const fee = await pool.query(`
+      SELECT day_key, SUM(human_prize)*0.20 AS fee FROM (
+        SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
+               COALESCE(human_win_amount,0) AS human_prize
           FROM round_snapshots
         UNION ALL
-        SELECT to_char(to_timestamp(COALESCE(completed_at,ends_at)/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key, prize_pool AS pool_amount
-          FROM bingo_rounds WHERE phase='results'
-      ) game_pools GROUP BY day_key ORDER BY day_key DESC LIMIT 90`);
-    const totals=await pool.query(`SELECT COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved'),0) deposits,
-      COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals FROM transactions`);
-    const feeTotal=await pool.query(`SELECT COALESCE(SUM(pool_amount)*0.20,0) fee FROM (
-        SELECT prize_pool AS pool_amount FROM round_snapshots
-        UNION ALL SELECT prize_pool AS pool_amount FROM bingo_rounds WHERE phase='results'
-      ) game_pools`);
-    const todayRes=await pool.query("SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key");
-    const today=todayRes.rows[0].day_key;
+        SELECT to_char(to_timestamp(COALESCE(br.completed_at,br.ends_at)/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
+               COALESCE(SUM(res.prize),0) AS human_prize
+          FROM bingo_rounds br
+          LEFT JOIN bingo_results res ON res.round_id=br.id
+         WHERE br.phase='results'
+         GROUP BY br.id, br.completed_at, br.ends_at
+      ) paid_human_prizes
+      WHERE ($1::date IS NULL OR day_key::date >= $1::date)
+        AND ($2::date IS NULL OR day_key::date <= $2::date)
+      GROUP BY day_key ORDER BY day_key DESC`, [from,to]);
+    const totals = await pool.query(`
+      SELECT
+        COALESCE(SUM(amount) FILTER(WHERE type='deposit' AND status='approved' AND NOT (COALESCE(username,uid,wallet_uid,'') = ANY($3::text[]))),0) deposits,
+        COALESCE(SUM(amount) FILTER(WHERE type='withdraw' AND status='approved'),0) withdrawals
+      FROM transactions
+      WHERE ($1::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date >= $1::date)
+        AND ($2::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date <= $2::date)`, [from,to,excluded]);
     const map=new Map();
     for(const r of tx.rows) map.set(r.day_key,{date:r.day_key,deposits:Number(r.deposits),withdrawals:Number(r.withdrawals),serviceFee:0});
     for(const r of fee.rows){const x=map.get(r.day_key)||{date:r.day_key,deposits:0,withdrawals:0,serviceFee:0};x.serviceFee=Number(r.fee);map.set(r.day_key,x);}
-    if(!map.has(today))map.set(today,{date:today,deposits:0,withdrawals:0,serviceFee:0});
     const daily=[...map.values()].sort((a,b)=>b.date.localeCompare(a.date));
-    res.json({ok:true,timezone:'Africa/Addis_Ababa',totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:Number(feeTotal.rows[0].fee)},today:daily.find(x=>x.date===today),daily});
+    const serviceFeeTotal=daily.reduce((sum,x)=>sum+Number(x.serviceFee||0),0);
+    const todayRes=await pool.query("SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key");
+    const todayKey=todayRes.rows[0].day_key;
+    res.json({ok:true,timezone:'Africa/Addis_Ababa',filters:{from,to,excludedUsers:excluded},
+      totals:{deposits:Number(totals.rows[0].deposits),withdrawals:Number(totals.rows[0].withdrawals),serviceFee:serviceFeeTotal},
+      today:daily.find(x=>x.date===todayKey)||{date:todayKey,deposits:0,withdrawals:0,serviceFee:0},daily});
   }catch(e){console.error('[FINANCE-SUMMARY]',e);res.status(500).json({ok:false,error:e.message});}
 });
-
 app.post('/admin/delete-user', async(req,res)=>{
   if(!isAdmin(req)) return res.status(403).json({ok:false});
   const uid=String(req.body?.userId||'').trim(); if(!uid)return res.status(400).json({ok:false,error:'userId required'});
