@@ -783,6 +783,10 @@
         .bingo-wallet-grid strong,
         .bingo-stats strong { color:#f5f8ff; }
 
+
+        @keyframes signupBonusBlink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+        #signupBonusNotice { animation: signupBonusBlink 1.1s ease-in-out infinite; }
+        #signupBonusNotice .bonus-countdown { color:#39e879; font-weight:900; }
 </style>
 </head>
 <body>
@@ -2205,7 +2209,7 @@
             if(left<=0){el.style.display='none';clearInterval(signupBonusCountdownTimer);signupBonusCountdownTimer=null;return;}
             const hours=Math.floor(left/3600000),minutes=Math.floor((left%3600000)/60000),seconds=Math.floor((left%60000)/1000);
             const countdown=`${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
-            el.textContent=`የ15 ብር ቦነስ አግኝተዋል። የቦነስ ስጦታው ከ${countdown} በሁዋላ ያበቃል።`;
+            el.innerHTML=`የ15 ብር ቦነስ አግኝተዋል። የቦነስ ስጦታው ከ<span class="bonus-countdown">${countdown}</span> በሁዋላ ያበቃል။`;
             el.style.display='block';
         };
         render();signupBonusCountdownTimer=setInterval(render,1000);
