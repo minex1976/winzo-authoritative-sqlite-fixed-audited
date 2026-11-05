@@ -1126,7 +1126,7 @@
         <h2 id="channelGateTitle" style="margin:8px 0;color:#fff">Winzo Telegram Channel</h2>
         <div class="channel-gate-message">እባክዎ የዊንዞ ቤተሰብ ይሁኑ</div>
         <p style="font-size:.88rem;line-height:1.6;color:#e1e4f0">Please join our Telegram channel to continue using Winzo. After joining, return here and verify your membership.</p>
-        <a id="channelJoinBtn" class="channel-gate-btn" href="https://t.me/thehtsangle" target="_blank" rel="noopener">Join Telegram Channel</a>
+        <a id="channelJoinBtn" class="channel-gate-btn" href="https://t.me/thehtsangle" target="_blank" rel="noopener" onclick="event.preventDefault();const channelUrl=this.href;try{if(window.Telegram&&Telegram.WebApp&&typeof Telegram.WebApp.openTelegramLink==='function'){Telegram.WebApp.openTelegramLink(channelUrl);}else{const opened=window.open(channelUrl,'_blank','noopener');if(!opened)window.location.assign(channelUrl);}}catch(err){window.location.assign(channelUrl);}return false;">Join Telegram Channel</a>
         <button id="channelVerifyBtn" class="channel-gate-btn" type="button">I Have Joined — Verify</button>
         <div id="channelGateStatus" aria-live="polite"></div>
       </div>
