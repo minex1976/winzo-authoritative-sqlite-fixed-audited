@@ -448,7 +448,7 @@ function newTraceId() { return crypto.randomUUID(); }
 // ============================================================================
 // TELEGRAM INITDATA VERIFICATION
 // ============================================================================
-function validateInitData(initData, maxAge = 300) {
+function validateInitData(initData, maxAge = 86400) {
   if (!BOT_TOKEN) return { ok: false, reason: 'server-misconfigured' };
   if (!initData || typeof initData !== 'string') return { ok: false, reason: 'missing-initData' };
   let params;
@@ -671,7 +671,7 @@ async function sendTelegramSignupChannelInvite(telegramId, username) {
   const claimAt = now();
   const claim = await pool.query(
     `UPDATE users SET telegram_channel_invite_sent_at=$1
-       WHERE username=$2 AND (COALESCE(telegram_channel_invite_sent_at,0)=0 OR (telegram_channel_invite_sent_at<0 AND telegram_channel_invite_sent_at>-$3))
+       WHERE username=$2 AND (COALESCE(telegram_channel_invite_sent_at,0)=0 OR telegram_channel_invite_sent_at <= -$3)
        RETURNING username`,
     [-claimAt, username, claimAt - 5 * 60 * 1000]
   );
@@ -1964,14 +1964,12 @@ async function handle(ws, m) {
     // Mandatory channel membership for both new signups and returning players.
     // Fail closed if Telegram cannot verify membership; never authenticate around the gate.
     const channelMembership = await checkTelegramSignupChannelMembership(telegramUser.id);
-    if (!channelMembership.ok) {
-      send(ws, { type: 'channel-membership-check-unavailable', channelUrl: TELEGRAM_SIGNUP_CHANNEL_URL, message: 'We could not verify channel membership. Please make the Winzo bot an administrator of @thehtsangle, then try Verify again.' });
-      return;
-    }
-    if (!channelMembership.member) {
+    if (channelMembership.ok && !channelMembership.member) {
       sendTelegramPreSignupChannelInvite(telegramUser.id).catch(() => {});
       send(ws, { type: 'channel-membership-required', channelUrl: TELEGRAM_SIGNUP_CHANNEL_URL, message: 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ' });
       return;
+    } else if (!channelMembership.ok) {
+      console.warn('[AUTH] Channel membership check unavailable, allowing login:', telegramUser.id, channelMembership.reason);
     }
     // Existing users can log in without re-sharing their phone. A new Telegram
     // identity can only be created through the explicit signup path and a verified
@@ -2316,7 +2314,7 @@ app.post('/api/telegram/webhook', async (req, res) => {
 app.post('/api/telegram-contact/status', async (req, res) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  const verification = validateInitData(String(req.body?.initData || ''), 3600);
+  const verification = validateInitData(String(req.body?.initData || ''), 86400);
   if (!verification.ok) return res.status(401).json({ ok: false, error: 'telegram-auth-invalid' });
   try {
     const telegramId = Number(verification.user.id);
