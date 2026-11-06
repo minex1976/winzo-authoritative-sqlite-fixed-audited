@@ -2236,7 +2236,7 @@
             if(left<=0){el.style.display='none';clearInterval(signupBonusCountdownTimer);signupBonusCountdownTimer=null;if(client)client.walletRefresh();return;}
             const hours=Math.floor(left/3600000),minutes=Math.floor((left%3600000)/60000),seconds=Math.floor((left%60000)/1000);
             const countdown=`${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
-            el.innerHTML=`የ15 ብር ቦነስ አግኝተዋል። የቦነስ ስጦታው ከ<span class="bonus-countdown">${countdown}</span> በሁዋላ ያበቃል။`;
+            el.innerHTML=`የ15 ብር ቦነስ አግኝተዋል። የቦነስ ስጦታው ከ<span class="bonus-countdown">${countdown}</span> በሁዋላ ያበቃል።`;
             el.style.display='block';
         };
         render();signupBonusCountdownTimer=setInterval(render,1000);
@@ -3678,7 +3678,6 @@
           !hasServerState ||
           !!bingoUi.submitting ||
           bingoUi.unselecting.has(n) ||
-          (bonusMine.has(n) && isServerPick) ||
           st.phase!=='selection' ||
           (taken.has(n) && !isSelected) ||
           (!isSelected && allMine.size>=2 && !isServerPick) ||
@@ -3687,7 +3686,6 @@
           if(bingoUi.submitting || !bingoUi.state || bingoUi.state.phase!=='selection') return;
           const sMine = Array.isArray(bingoUi.state.mySelections) ? bingoUi.state.mySelections : [];
           if (sMine.includes(n)) {
-            if (bonusMine.has(n)) { bingoNotice('This number was selected using your welcome bonus and cannot be unselected.'); return; }
             bingoUi.unselecting.add(n);
             renderBingoGrid();
             bingoSend('unselect', { number:n, stake: currentBet === 30 ? 30 : 15 });
