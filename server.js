@@ -26,8 +26,6 @@ const pool = new Pool({
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
-const TELEGRAM_SIGNUP_CHANNEL_URL = 'https://t.me/thehtsangle';
-const TELEGRAM_SIGNUP_CHANNEL_ID = String(process.env.TELEGRAM_SIGNUP_CHANNEL_ID || '@thehtsangle').trim();
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
 // 🔒 FIX #3: SMS webhook secret is REQUIRED. No hardcoded fallback.
@@ -210,7 +208,6 @@ async function initDb() {
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS phone_number VARCHAR(64);
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_bonus_expires_at BIGINT DEFAULT 0;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_channel_invite_sent_at BIGINT DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT DEFAULT 0;
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismiss_policy VARCHAR(16) DEFAULT 'user';
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_by VARCHAR(64);
@@ -615,86 +612,6 @@ async function sendWallet(uid) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-// Membership is required before any player can authenticate. The bot must be an
-// administrator in @thehtsangle for Telegram getChatMember to reliably check users.
-async function checkTelegramSignupChannelMembership(telegramId) {
-  if (!BOT_TOKEN) return { ok: false, member: false, reason: 'bot-not-configured' };
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatMember`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_SIGNUP_CHANNEL_ID, user_id: Number(telegramId) })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.ok || !result.result) {
-      console.error('[TELEGRAM-CHANNEL-CHECK] API failure:', result.description || response.status);
-      return { ok: false, member: false, reason: 'membership-check-unavailable' };
-    }
-    const member = result.result;
-    const isMember = ['creator', 'administrator', 'member'].includes(member.status) ||
-      (member.status === 'restricted' && member.is_member === true);
-    return { ok: true, member: isMember, status: member.status };
-  } catch (error) {
-    console.error('[TELEGRAM-CHANNEL-CHECK] request failed:', error.message);
-    return { ok: false, member: false, reason: 'membership-check-unavailable' };
-  }
-}
-
-// A user blocked at the mandatory membership gate may not have an account row yet.
-// Send a best-effort direct message with the same join link before returning the gate.
-// The in-memory cooldown prevents repeated Verify taps from spamming the user.
-const preSignupInviteAt = new Map();
-async function sendTelegramPreSignupChannelInvite(telegramId) {
-  if (!BOT_TOKEN || !telegramId) return false;
-  const id = String(telegramId);
-  const last = Number(preSignupInviteAt.get(id) || 0);
-  if (now() - last < 30 * 60 * 1000) return false;
-  preSignupInviteAt.set(id, now());
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: Number(telegramId), text: 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ\nPlease join the official Winzo Telegram channel, then return to the game and tap Verify.', reply_markup: { inline_keyboard: [[{ text: 'Join Telegram Channel', url: TELEGRAM_SIGNUP_CHANNEL_URL }]] } })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API HTTP ${response.status}`);
-    return true;
-  } catch (error) {
-    console.warn('[TELEGRAM-CHANNEL-INVITE] pre-signup DM unavailable:', error.message);
-    return false; // The in-app Join button remains available as a fallback.
-  }
-}
-
-// Telegram does not allow bots to silently add arbitrary users to a channel.
-// After signup, send the user a direct message with the channel's public join link.
-// The timestamp claim prevents duplicate invitations if signup is retried.
-async function sendTelegramSignupChannelInvite(telegramId, username) {
-  if (!BOT_TOKEN || !telegramId || !username) return { ok: false, reason: 'bot-not-configured' };
-  const claimAt = now();
-  const claim = await pool.query(
-    `UPDATE users SET telegram_channel_invite_sent_at=$1
-       WHERE username=$2 AND (COALESCE(telegram_channel_invite_sent_at,0)=0 OR telegram_channel_invite_sent_at <= -$3)
-       RETURNING username`,
-    [-claimAt, username, claimAt - 5 * 60 * 1000]
-  );
-  if (!claim.rows.length) return { ok: true, skipped: true };
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: Number(telegramId),
-        text: 'Welcome to Winzo! Please join our official Telegram channel to receive updates and announcements.',
-        reply_markup: { inline_keyboard: [[{ text: 'Join Telegram Channel', url: TELEGRAM_SIGNUP_CHANNEL_URL }]] }
-      })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API HTTP ${response.status}`);
-    await pool.query('UPDATE users SET telegram_channel_invite_sent_at=$1 WHERE username=$2', [now(), username]);
-    return { ok: true };
-  } catch (error) {
-    await pool.query('UPDATE users SET telegram_channel_invite_sent_at=0 WHERE username=$1 AND telegram_channel_invite_sent_at=$2', [username, -claimAt]).catch(() => {});
-    throw error;
-  }
-}
 
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
@@ -1961,16 +1878,7 @@ async function handle(ws, m) {
       'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
       [Number(telegramUser.id)]
     );
-    // Mandatory channel membership for both new signups and returning players.
-    // Fail closed if Telegram cannot verify membership; never authenticate around the gate.
-    const channelMembership = await checkTelegramSignupChannelMembership(telegramUser.id);
-    if (channelMembership.ok && !channelMembership.member) {
-      sendTelegramPreSignupChannelInvite(telegramUser.id).catch(() => {});
-      send(ws, { type: 'channel-membership-required', channelUrl: TELEGRAM_SIGNUP_CHANNEL_URL, message: 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ' });
-      return;
-    } else if (!channelMembership.ok) {
-      console.warn('[AUTH] Channel membership check unavailable, allowing login:', telegramUser.id, channelMembership.reason);
-    }
+
     // Existing users can log in without re-sharing their phone. A new Telegram
     // identity can only be created through the explicit signup path and a verified
     // Telegram contact webhook record. This check happens before resolveTelegramUser,
@@ -2025,11 +1933,7 @@ async function handle(ws, m) {
     // 🔒 FIX #2/#13: issue session token for HTTP endpoints
     const sessionToken = issueSessionToken(uid);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
-    if (m.authMode === 'signup') {
-      sendTelegramSignupChannelInvite(telegramUser.id, uid).catch(error =>
-        console.warn('[TELEGRAM-CHANNEL-INVITE] failed for signup', uid, error.message)
-      );
-    }
+
     await sendPendingBroadcasts(uid, ws);
     await expireSignupBonus(uid);
     const bonusInfo = await pool.query('SELECT signup_bonus_remaining, signup_bonus_expires_at FROM users WHERE username=$1',[uid]);
