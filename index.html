@@ -792,14 +792,6 @@
         #signupBonusNotice { animation: signupBonusBlink 1.1s ease-in-out infinite; }
         #signupBonusNotice .bonus-countdown { color:#39e879; font-weight:900; }
 
-    #channelMembershipGate{display:none;position:fixed;inset:0;z-index:100500;background:rgba(5,8,22,.94);align-items:center;justify-content:center;padding:22px;box-sizing:border-box}
-    #channelMembershipGate.active{display:flex}
-    #channelMembershipGate .channel-gate-card{width:min(420px,100%);padding:25px 20px;border-radius:22px;text-align:center;background:linear-gradient(145deg,#24134b,#102b45);border:1px solid rgba(255,204,68,.65);box-shadow:0 15px 50px rgba(0,0,0,.55);color:#fff}
-    #channelMembershipGate .channel-gate-message{font-size:1.15rem;line-height:1.8;font-weight:900;color:#ffdf83;margin:10px 0 20px}
-    #channelMembershipGate .channel-gate-btn{display:block;width:100%;box-sizing:border-box;padding:14px 12px;border:0;border-radius:14px;font-weight:900;font-size:1rem;text-decoration:none;margin-top:12px;cursor:pointer}
-    #channelJoinBtn{background:linear-gradient(110deg,#ffcf48,#ff9c24);color:#24133e}
-    #channelVerifyBtn{background:linear-gradient(110deg,#35d98a,#13a96b);color:#062d20}
-    #channelGateStatus{min-height:20px;font-size:.8rem;color:#d6d9e8;margin-top:12px}
 
 </style>
 </head>
@@ -1121,18 +1113,6 @@
         <div id="ladderAdTitle" class="ladder-ad-title">WINZO LADDER</div>
         <div class="ladder-ad-message">በቅርብ ጊዜ ይጀምራል!</div>
         <button id="ladderAdClose" class="ladder-ad-close" type="button">OK</button>
-      </div>
-    </div>
-
-    <div id="channelMembershipGate" role="dialog" aria-modal="true" aria-labelledby="channelGateTitle">
-      <div class="channel-gate-card">
-        <div style="font-size:2.2rem">📢</div>
-        <h2 id="channelGateTitle" style="margin:8px 0;color:#fff">Winzo Telegram Channel</h2>
-        <div class="channel-gate-message">እባክዎ የዊንዞ ቤተሰብ ይሁኑ</div>
-        <p style="font-size:.88rem;line-height:1.6;color:#e1e4f0">Please join our Telegram channel to continue using Winzo. After joining, return here and verify your membership.</p>
-        <a id="channelJoinBtn" class="channel-gate-btn" href="https://t.me/thehtsangle" target="_blank" rel="noopener noreferrer">Join Telegram Channel</a>
-        <button id="channelVerifyBtn" class="channel-gate-btn" type="button">I Have Joined — Verify</button>
-        <div id="channelGateStatus" aria-live="polite"></div>
       </div>
     </div>
 
@@ -3139,8 +3119,6 @@
             this.ws.onmessage = ev => {
                 let m; try { m = JSON.parse(ev.data); } catch { return; }
                 if (m.type === 'authed') {
-                    const channelGate = document.getElementById('channelMembershipGate');
-                    if (channelGate) channelGate.classList.remove('active');
                     this.authenticated = true;
                     this.everAuthenticated = true;
                     this._authFailureNotified = false;
@@ -3175,27 +3153,6 @@
                 else if (m.type === 'error' && (m.message === 'phone-contact-required' || m.reason === 'phone-contact-required')) {
                     if (authError) authError.textContent = 'Please share your phone number through Telegram before signing up.';
                     if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
-                }
-                else if (m.type === 'channel-membership-required' || m.type === 'channel-membership-check-unavailable') {
-                    const gate = document.getElementById('channelMembershipGate');
-                    const status = document.getElementById('channelGateStatus');
-                    const verifyBtn = document.getElementById('channelVerifyBtn');
-                    const joinBtn = document.getElementById('channelJoinBtn');
-                    if (gate) gate.classList.add('active');
-                    if (joinBtn && m.channelUrl) joinBtn.href = m.channelUrl;
-                    if (status) status.textContent = m.type === 'channel-membership-check-unavailable'
-                        ? 'Membership check is temporarily unavailable. Please try again.'
-                        : (m.message || 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ');
-                    if (verifyBtn) {
-                        verifyBtn.disabled = false;
-                        verifyBtn.onclick = () => {
-                            if (status) status.textContent = 'Checking your channel membership…';
-                            verifyBtn.disabled = true;
-                            this.connect(this.initData, this.refCode, this.roomId, this.devUsername, this.authMode);
-                            setTimeout(() => { if (verifyBtn.isConnected) verifyBtn.disabled = false; }, 1800);
-                        };
-                    }
-                    this.connecting = false;
                 }
                 else if (m.type === 'login-required-signup') {
                     if (authError) authError.textContent = m.message || 'Please choose Sign Up to create your account first.';
@@ -4248,32 +4205,5 @@
         <button class="wue-ok" id="wueOk" type="button">OK</button>
       </div>
     </div>
-<script>
-(function installWinzoChannelJoinHandler(){
-  const url = 'https://t.me/thehtsangle';
-  const btn = document.getElementById('channelJoinBtn');
-  if (!btn || btn.dataset.winzoJoinHandler === '1') return;
-  btn.dataset.winzoJoinHandler = '1';
-  btn.addEventListener('click', function(event){
-    event.preventDefault();
-    const status = document.getElementById('channelGateStatus');
-    if (status) status.textContent = 'Opening the Winzo Telegram channel… Join it, return here, then tap “I Have Joined — Verify”.';
-    let opened = false;
-    try {
-      const webApp = window.Telegram && window.Telegram.WebApp;
-      if (webApp && typeof webApp.openTelegramLink === 'function') {
-        webApp.openTelegramLink(url);
-        opened = true;
-      }
-    } catch (err) { console.warn('[CHANNEL-LINK] Telegram open failed:', err && err.message); }
-    if (!opened) {
-      try {
-        const tab = window.open(url, '_blank', 'noopener,noreferrer');
-        if (!tab) window.location.href = url;
-      } catch (err) { window.location.href = url; }
-    }
-  }, {capture:true});
-})();
-</script>
 </body>
 </html>
