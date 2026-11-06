@@ -37,9 +37,9 @@ if (!SMS_WEBHOOK_SECRET) {
 }
 
 // 🔒 FIX #2/#13: Session secret for HTTP auth. Falls back to random per-process.
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-if (!process.env.SESSION_SECRET) {
-  console.warn('WARNING: SESSION_SECRET not set. HTTP sessions will not survive restart or work across instances.');
+const SESSION_SECRET = String(process.env.SESSION_SECRET || '');
+if (SESSION_SECRET.length < 32) {
+  throw new Error('FATAL: SESSION_SECRET must be configured with at least 32 characters.');
 }
 
 // 🔒 FIX #4: No hardcoded IP salt. Random per-process if unset.
@@ -78,6 +78,12 @@ const DEPOSIT_RATE_LIMIT_MAX = Number(process.env.DEPOSIT_RATE_MAX || 15);
 const DUPLICATE_SMS_WINDOW_MS = 60 * 1000;
 const MAX_IMAGE_BYTES = 2_000_000;
 const WS_MAX_PAYLOAD = 5 * 1024 * 1024;
+const WS_ALLOWED_ORIGINS = new Set(String(process.env.WS_ALLOWED_ORIGINS || 'https://minex1976.github.io,https://winzo-authoritative-sqlite-fixed-audited.app.aletcloud.com')
+  .split(',').map(v => v.trim()).filter(Boolean));
+const WS_ALLOW_NO_ORIGIN = process.env.WS_ALLOW_NO_ORIGIN === 'true';
+const WS_MAX_CONNECTIONS_PER_IP = Math.max(2, Number(process.env.WS_MAX_CONNECTIONS_PER_IP || 8));
+const WS_CONNECTION_RATE_WINDOW_MS = 60_000;
+const WS_CONNECTION_RATE_MAX = Math.max(5, Number(process.env.WS_CONNECTION_RATE_MAX || 20));
 
 // 🔒 FIX #5: Multi-account detection thresholds.
 const MULTI_ACCOUNT_IP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_IP_THRESHOLD || 5);
@@ -630,6 +636,30 @@ async function checkTelegramSignupChannelMembership(telegramId) {
   } catch (error) {
     console.error('[TELEGRAM-CHANNEL-CHECK] request failed:', error.message);
     return { ok: false, member: false, reason: 'membership-check-unavailable' };
+  }
+}
+
+// A user blocked at the mandatory membership gate may not have an account row yet.
+// Send a best-effort direct message with the same join link before returning the gate.
+// The in-memory cooldown prevents repeated Verify taps from spamming the user.
+const preSignupInviteAt = new Map();
+async function sendTelegramPreSignupChannelInvite(telegramId) {
+  if (!BOT_TOKEN || !telegramId) return false;
+  const id = String(telegramId);
+  const last = Number(preSignupInviteAt.get(id) || 0);
+  if (now() - last < 30 * 60 * 1000) return false;
+  preSignupInviteAt.set(id, now());
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(telegramId), text: 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ\nPlease join the official Winzo Telegram channel, then return to the game and tap Verify.', reply_markup: { inline_keyboard: [[{ text: 'Join Telegram Channel', url: TELEGRAM_SIGNUP_CHANNEL_URL }]] } })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API HTTP ${response.status}`);
+    return true;
+  } catch (error) {
+    console.warn('[TELEGRAM-CHANNEL-INVITE] pre-signup DM unavailable:', error.message);
+    return false; // The in-app Join button remains available as a fallback.
   }
 }
 
@@ -1849,10 +1879,23 @@ setInterval(()=>{for(const round of bingoRounds.values())bingoTick(round).catch(
 // WEBSOCKET SETUP
 // ============================================================================
 const conns = new Map();
+const wsIpConnections = new Map();
+const wsIpAttempts = new Map();
+function allowWsConnection(ip) {
+  const key = normalizedClientIp(ip || 'unknown');
+  const t = now();
+  const recent = (wsIpAttempts.get(key) || []).filter(x => x > t - WS_CONNECTION_RATE_WINDOW_MS);
+  if (recent.length >= WS_CONNECTION_RATE_MAX) return false;
+  const active = Number(wsIpConnections.get(key) || 0);
+  if (active >= WS_MAX_CONNECTIONS_PER_IP) return false;
+  recent.push(t); wsIpAttempts.set(key, recent); wsIpConnections.set(key, active + 1);
+  return true;
+}
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  ws._ipKey = normalizedClientIp((process.env.TRUST_PROXY_HEADERS === 'true' && req && req.headers && req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : (req && req.socket && req.socket.remoteAddress)) || 'unknown');
   ws.isAlive = true; ws.authenticatedAt = null;
   ws.authTimer = setTimeout(() => { if (!ws.authed) { try { ws.close(4001, 'authentication timeout'); } catch {} } }, 10000);
   ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false; ws.lastAdminActivity = 0;
@@ -1868,6 +1911,8 @@ wss.on('connection', (ws) => {
 
   ws.on('close', async (code, reason) => {
     clearTimeout(ws.authTimer);
+    const activeForIp = Math.max(0, Number(wsIpConnections.get(ws._ipKey) || 1) - 1);
+    if (activeForIp) wsIpConnections.set(ws._ipKey, activeForIp); else wsIpConnections.delete(ws._ipKey);
     if (ws.uid) console.log(`[WS-CLOSE] uid=${ws.uid} code=${code} reason=${String(reason || '').slice(0, 80)}`);
     bingoMembers.delete(ws);
     if (!ws.uid) return;
@@ -1899,6 +1944,23 @@ async function handle(ws, m) {
       return;
     }
     const telegramUser = verification.user;
+    if (!['login', 'signup'].includes(m.authMode)) {
+      send(ws, { type: 'error', message: 'auth-failed', reason: 'invalid-auth-mode' });
+      try { ws.close(4003, 'invalid-auth-mode'); } catch {}
+      return;
+    }
+    // Limit repeated authentication attempts per source IP. This is an additional
+    // per-process safeguard; deploy multiple instances behind a shared limiter for global enforcement.
+    const authIp = websocketClientIp(ws) || 'unknown';
+    const authRateKey = `auth:${authIp}`;
+    const authNow = now();
+    const authRecent = (wsIpAttempts.get(authRateKey) || []).filter(x => x > authNow - 60_000);
+    if (authRecent.length >= 10) { send(ws, { type: 'error', message: 'rate-limited' }); try { ws.close(4008, 'auth-rate-limited'); } catch {} return; }
+    authRecent.push(authNow); wsIpAttempts.set(authRateKey, authRecent);
+    const existingAccount = await pool.query(
+      'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
+      [Number(telegramUser.id)]
+    );
     // Mandatory channel membership for both new signups and returning players.
     // Fail closed if Telegram cannot verify membership; never authenticate around the gate.
     const channelMembership = await checkTelegramSignupChannelMembership(telegramUser.id);
@@ -1907,24 +1969,22 @@ async function handle(ws, m) {
       return;
     }
     if (!channelMembership.member) {
+      sendTelegramPreSignupChannelInvite(telegramUser.id).catch(() => {});
       send(ws, { type: 'channel-membership-required', channelUrl: TELEGRAM_SIGNUP_CHANNEL_URL, message: 'እባክዎ የዊንዞ ቤተሰብ ይሁኑ' });
       return;
     }
-    // New registrations must have a Telegram-native contact share recorded by the bot webhook.
-    if (m.authMode === 'signup') {
+    // Existing users can log in without re-sharing their phone. A new Telegram
+    // identity can only be created through the explicit signup path and a verified
+    // Telegram contact webhook record. This check happens before resolveTelegramUser,
+    // which is allowed to create the account row.
+    if (m.authMode === 'login' && !existingAccount.rows.length) {
+      send(ws, { type: 'login-required-signup', message: 'No account exists for this Telegram user. Please choose Sign Up first.' });
+      return;
+    }
+    if (!existingAccount.rows.length) {
       const contact = await pool.query('SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1', [Number(telegramUser.id)]);
       if (!contact.rows.length || !contact.rows[0].phone_number) {
         send(ws, { type: 'error', message: 'phone-contact-required', reason: 'phone-contact-required' });
-        return;
-      }
-    }
-    if (m.authMode === 'login') {
-      const existing = await pool.query(
-        'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
-        [Number(telegramUser.id)]
-      );
-      if (!existing.rows.length) {
-        send(ws, { type: 'login-required-signup', message: 'No account exists for this Telegram user. Please choose Sign Up first.' });
         return;
       }
     }
@@ -2143,11 +2203,18 @@ const app = express();
 // domain. JSON POST requests trigger an OPTIONS preflight; handling CORS after
 // the route makes that preflight fail and the browser silently blocks polling.
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = String(req.headers.origin || '').trim();
+  if (origin && WS_ALLOWED_ORIGINS.has(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret, x-telegram-bot-api-secret-token');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Max-Age', '86400');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (req.method === 'OPTIONS') return origin && !WS_ALLOWED_ORIGINS.has(origin) ? res.sendStatus(403) : res.sendStatus(204);
   next();
 });
 app.use(express.json({ limit: '3mb' }));
@@ -2264,7 +2331,9 @@ app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 function sessionUid(req) {
-  return verifySessionToken(req.get('x-session-token')) || verifySessionToken(String(req.query.token || ''));
+  // Session tokens are accepted only in headers; never in URLs where they can
+  // leak through browser history, access logs, analytics, or referrer headers.
+  return verifySessionToken(req.get('x-session-token'));
 }
 
 // 🔒 FIX #2: authenticated user notifications
@@ -2721,7 +2790,18 @@ async function pruneOldData() {
 // SERVER BOOT
 // ============================================================================
 const server = http.createServer(app);
-server.on('upgrade', (req, socket, head) => { wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req)); });
+server.on('upgrade', (req, socket, head) => {
+  const origin = String(req.headers.origin || '').trim();
+  if ((!origin && !WS_ALLOW_NO_ORIGIN) || (origin && !WS_ALLOWED_ORIGINS.has(origin))) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); socket.destroy(); return;
+  }
+  const forwarded = process.env.TRUST_PROXY_HEADERS === 'true' ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
+  const ip = forwarded || req.socket.remoteAddress || 'unknown';
+  if (!allowWsConnection(ip)) {
+    socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n'); socket.destroy(); return;
+  }
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
