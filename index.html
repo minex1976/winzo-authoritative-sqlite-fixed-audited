@@ -671,8 +671,6 @@
         .chooser-more-dropdown { z-index:1000; bottom:calc(100% + 8px); top:auto; right:0; }
         .bingo-congratulations-badge { display:inline-flex; align-items:center; justify-content:center; margin:0 auto 8px; padding:5px 13px; border-radius:999px; color:#281400; background:linear-gradient(135deg,#ffe783,#ffb52e); border:1px solid rgba(255,255,255,.5); font-weight:900; font-size:.72rem; letter-spacing:.6px; text-shadow:0 1px rgba(255,255,255,.35); box-shadow:0 0 18px rgba(255,204,68,.25); animation:pulse 1s infinite alternate; }
 
-
-
         /* Winzo Bingo visual-only refinements: number borders, column colors and ball bounce. */
         .bingo-called-header {
             border: 2px solid rgba(255,255,255,.82);
@@ -792,8 +790,82 @@
         #signupBonusNotice { animation: signupBonusBlink 1.1s ease-in-out infinite; }
         #signupBonusNotice .bonus-countdown { color:#39e879; font-weight:900; }
 
+        /* ===== LADDER SCREEN STYLES ===== */
+        .ladder-screen { display: flex; flex-direction: column; gap: 10px; color: #f7f0ff; padding: 3px 0 16px; flex: 1; min-height: 0; overflow: hidden; }
+        .ladder-panel { display: flex; flex-direction: column; flex: 1; gap: 12px; background: #1b1431; border: 2px solid #62448a; border-radius: 16px; padding: 15px; overflow-y: auto; }
+        .ladder-panel.centered { align-items: center; justify-content: center; text-align: center; }
+        .ladder-wallet-row { display: flex; gap: 10px; }
+        .ladder-wallet-box { flex: 1; background: rgba(30, 20, 50, 0.8); border: 1px solid #4b356b; border-radius: 12px; padding: 10px; text-align: center; }
+        .ladder-wallet-box span { display: block; font-size: 0.7rem; color: #b8a0d0; margin-bottom: 4px; }
+        .ladder-wallet-box strong { font-size: 1.1rem; color: #ffcc44; }
+        .ladder-create-row { display: flex; gap: 10px; }
+        .ladder-btn { border: none; border-radius: 12px; padding: 12px 16px; font-weight: 800; font-size: 0.9rem; cursor: pointer; color: #1a0a2e; transition: transform 0.1s, filter 0.1s; }
+        .ladder-btn:active { transform: scale(0.96); }
+        .ladder-btn.primary { background: linear-gradient(135deg, #ffcc44, #f5a623); box-shadow: 0 4px 0 #b87a15; }
+        .ladder-btn.success { background: linear-gradient(135deg, #8affb0, #3fbf74); color: #052e1a; box-shadow: 0 4px 0 #1f7a45; }
+        .ladder-btn.danger { background: linear-gradient(135deg, #ff8a8a, #e62020); color: #fff; box-shadow: 0 4px 0 #8a0000; }
+        .ladder-btn.secondary { background: rgba(120, 80, 200, 0.2); color: #d4c0f0; box-shadow: none; border: 1px solid rgba(120, 80, 200, 0.4); }
+        .ladder-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .ladder-btn.sm { padding: 8px 12px; font-size: 0.8rem; }
+        .ladder-btn.w-full { width: 100%; }
+        .mt-5 { margin-top: 5px; } .mt-10 { margin-top: 10px; }
+        .ladder-list-header { font-size: 0.8rem; font-weight: 800; color: #b8a0d0; text-transform: uppercase; letter-spacing: 1px; margin-top: 10px; }
+        .ladder-room-list { display: flex; flex-direction: column; gap: 8px; }
+        .ladder-room-item { display: flex; justify-content: space-between; align-items: center; background: rgba(120, 80, 200, 0.1); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 12px; padding: 10px 12px; }
+        .ladder-room-item .room-info { display: flex; flex-direction: column; gap: 2px; }
+        .ladder-room-item .creator { font-weight: 700; color: #f0e6ff; }
+        .ladder-room-item .bet { font-size: 0.75rem; color: #ffcc44; }
+        .empty-state { text-align: center; color: #7a6a9a; font-size: 0.8rem; padding: 20px; }
 
-</style>
+        .ladder-spinner { width: 40px; height: 40px; border: 4px solid rgba(255, 204, 68, 0.1); border-top: 4px solid #ffcc44; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
+        .room-code { color: #b8a0d0; font-size: 0.9rem; margin-bottom: 20px; }
+        .room-code strong { color: #ffcc44; font-size: 1.2rem; letter-spacing: 2px; }
+        .pending-request { background: rgba(255, 204, 68, 0.1); border: 2px solid #ffcc44; border-radius: 16px; padding: 20px; width: 100%; max-width: 300px; }
+        .pending-request p { margin-bottom: 15px; color: #fff; font-weight: 600; }
+        .pending-request p strong { color: #ffcc44; }
+        .pending-request .row { display: flex; gap: 10px; }
+        .pending-request .row button { flex: 1; }
+
+        .ladder-bet-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .bet-option { background: rgba(30, 20, 50, 0.8); border: 2px solid #4b356b; border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; transition: all 0.2s; }
+        .bet-option .mult { font-size: 1.2rem; font-weight: 900; color: #b8a0d0; margin-bottom: 4px; }
+        .bet-option .cost { font-size: 0.75rem; color: #7a6a9a; }
+        .bet-option.active { background: rgba(255, 204, 68, 0.15); border-color: #ffcc44; box-shadow: 0 0 15px rgba(255, 204, 68, 0.3); }
+        .bet-option.active .mult { color: #ffcc44; }
+        .bet-option.active .cost { color: #fff; }
+        .ladder-betting-actions { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 20px; }
+        .text-center { text-align: center; }
+        .sub { color: #b8a0d0; font-size: 0.8rem; margin-bottom: 15px; }
+
+        .ladder-game-header { display: flex; justify-content: space-between; align-items: center; }
+        .prize-box { background: rgba(80, 255, 160, 0.1); border: 1px solid rgba(80, 255, 160, 0.3); padding: 6px 12px; border-radius: 20px; color: #8affb0; font-weight: 700; font-size: 0.85rem; }
+        .prize-box strong { color: #fff; font-size: 1rem; }
+        .turn-indicator { font-weight: 800; font-size: 0.9rem; padding: 6px 12px; border-radius: 20px; background: rgba(255, 255, 255, 0.05); }
+        .turn-indicator.my-turn { color: #8affb0; background: rgba(80, 255, 160, 0.15); box-shadow: 0 0 10px rgba(80, 255, 160, 0.2); }
+        .turn-indicator.their-turn { color: #b8a0d0; }
+        .turn-indicator.win { color: #ffcc44; background: rgba(255, 204, 68, 0.15); }
+        .turn-indicator.lose { color: #ff8a8a; }
+
+        .ladder-board-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; padding: 10px 0; }
+        .ladder-board-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 10 / 5; background: #100a1f; border: 3px solid #4b356b; border-radius: 16px; padding: 6px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 10px 30px rgba(0,0,0,0.5); }
+        .ladder-grid { display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(5, 1fr); width: 100%; height: 100%; gap: 4px; }
+        .ladder-cell { background: rgba(30, 20, 50, 0.9); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 6px; display: flex; flex-direction: column; justify-content: flex-end; padding: 3px; position: relative; overflow: hidden; }
+        .ladder-cell .cell-num { font-size: clamp(7px, 1.5vw, 10px); color: #7a6a9a; font-weight: 700; line-height: 1; }
+        .ladder-cell .cell-icon { position: absolute; top: 2px; right: 2px; font-size: clamp(8px, 2vw, 14px); filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5)); }
+        .ladder-cell:nth-child(even) { background: rgba(40, 25, 65, 0.9); }
+        .ladder-cell.snake-head { background: linear-gradient(135deg, rgba(255, 80, 80, 0.5), rgba(255, 80, 80, 0.1)); border-color: rgba(255, 80, 80, 0.8); }
+        .ladder-cell.snake-head .cell-num { color: #ffcccc; }
+        .ladder-cell.snake-tail { background: rgba(255, 80, 80, 0.15); border-color: rgba(255, 80, 80, 0.4); }
+        .ladder-cell.ladder-bottom { background: linear-gradient(135deg, rgba(80, 255, 160, 0.5), rgba(80, 255, 160, 0.1)); border-color: rgba(80, 255, 160, 0.8); }
+        .ladder-cell.ladder-bottom .cell-num { color: #ccffcc; }
+        .ladder-cell.ladder-top { background: rgba(80, 255, 160, 0.15); border-color: rgba(80, 255, 160, 0.4); }
+        .ladder-marker { position: absolute; width: clamp(10px, 2.5vw, 16px); height: clamp(10px, 2.5vw, 16px); border-radius: 50%; border: 2px solid white; z-index: 10; transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 0 10px rgba(0,0,0,0.8), inset 0 0 4px rgba(255,255,255,0.5); bottom: 3px; }
+        .ladder-marker.p1 { background: radial-gradient(circle at 30% 30%, #ff8a8a, #cc0000); left: 3px; }
+        .ladder-marker.p2 { background: radial-gradient(circle at 30% 30%, #8a8aff, #0000cc); right: 3px; }
+        .ladder-controls { display: flex; justify-content: center; align-items: center; gap: 15px; padding: 10px 0; }
+        .ladder-dice { width: 50px; height: 50px; background: linear-gradient(135deg, #30204f, #1b1431); border: 2px solid #ffcc44; border-radius: 10px; display: flex; justify-content: center; align-items: center; font-size: 1.5rem; font-weight: 900; color: #ffcc44; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 0 0 15px rgba(255, 204, 68, 0.2); }
+
+    </style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
@@ -841,7 +913,7 @@
           </div>
           <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
           <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder, coming soon"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Get ready for a new challenge!</small></span><span class="coming-soon-pill">COMING SOON</span></button>
+          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Get ready for a new challenge!</small></span><span class="choice-arrow">›</span></button>
           <div class="chooser-footer">
             <span id="chooserBalance">Play balance: 0 Birr</span>
             <div class="chooser-options-anchor">
@@ -864,6 +936,80 @@
             </div>
           </div>
         </div>
+
+        <section id="ladderScreen" class="ladder-screen hidden">
+          <header class="bingo-header">
+              <button id="ladderBackBtn" class="bingo-small-btn">‹ Games</button>
+              <div><strong>🪜 WINZO LADDER</strong><small id="ladderStatusLabel">Lobby</small></div>
+              <div style="width: 60px;"></div>
+          </header>
+
+          <!-- Lobby View -->
+          <div id="ladderLobby" class="ladder-panel">
+              <div class="ladder-wallet-row">
+                  <div class="ladder-wallet-box"><span>Main Wallet</span><strong id="ladderMainWallet">0</strong></div>
+                  <div class="ladder-wallet-box"><span>Play Wallet</span><strong id="ladderPlayWallet">0</strong></div>
+              </div>
+              <div class="ladder-create-row">
+                  <button id="ladderCreate15Btn" class="ladder-btn primary">Create 15 Birr Room</button>
+                  <button id="ladderCreate30Btn" class="ladder-btn primary">Create 30 Birr Room</button>
+              </div>
+              <div class="ladder-list-header">Open Rooms</div>
+              <div id="ladderRoomList" class="ladder-room-list">
+                  <div class="empty-state">No open rooms. Create one!</div>
+              </div>
+          </div>
+
+          <!-- Waiting View -->
+          <div id="ladderWaitingView" class="ladder-panel centered hidden">
+              <div class="ladder-spinner"></div>
+              <h2>Waiting for Player...</h2>
+              <p class="room-code">Room Code: <strong id="ladderRoomCode">---</strong></p>
+              <div id="ladderPendingRequest" class="pending-request hidden">
+                  <p><strong id="ladderJoinerName">Player</strong> wants to join</p>
+                  <div class="row">
+                      <button id="ladderApproveBtn" class="ladder-btn success">Approve</button>
+                      <button id="ladderRejectBtn" class="ladder-btn danger">Reject</button>
+                  </div>
+              </div>
+              <button id="ladderLeaveRoomBtn" class="ladder-btn secondary mt-10">Cancel Room</button>
+          </div>
+
+          <!-- Betting View -->
+          <div id="ladderBettingView" class="ladder-panel hidden">
+              <h2 class="text-center">Bet Amount Agreement</h2>
+              <p class="text-center sub">Select a multiplier (1x to 5x)</p>
+              <div id="ladderBetOptions" class="ladder-bet-grid">
+                  <!-- Injected via JS -->
+              </div>
+              <div class="ladder-betting-actions">
+                  <button id="ladderStartBtn" class="ladder-btn success w-full mt-10">Agree & Start Game</button>
+                  <button id="ladderKickBtn" class="ladder-btn danger w-full mt-5">Reject & Kick Player</button>
+                  <button id="ladderBetLeaveBtn" class="ladder-btn secondary w-full mt-5">Leave Room</button>
+              </div>
+          </div>
+
+          <!-- Game View -->
+          <div id="ladderGameView" class="ladder-panel hidden">
+              <div class="ladder-game-header">
+                  <div class="prize-box">Prize: <strong id="ladderPrizePool">0</strong> Birr</div>
+                  <div id="ladderTurnIndicator" class="turn-indicator">Your Turn</div>
+              </div>
+              <div class="ladder-board-wrapper">
+                  <div class="ladder-board-container">
+                      <div id="ladderGrid" class="ladder-grid"></div>
+                      <div id="ladderMarkerP1" class="ladder-marker p1 hidden"></div>
+                      <div id="ladderMarkerP2" class="ladder-marker p2 hidden"></div>
+                  </div>
+              </div>
+              <div class="ladder-controls">
+                  <div id="ladderDiceBox" class="ladder-dice">-</div>
+                  <button id="ladderRollBtn" class="ladder-btn primary">Roll Dice</button>
+              </div>
+              <button id="ladderReturnLobbyBtn" class="ladder-btn primary w-full mt-10 hidden">Return to Lobby</button>
+          </div>
+        </section>
+
         <section id="bingoScreen" class="bingo-screen hidden">
           <header class="bingo-header"><button id="bingoBackBtn" class="bingo-small-btn">‹ Games</button><div><strong>🎱 WINZO BINGO</strong><small id="bingoPhaseLabel">Connecting…</small></div><button id="bingoRefreshBtn" class="bingo-small-btn" aria-label="Back to games">⌂</button></header>
           
@@ -882,12 +1028,9 @@
           
           <div id="bingoLivePanel" class="bingo-panel hidden">
             <div class="bingo-main-area">
-                <!-- Left Column: Called Numbers Grid -->
                 <div class="bingo-left-col">
                     <div id="bingoCalledHistory" class="bingo-called-grid"></div>
                 </div>
-                
-                <!-- Right Column: Latest Ball & My Cards -->
                 <div class="bingo-right-col">
                     <div class="bingo-stats">
                         <div><small>Game ID</small><strong id="bingoGameId">—</strong></div>
@@ -905,7 +1048,6 @@
                     <div id="bingoMyCards" class="bingo-my-cards"></div>
                 </div>
             </div>
-            
             <div id="bingoWinnerBox" class="bingo-winner-box hidden"></div>
           </div>
           
@@ -1107,15 +1249,6 @@
         </div>
     </div>
 
-    <div id="ladderAdOverlay" class="ladder-ad-overlay" role="dialog" aria-modal="true" aria-labelledby="ladderAdTitle">
-      <div class="ladder-ad-card">
-        <div class="ladder-ad-icon" aria-hidden="true">🪜✨</div>
-        <div id="ladderAdTitle" class="ladder-ad-title">WINZO LADDER</div>
-        <div class="ladder-ad-message">በቅርብ ጊዜ ይጀምራል!</div>
-        <button id="ladderAdClose" class="ladder-ad-close" type="button">OK</button>
-      </div>
-    </div>
-
     <script>
     const DEV_MODE = false;
     window.WINZO_CONFIG = window.WINZO_CONFIG || {
@@ -1131,8 +1264,6 @@
         if (action) pendingMenuAction = action;
     }
 
-    // 🔒 FIX #1: stable per-device fingerprint used by server-side multi-account detection.
-    // Generated once and cached; treated as a session-persistent signal, not auth.
     function getDeviceFingerprint() {
         try {
             let fp = localStorage.getItem('winzo_device_fp');
@@ -1146,7 +1277,6 @@
         } catch (_) { return null; }
     }
 
-    // 🔒 FIX #2: session token issued on successful auth, used for authenticated HTTP endpoints.
     function getStoredSessionToken() {
         try { return localStorage.getItem('winzo_session_token') || ''; } catch (_) { return ''; }
     }
@@ -1158,7 +1288,6 @@
         try { localStorage.removeItem('winzo_session_token'); } catch (_) {}
     }
 
-    // 🔒 FIX #2: helper for authenticated HTTP calls (e.g. /user/notifications).
     function authFetch(url, opts) {
         opts = opts || {};
         const token = getStoredSessionToken();
@@ -1517,7 +1646,7 @@
         players: {}, allTakenNumbers: new Set(), drawnNumbers: [], winners: [],
         gamePhase: 'selection', roundNumber: 1, timer: 30, activePlayersCount: 0,
         playerNames: [], prizePool: 0, winnersModalShown: false,
-        serverSeedHash: null,      // 🔒 FIX #4: commitment hash for the current round
+        serverSeedHash: null,
     };
 
     let timerInterval = null; let isTimerRunning = false;
@@ -1918,8 +2047,6 @@
             } else winningCardAmountEl.classList.remove('show');
         }
 
-        // 🔒 FIX #4: show the provably-fair commitment (and revealed seed when available)
-        // so the player can independently verify the draw.
         const seedEl = document.getElementById('seedRevealInfo');
         if (seedEl) {
             const seed = lastResultData && lastResultData.serverSeed ? String(lastResultData.serverSeed) : '';
@@ -2396,7 +2523,6 @@
         amount = Number(amount);
         if (!amount || amount <= 0) { alert('Enter a valid amount.'); return false; }
         if (safeNum(walletData.main) - safeNum(walletData.pending) < amount) { alert('Insufficient available main balance.'); return false; }
-        // 🔒 FIX #3: server now rate-limits transfers; client just sends and handles the error.
         if (client) client.transfer(amount);
         return true;
     }
@@ -2542,6 +2668,7 @@
         if (welcomeScreen) welcomeScreen.style.display = 'none';
         const chooser = document.getElementById('gameChooserScreen'); if (chooser) chooser.classList.add('hidden');
         const bingo = document.getElementById('bingoScreen'); if (bingo) bingo.classList.add('hidden');
+        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
         if (gameScreen) gameScreen.style.display = 'none';
         if (authError) authError.textContent = '';
         setConnectionStatus(false, '📡 Ready');
@@ -2558,6 +2685,7 @@
         if (welcomeScreen) welcomeScreen.style.display = 'flex';
         const chooser = document.getElementById('gameChooserScreen'); if (chooser) chooser.classList.add('hidden');
         const bingo = document.getElementById('bingoScreen'); if (bingo) bingo.classList.add('hidden');
+        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
         if (gameScreen) gameScreen.style.display = 'none';
         updateWelcomeUI();
         stopTimer(); stopResultsCountdown();
@@ -2575,6 +2703,7 @@
         if (welcomeScreen) welcomeScreen.style.display = 'none';
         const chooser = document.getElementById('gameChooserScreen'); if (chooser) chooser.classList.add('hidden');
         const bingo = document.getElementById('bingoScreen'); if (bingo) bingo.classList.add('hidden');
+        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
         if (gameScreen) gameScreen.style.display = 'flex';
         if (modeLabel) modeLabel.textContent = currentBet + ' Birr';
         if (betDisplay) betDisplay.textContent = currentBet;
@@ -3105,7 +3234,6 @@
                 this.connecting = false;
                 this.backoff = 800;
                 this.onConnection && this.onConnection(false);
-                // 🔒 FIX #1: include deviceFingerprint so the server can cluster multi-accounts.
                 const authMsg = {
                     type: 'auth',
                     initData: this.initData,
@@ -3122,7 +3250,6 @@
                     this.authenticated = true;
                     this.everAuthenticated = true;
                     this._authFailureNotified = false;
-                    // 🔒 FIX #2: store the session token for authenticated HTTP calls.
                     if (m.sessionToken) storeSessionToken(m.sessionToken);
                     this.onAuth && this.onAuth(m.uid, m.displayName);
                     this.onConnection && this.onConnection(true);
@@ -3150,6 +3277,8 @@
                 else if (m.type === 'user-event') this.onUserEvent && this.onUserEvent(m);
                 else if (m.type === 'account-blocked') this.onAccountBlocked && this.onAccountBlocked(m);
                 else if (typeof m.type === 'string' && m.type.startsWith('bingo-')) { if (window.handleBingoMessage) window.handleBingoMessage(m); }
+                else if (typeof m.type === 'string' && m.type.startsWith('ladder-')) { if (window.handleLadderMessage) window.handleLadderMessage(m); if (window.handleLadderLobby) window.handleLadderLobby(m); }
+                else if (m.type === 'ladder-lobby') { if (window.handleLadderLobby) window.handleLadderLobby(m); }
                 else if (m.type === 'error' && (m.message === 'phone-contact-required' || m.reason === 'phone-contact-required')) {
                     if (authError) authError.textContent = 'Please share your phone number through Telegram before signing up.';
                     if (authSignupBtn) { authSignupBtn.disabled = false; authSignupBtn.textContent = 'Sign Up'; }
@@ -3168,7 +3297,6 @@
                         this._handleAuthFailure(m.reason || 'unknown');
                         return;
                     }
-                    // 🔒 FIX #3: friendly message for the new server-side rate limits.
                     if (m.message === 'rate-limited') {
                         updateStatus('⏱ Too many requests — please wait a moment and try again.');
                         return;
@@ -3262,7 +3390,6 @@
         engineState.activePlayersCount = Number.isFinite(Number(data.onlineCount)) ? Number(data.onlineCount) : playerNames.length;
         engineState.gamePhase = phase;
         engineState.roundNumber = round;
-        // 🔒 FIX #4: capture commitment hash for the current round.
         engineState.serverSeedHash = data.serverSeedHash || null;
         phaseDeadline = Number(data.endsAt || data.selectionEndsAt) || 0;
         if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
@@ -3275,7 +3402,6 @@
                 winners: Array.isArray(data.winners) ? data.winners : [],
                 winAmount: Number(data.lastResult?.winAmount || (Array.isArray(data.winners) && data.winners.length ? Math.floor(Number(data.prizePool || 0) / data.winners.length) : 0)),
                 setAt: Date.now(),
-                // 🔒 FIX #4: reveal the committed seed when the server publishes it.
                 serverSeed: data.lastResult?.serverSeed || null,
                 serverSeedHash: data.lastResult?.serverSeedHash || data.serverSeedHash || null,
             };
@@ -3390,8 +3516,9 @@
         setBingoViewportMode(false);
         const auth = document.getElementById('authScreen'), welcome = document.getElementById('welcomeScreen');
         const game = document.getElementById('gameScreen'), chooser = document.getElementById('gameChooserScreen'), bingo = document.getElementById('bingoScreen');
+        const ladder = document.getElementById('ladderScreen');
         if (auth) auth.style.display = 'none'; if (welcome) welcome.style.display = 'none'; if (game) game.style.display = 'none';
-        if (bingo) bingo.classList.add('hidden'); if (chooser) chooser.classList.remove('hidden');
+        if (bingo) bingo.classList.add('hidden'); if (chooser) chooser.classList.remove('hidden'); if (ladder) ladder.classList.add('hidden');
         updateWelcomeUI();
         const b = document.getElementById('chooserBalance'); if (b) b.textContent = 'Play balance: ' + safeNum(walletData.play, 0) + ' Birr';
     }
@@ -3420,9 +3547,6 @@
         bingoUi.active=true;
         if (bingoUi.selectionTimer) { clearTimeout(bingoUi.selectionTimer); bingoUi.selectionTimer=null; }
         bingoUi.selected=[]; bingoUi.submitting=false; bingoUi.lastRoundId=null; bingoUi.state=null;
-        // Draw the picker immediately so the panel is not blank while the first
-        // Bingo state packet is travelling from the server. Buttons remain disabled
-        // until the server confirms that the round is in its selection phase.
         renderBingoGrid();
         bingoSend('join');
         bingoSend('state');
@@ -3830,7 +3954,6 @@
             const called = new Set(calledList);
             const winningNumber = Number(m.winningNumber || calledList[calledList.length - 1] || 0);
             const winningCall = winningNumber > 0 ? `${bingoLetter(winningNumber)}-${winningNumber}` : '—';
-            // 🔒 FIX #4: include seed info in the winner popup so players can verify the draw.
             const seedLine = m.serverSeed
               ? `<div class="bingo-winner-info" style="font-size:0.65rem;color:#b8a0d0;margin-top:8px;word-break:break-all;">🔐 Provably Fair · seed: <span style="color:#8affb0;">${escapeHtmlText(String(m.serverSeed).slice(0, 16))}…</span></div>`
               : (m.serverSeedHash ? `<div class="bingo-winner-info" style="font-size:0.65rem;color:#b8a0d0;margin-top:8px;word-break:break-all;">🔐 Commitment: ${escapeHtmlText(String(m.serverSeedHash).slice(0, 16))}…</div>` : '');
@@ -3890,18 +4013,277 @@
         if (modal) modal.classList.remove('active');
     };
 
+    // ============================================================================
+    // WINZO LADDER GAME
+    // ============================================================================
+    const ladderUi = { state: null, active: false, lobbyRooms: [] };
+
+    function openLadder() {
+        setBingoViewportMode(false);
+        document.getElementById('gameChooserScreen').classList.add('hidden');
+        document.getElementById('welcomeScreen').style.display = 'none';
+        document.getElementById('gameScreen').style.display = 'none';
+        document.getElementById('ladderScreen').classList.remove('hidden');
+        ladderUi.active = true;
+        if (client) client.rawSend({ type: 'ladder-join-lobby' });
+        
+        renderLadderLobbyView();
+    }
+
+    function showLadderSection(id) {
+        ['ladderLobby', 'ladderWaitingView', 'ladderBettingView', 'ladderGameView'].forEach(v => {
+            document.getElementById(v).classList.add('hidden');
+        });
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    window.handleLadderLobby = function(m) {
+        ladderUi.lobbyRooms = m.rooms || [];
+        if (ladderUi.active && !ladderUi.state) {
+            renderLadderLobbyView();
+        }
+    };
+
+    function renderLadderLobbyView() {
+        showLadderSection('ladderLobby');
+        document.getElementById('ladderStatusLabel').textContent = 'Lobby';
+        document.getElementById('ladderMainWallet').textContent = safeNum(walletData.main, 0) + ' Br';
+        document.getElementById('ladderPlayWallet').textContent = safeNum(walletData.play, 0) + ' Br';
+
+        const list = document.getElementById('ladderRoomList');
+        if (ladderUi.lobbyRooms.length === 0) {
+            list.innerHTML = '<div class="empty-state">No open rooms. Create one!</div>';
+        } else {
+            list.innerHTML = ladderUi.lobbyRooms.map(r => `
+                <div class="ladder-room-item">
+                    <div class="room-info">
+                        <span class="creator">${escapeHtmlText(r.creatorName)}</span>
+                        <span class="bet">${r.bet} Birr</span>
+                    </div>
+                    <button class="ladder-btn sm primary" onclick="requestJoinLadderRoom('${r.id}')">Join</button>
+                </div>
+            `).join('');
+        }
+    }
+
+    window.requestJoinLadderRoom = function(roomId) {
+        if (client) client.rawSend({ type: 'ladder-request-join', roomId });
+    };
+
+    window.handleLadderMessage = function(m) {
+        if (m.type === 'ladder-state') {
+            const room = m.room;
+            ladderUi.state = room;
+            renderLadderRoom(room);
+        } else if (m.type === 'ladder-rejected' || m.type === 'ladder-kicked' || m.type === 'ladder-left') {
+            ladderUi.state = null;
+            if (client) client.rawSend({ type: 'ladder-join-lobby' });
+            if (m.type === 'ladder-rejected') bingoNotice('The room creator rejected your request.');
+            if (m.type === 'ladder-kicked') bingoNotice('You were removed from the room by the creator.');
+            if (m.type === 'ladder-left') {
+                if (m.reason === 'cancelled') bingoNotice('Join request cancelled.');
+                else if (m.reason === 'game-over') bingoNotice('Game over. Returning to lobby.');
+                else bingoNotice('You left the room.');
+            }
+        } else if (m.type === 'ladder-error') {
+            bingoNotice(m.message || 'Ladder error');
+        }
+    };
+
+    function renderLadderRoom(room) {
+        if (!ladderUi.active) return;
+        const isCreator = room.creatorUid === currentUser;
+
+        if (room.phase === 'waiting') {
+            showLadderSection('ladderWaitingView');
+            document.getElementById('ladderStatusLabel').textContent = 'Waiting Room';
+            document.getElementById('ladderRoomCode').textContent = room.id;
+            
+            const reqBox = document.getElementById('ladderPendingRequest');
+            if (isCreator && room.pendingJoiners && room.pendingJoiners.length > 0) {
+                reqBox.classList.remove('hidden');
+                const j = room.pendingJoiners[0];
+                document.getElementById('ladderJoinerName').textContent = j.name;
+                document.getElementById('ladderApproveBtn').onclick = () => client.rawSend({ type: 'ladder-approve', targetUid: j.uid });
+                document.getElementById('ladderRejectBtn').onclick = () => client.rawSend({ type: 'ladder-reject', targetUid: j.uid });
+            } else {
+                reqBox.classList.add('hidden');
+            }
+        } 
+        else if (room.phase === 'betting') {
+            showLadderSection('ladderBettingView');
+            document.getElementById('ladderStatusLabel').textContent = 'Betting Phase';
+            
+            const grid = document.getElementById('ladderBetOptions');
+            let html = '';
+            for (let i = 1; i <= 5; i++) {
+                const cost = room.bet * i;
+                const active = room.multiplier === i;
+                html += `
+                    <div class="bet-option ${active ? 'active' : ''}" onclick="selectLadderMult(${i})">
+                        <div class="mult">${i}x</div>
+                        <div class="cost">${cost} Birr</div>
+                    </div>
+                `;
+            }
+            grid.innerHTML = html;
+
+            const startBtn = document.getElementById('ladderStartBtn');
+            const kickBtn = document.getElementById('ladderKickBtn');
+            
+            startBtn.disabled = false; 
+            startBtn.onclick = () => client.rawSend({ type: 'ladder-start' });
+            
+            if (isCreator) {
+                kickBtn.classList.remove('hidden');
+                kickBtn.onclick = () => client.rawSend({ type: 'ladder-kick' });
+            } else {
+                kickBtn.classList.add('hidden');
+            }
+        }
+        else if (room.phase === 'playing' || room.phase === 'results') {
+            showLadderSection('ladderGameView');
+            
+            if (room.phase === 'playing') {
+                document.getElementById('ladderStatusLabel').textContent = 'Game in Progress';
+            } else {
+                document.getElementById('ladderStatusLabel').textContent = 'Game Over';
+            }
+
+            if (document.getElementById('ladderGrid').children.length === 0) {
+                buildLadderBoard();
+            }
+
+            document.getElementById('ladderPrizePool').textContent = room.prizePool;
+
+            const p1 = room.players[room.creatorUid];
+            const p2 = room.players[room.joinerUid];
+
+            if (p1) positionLadderMarker('ladderMarkerP1', p1.pos, 1);
+            if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, 2);
+
+            const ind = document.getElementById('ladderTurnIndicator');
+            const rollBtn = document.getElementById('ladderRollBtn');
+            const diceBox = document.getElementById('ladderDiceBox');
+            const returnBtn = document.getElementById('ladderReturnLobbyBtn');
+            
+            diceBox.textContent = room.lastRoll || '-';
+
+            if (room.phase === 'results') {
+                ind.textContent = room.winner === currentUser ? '🎉 YOU WON!' : '😔 You Lost';
+                ind.className = 'turn-indicator ' + (room.winner === currentUser ? 'win' : 'lose');
+                rollBtn.classList.add('hidden');
+                returnBtn.classList.remove('hidden');
+                returnBtn.onclick = () => {
+                    ladderUi.state = null;
+                    if (client) client.rawSend({ type: 'ladder-leave' });
+                };
+            } else {
+                returnBtn.classList.add('hidden');
+                rollBtn.classList.remove('hidden');
+                const myTurn = room.currentTurn === currentUser;
+                ind.textContent = myTurn ? 'Your Turn' : "Opponent's Turn";
+                ind.className = 'turn-indicator ' + (myTurn ? 'my-turn' : 'their-turn');
+                rollBtn.disabled = !myTurn;
+            }
+        }
+    }
+
+    window.selectLadderMult = function(mult) {
+        if (client) client.rawSend({ type: 'ladder-set-mult', mult });
+    };
+
+    function buildLadderBoard() {
+        const grid = document.getElementById('ladderGrid');
+        grid.innerHTML = '';
+        
+        const rows = [
+            [41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
+            [40, 39, 38, 37, 36, 35, 34, 33, 32, 31],
+            [21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+            [20, 19, 18, 17, 16, 15, 14, 13, 12, 11],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        ];
+
+        const snakes = {26:6, 34:12, 48:18, 42:25, 37:9, 15:3};
+        const ladders = {6:16, 8:22, 11:29, 19:35, 23:41, 30:45};
+        const snakeTails = Object.values(snakes);
+        const ladderTops = Object.values(ladders);
+
+        rows.forEach(row => {
+            row.forEach(num => {
+                const cell = document.createElement('div');
+                cell.className = 'ladder-cell';
+                cell.id = `ladder-cell-${num}`;
+                cell.innerHTML = `<span class="cell-num">${num}</span>`;
+                
+                if (snakes[num]) {
+                    cell.classList.add('snake-head');
+                    cell.innerHTML += `<span class="cell-icon">🐍</span>`;
+                } else if (snakeTails.includes(num)) {
+                    cell.classList.add('snake-tail');
+                    cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬇</span>`;
+                }
+                
+                if (ladders[num]) {
+                    cell.classList.add('ladder-bottom');
+                    cell.innerHTML += `<span class="cell-icon">🪜</span>`;
+                } else if (ladderTops.includes(num)) {
+                    cell.classList.add('ladder-top');
+                    cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬆</span>`;
+                }
+                
+                grid.appendChild(cell);
+            });
+        });
+    }
+
+    function positionLadderMarker(markerId, pos, playerNum) {
+        const cell = document.getElementById(`ladder-cell-${pos}`);
+        const marker = document.getElementById(markerId);
+        if (!cell || !marker) return;
+        
+        if (marker.parentElement !== cell) {
+            cell.appendChild(marker);
+        }
+        marker.classList.remove('hidden');
+    }
+
+    document.getElementById('ladderCreate15Btn').onclick = () => { if (client) client.rawSend({ type: 'ladder-create', bet: 15 }); };
+    document.getElementById('ladderCreate30Btn').onclick = () => { if (client) client.rawSend({ type: 'ladder-create', bet: 30 }); };
+    document.getElementById('ladderRollBtn').onclick = () => { if (client) client.rawSend({ type: 'ladder-roll' }); };
+    document.getElementById('ladderLeaveRoomBtn').onclick = () => { if (client) client.rawSend({ type: 'ladder-leave' }); };
+    document.getElementById('ladderBetLeaveBtn').onclick = () => { if (client) client.rawSend({ type: 'ladder-leave' }); };
+    document.getElementById('ladderBackBtn').onclick = () => {
+        if (ladderUi.state) {
+            if (!confirm('Leave the room?')) return;
+            if (client) client.rawSend({ type: 'ladder-leave' });
+        }
+        if (client) client.rawSend({ type: 'ladder-leave-lobby' });
+        ladderUi.active = false;
+        document.getElementById('ladderScreen').classList.add('hidden');
+        showGameChooser();
+    };
+
+
     document.getElementById('chooseSpinBtn').onclick = () => {
         window._pendingGameMode = 'spin';
         bingoUi.active = false;
+        ladderUi.active = false;
         const bingo = document.getElementById('bingoScreen'); if (bingo) bingo.classList.add('hidden');
+        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
         const chooser = document.getElementById('gameChooserScreen'); if (chooser) chooser.classList.add('hidden');
         showWelcomeScreen();
     };
     document.getElementById('chooseBingoBtn').onclick = () => {
         window._pendingGameMode = 'bingo';
+        ladderUi.active = false;
+        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
         document.getElementById('gameChooserScreen').classList.add('hidden');
         showWelcomeScreen();
     };
+    document.getElementById('chooseLadderBtn').onclick = openLadder;
+
     function openSelectedGameForStake(amount, mode) {
         currentBet = amount;
         if (mode === 'bingo') {
@@ -3982,13 +4364,6 @@
     }
 
     function init() {
-        const ladderBtn = document.getElementById('chooseLadderBtn');
-        const ladderOverlay = document.getElementById('ladderAdOverlay');
-        const ladderClose = document.getElementById('ladderAdClose');
-        const closeLadderAd = () => { if (ladderOverlay) ladderOverlay.classList.remove('active'); };
-        if (ladderBtn) ladderBtn.onclick = () => { if (ladderOverlay) ladderOverlay.classList.add('active'); };
-        if (ladderClose) ladderClose.onclick = closeLadderAd;
-        if (ladderOverlay) ladderOverlay.addEventListener('click', ev => { if (ev.target === ladderOverlay) closeLadderAd(); });
         if (authLoginBtn) authLoginBtn.onclick = handleLogin;
         if (authSignupBtn) authSignupBtn.onclick = handleSignup;
         
@@ -4124,6 +4499,12 @@
                     setBingoViewportMode(true);
                     bingoSend('join');
                     bingoSend('state');
+                } else if (ladderUi.active) {
+                    if (ladderUi.state) {
+                         if (client) client.rawSend({ type: 'ladder-request-join', roomId: ladderUi.state.id });
+                    } else {
+                         if (client) client.rawSend({ type: 'ladder-join-lobby' });
+                    }
                 } else {
                     showGameChooser();
                 }
@@ -4154,6 +4535,10 @@
                 walletData.updatedAt = safeNum(w.updatedAt, Date.now());
                 updateWalletUI(); updateWelcomeUI(); renderBingoWallet();
                 renderNumberPicker();
+                if (ladderUi.active) {
+                    document.getElementById('ladderMainWallet').textContent = safeNum(walletData.main, 0) + ' Br';
+                    document.getElementById('ladderPlayWallet').textContent = safeNum(walletData.play, 0) + ' Br';
+                }
             },
             onTransactionCreated: () => { transactionStatus.textContent = '⏳ Pending admin approval...'; },
             onTransactionStatus: (m) => {
