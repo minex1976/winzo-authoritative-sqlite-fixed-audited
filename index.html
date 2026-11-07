@@ -847,19 +847,23 @@
         .turn-indicator.lose { color: #ff8a8a; }
 
         .ladder-board-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; padding: 10px 0; }
-        .ladder-board-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 10 / 5; background: #100a1f; border: 3px solid #4b356b; border-radius: 16px; padding: 6px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 10px 30px rgba(0,0,0,0.5); }
-        .ladder-grid { display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(5, 1fr); width: 100%; height: 100%; gap: 4px; }
-        .ladder-cell { background: rgba(30, 20, 50, 0.9); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 6px; display: flex; flex-direction: column; justify-content: flex-end; padding: 3px; position: relative; overflow: hidden; }
-        .ladder-cell .cell-num { font-size: clamp(7px, 1.5vw, 10px); color: #7a6a9a; font-weight: 700; line-height: 1; }
-        .ladder-cell .cell-icon { position: absolute; top: 2px; right: 2px; font-size: clamp(8px, 2vw, 14px); filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5)); }
+        .ladder-board-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 1 / 1; background: #100a1f; border: 3px solid #4b356b; border-radius: 16px; padding: 6px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 10px 30px rgba(0,0,0,0.5); }
+        .ladder-grid { display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr); width: 100%; height: 100%; gap: 2px; position: relative; z-index: 2; }
+        .ladder-cell { background: rgba(30, 20, 50, 0.9); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 4px; display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; padding: 3px; position: relative; }
         .ladder-cell:nth-child(even) { background: rgba(40, 25, 65, 0.9); }
-        .ladder-cell.snake-head { background: linear-gradient(135deg, rgba(255, 80, 80, 0.5), rgba(255, 80, 80, 0.1)); border-color: rgba(255, 80, 80, 0.8); }
-        .ladder-cell.snake-head .cell-num { color: #ffcccc; }
-        .ladder-cell.snake-tail { background: rgba(255, 80, 80, 0.15); border-color: rgba(255, 80, 80, 0.4); }
-        .ladder-cell.ladder-bottom { background: linear-gradient(135deg, rgba(80, 255, 160, 0.5), rgba(80, 255, 160, 0.1)); border-color: rgba(80, 255, 160, 0.8); }
-        .ladder-cell.ladder-bottom .cell-num { color: #ccffcc; }
-        .ladder-cell.ladder-top { background: rgba(80, 255, 160, 0.15); border-color: rgba(80, 255, 160, 0.4); }
-        .ladder-marker { position: absolute; width: clamp(10px, 2.5vw, 16px); height: clamp(10px, 2.5vw, 16px); border-radius: 50%; border: 2px solid white; z-index: 10; transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 0 10px rgba(0,0,0,0.8), inset 0 0 4px rgba(255,255,255,0.5); bottom: 3px; }
+        .ladder-cell .cell-num { font-size: clamp(7px, 1.5vw, 10px); color: #7a6a9a; font-weight: 700; line-height: 1; z-index: 3; pointer-events: none; }
+        .ladder-cell.start { background: #14513f; }
+        .ladder-cell.finish { background: #72521c; }
+        .ladder-cell .cell-icon { position: absolute; top: 2px; right: 2px; font-size: clamp(10px, 2vw, 16px); filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5)); z-index: 3; }
+        
+        .ladder-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+        .snake-line { fill: none; stroke: #ff6878; stroke-width: 14; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 3px 2px rgba(0,0,0,0.7)); }
+        .snake-highlight { fill: none; stroke: #ffc1c5; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 4 8; }
+        .snake-eye { fill: #fff; }
+        .ladder-rail { stroke: #71f0ba; stroke-width: 8; stroke-linecap: round; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.7)); }
+        .ladder-rung { stroke: #d1ffe8; stroke-width: 4; stroke-linecap: round; }
+
+        .ladder-marker { position: absolute; width: clamp(12px, 2.5vw, 18px); height: clamp(12px, 2.5vw, 18px); border-radius: 50%; border: 2px solid white; z-index: 10; transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 0 10px rgba(0,0,0,0.8), inset 0 0 4px rgba(255,255,255,0.5); bottom: 3px; }
         .ladder-marker.p1 { background: radial-gradient(circle at 30% 30%, #ff8a8a, #cc0000); left: 3px; }
         .ladder-marker.p2 { background: radial-gradient(circle at 30% 30%, #8a8aff, #0000cc); right: 3px; }
         .ladder-controls { display: flex; justify-content: center; align-items: center; gap: 15px; padding: 10px 0; }
@@ -913,7 +917,7 @@
           </div>
           <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
           <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Get ready for a new challenge!</small></span><span class="choice-arrow">›</span></button>
+          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes & Ladders against bots or players!</small></span><span class="choice-arrow">›</span></button>
           <div class="chooser-footer">
             <span id="chooserBalance">Play balance: 0 Birr</span>
             <div class="chooser-options-anchor">
@@ -990,16 +994,15 @@
           </div>
 
           <!-- Game View -->
-          <div id="ladderGameView" class="ladder-panel hidden">
-              <div class="ladder-game-header">
+          <div id="ladderGameView" class="ladder-panel hidden" style="padding: 5px;">
+              <div class="ladder-game-header" style="padding: 5px 10px;">
                   <div class="prize-box">Prize: <strong id="ladderPrizePool">0</strong> Birr</div>
                   <div id="ladderTurnIndicator" class="turn-indicator">Your Turn</div>
               </div>
               <div class="ladder-board-wrapper">
                   <div class="ladder-board-container">
                       <div id="ladderGrid" class="ladder-grid"></div>
-                      <div id="ladderMarkerP1" class="ladder-marker p1 hidden"></div>
-                      <div id="ladderMarkerP2" class="ladder-marker p2 hidden"></div>
+                      <svg class="ladder-links" id="ladderLinks" viewBox="0 0 1000 1000" preserveAspectRatio="none"></svg>
                   </div>
               </div>
               <div class="ladder-controls">
@@ -4057,7 +4060,7 @@
             list.innerHTML = ladderUi.lobbyRooms.map(r => `
                 <div class="ladder-room-item">
                     <div class="room-info">
-                        <span class="creator">${escapeHtmlText(r.creatorName)}</span>
+                        <span class="creator">${escapeHtmlText(r.creatorName)} ${r.isBot ? '🤖' : ''}</span>
                         <span class="bet">${r.bet} Birr</span>
                     </div>
                     <button class="ladder-btn sm primary" onclick="requestJoinLadderRoom('${r.id}')">Join</button>
@@ -4195,46 +4198,78 @@
 
     function buildLadderBoard() {
         const grid = document.getElementById('ladderGrid');
+        const svg = document.getElementById('ladderLinks');
         grid.innerHTML = '';
+        svg.innerHTML = '';
         
-        const rows = [
-            [41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
-            [40, 39, 38, 37, 36, 35, 34, 33, 32, 31],
-            [21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
-            [20, 19, 18, 17, 16, 15, 14, 13, 12, 11],
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        ];
-
-        const snakes = {26:6, 34:12, 48:18, 42:25, 37:9, 15:3};
-        const ladders = {6:16, 8:22, 11:29, 19:35, 23:41, 30:45};
+        const snakes = {71:50, 82:62, 56:36};
+        const ladders = {24:44, 33:68};
         const snakeTails = Object.values(snakes);
         const ladderTops = Object.values(ladders);
 
-        rows.forEach(row => {
-            row.forEach(num => {
+        // Build 10x10 grid
+        for (let row = 9; row >= 0; row--) {
+            const nums = Array.from({length: 10}, (_, i) => row % 2 === 0 ? row * 10 + i + 1 : row * 10 + 10 - i);
+            nums.forEach(num => {
                 const cell = document.createElement('div');
                 cell.className = 'ladder-cell';
                 cell.id = `ladder-cell-${num}`;
                 cell.innerHTML = `<span class="cell-num">${num}</span>`;
                 
+                if (num === 1) cell.classList.add('start');
+                if (num === 100) cell.classList.add('finish');
+                
                 if (snakes[num]) {
-                    cell.classList.add('snake-head');
                     cell.innerHTML += `<span class="cell-icon">🐍</span>`;
                 } else if (snakeTails.includes(num)) {
-                    cell.classList.add('snake-tail');
                     cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬇</span>`;
                 }
                 
                 if (ladders[num]) {
-                    cell.classList.add('ladder-bottom');
                     cell.innerHTML += `<span class="cell-icon">🪜</span>`;
                 } else if (ladderTops.includes(num)) {
-                    cell.classList.add('ladder-top');
                     cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬆</span>`;
                 }
                 
                 grid.appendChild(cell);
             });
+        }
+
+        // Draw SVG lines
+        const cellXY = (n) => {
+            const rowFromBottom = Math.floor((n - 1) / 10);
+            const offset = (n - 1) % 10;
+            const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
+            const row = 9 - rowFromBottom;
+            return { x: col * 100 + 50, y: row * 100 + 50 };
+        };
+        
+        const ns = 'http://www.w3.org/2000/svg';
+        const addSvg = (tag, attrs) => {
+            const e = document.createElementNS(ns, tag);
+            Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+            svg.appendChild(e);
+            return e;
+        };
+
+        Object.entries(snakes).forEach(([a, b], i) => {
+            const p = cellXY(+a), q = cellXY(b), dx = q.x - p.x;
+            const bend = (i % 2 ? 1 : -1) * 55;
+            const d = `M ${p.x} ${p.y} C ${p.x+bend} ${p.y+85}, ${q.x-bend} ${q.y-85}, ${q.x} ${q.y}`;
+            addSvg('path', { d, class: 'snake-line' });
+            addSvg('path', { d, class: 'snake-highlight' });
+            addSvg('circle', { cx: p.x+4, cy: p.y-2, r: 12, fill: '#ff7a86', stroke: '#ffd3d6', 'stroke-width': 3 });
+            addSvg('circle', { cx: p.x+8, cy: p.y-5, r: 2.7, class: 'snake-eye' });
+        });
+        
+        Object.entries(ladders).forEach(([a, b]) => {
+            const p = cellXY(+a), q = cellXY(b), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy), ox = -dy/len*13, oy = dx/len*13;
+            addSvg('line', { x1: p.x+ox, y1: p.y+oy, x2: q.x+ox, y2: q.y+oy, class: 'ladder-rail' });
+            addSvg('line', { x1: p.x-ox, y1: p.y-oy, x2: q.x-ox, y2: q.y-oy, class: 'ladder-rail' });
+            for (let t = .12; t < .95; t += .18) {
+                const x = p.x + dx * t, y = p.y + dy * t;
+                addSvg('line', { x1: x+ox, y1: y+oy, x2: x-ox, y2: y-oy, class: 'ladder-rung' });
+            }
         });
     }
 
