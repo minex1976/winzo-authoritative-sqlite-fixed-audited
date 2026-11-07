@@ -1759,9 +1759,9 @@ setInterval(()=>{for(const round of bingoRounds.values())bingoTick(round).catch(
 // WINZO LADDER GAME
 // ============================================================================
 const LADDER_STAKES = [15, 30];
-const LADDER_TARGET = 50;
-const LADDER_SNAKES = {26:6, 34:12, 48:18, 42:25, 37:9, 15:3};
-const LADDER_LADDERS = {6:16, 8:22, 11:29, 19:35, 23:41, 30:45};
+const LADDER_TARGET = 100;
+const LADDER_SNAKES = {71: 50, 82: 62, 56: 36};
+const LADDER_LADDERS = {24: 44, 33: 68};
 const ladderRooms = new Map();
 
 function getLadderSnapshot(room) {
@@ -1793,7 +1793,7 @@ function broadcastLadder(room) {
 function broadcastLadderLobby() {
   const openRooms = Array.from(ladderRooms.values())
     .filter(r => r.phase === 'waiting')
-    .map(r => ({ id: r.id, bet: r.bet, creatorName: r.players[r.creatorUid]?.name || 'Unknown' }));
+    .map(r => ({ id: r.id, bet: r.bet, creatorName: r.players[r.creatorUid]?.name || 'Unknown', isBot: r.creatorUid.startsWith('__bot_') }));
   const payload = JSON.stringify({ type: 'ladder-lobby', rooms: openRooms });
   for (const ws of wss.clients) {
     if (ws.readyState === 1 && ws.authed && ws._ladderLobby) {
@@ -1808,7 +1808,7 @@ function scheduleLadderTimeout(room, uid) {
     if (room.phase === 'playing' && room.currentTurn === uid) {
       await executeLadderRoll(room, uid); // auto-roll
     }
-  }, 20000);
+  }, 20000); 
 }
 
 async function executeLadderRoll(room, uid) {
@@ -1832,8 +1832,12 @@ async function executeLadderRoll(room, uid) {
   if (p.pos >= LADDER_TARGET) {
     room.phase = 'results';
     room.winner = uid;
-    const prize = Math.floor(room.prizePool * 0.8);
-    await claimPayout(uid, prize, `ladder_${room.id}`, 1, 'win');
+    
+    if (!uid.startsWith('__bot_')) {
+       const prize = Math.floor(room.prizePool * 0.8);
+       await claimPayout(uid, prize, `ladder_${room.id}`, 1, 'win');
+    }
+    
     broadcastLadder(room);
     
     setTimeout(() => {
@@ -1849,7 +1853,18 @@ async function executeLadderRoll(room, uid) {
   } else {
     room.currentTurn = (uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
     broadcastLadder(room);
-    scheduleLadderTimeout(room, room.currentTurn);
+    
+    if (room.currentTurn && room.currentTurn.startsWith('__bot_')) {
+       const botWs = Array.from(conns.get(room.currentTurn) || []);
+       const bRoll = async () => {
+          if (room.phase === 'playing' && room.currentTurn === botWs[0]?.uid) {
+             await executeLadderRoll(room, room.currentTurn);
+          }
+       };
+       setTimeout(bRoll, 1500 + Math.random() * 1000);
+    } else {
+       scheduleLadderTimeout(room, room.currentTurn);
+    }
   }
 }
 
@@ -1891,7 +1906,7 @@ async function handleLadderLeave(ws) {
     room.phase = 'results';
     room.winner = (ws.uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
     if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
-    if (room.winner) {
+    if (room.winner && !room.winner.startsWith('__bot_')) {
       const prize = Math.floor(room.prizePool * 0.8);
       await claimPayout(room.winner, prize, `ladder_${room.id}`, 1, 'win');
     }
@@ -1901,6 +1916,37 @@ async function handleLadderLeave(ws) {
   ws._ladderRoomId = null;
   broadcastLadderLobby();
 }
+
+// LADDER BOT ENGINE
+setInterval(() => {
+    // Create bot rooms if the lobby is empty
+    const openBots = Array.from(ladderRooms.values()).filter(r => r.phase === 'waiting' && r.creatorUid.startsWith('__bot_'));
+    if (openBots.length < 3) {
+        const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+        const bUid = `__bot_${safeUser(bName)}`;
+        const bet = LADDER_STAKES[Math.floor(Math.random() * LADDER_STAKES.length)];
+        
+        ensureUser(bUid, null, true).then(() => {
+            const roomId = 'L' + crypto.randomBytes(3).toString('hex').toUpperCase();
+            const room = {
+              id: roomId, bet, phase: 'waiting', creatorUid: bUid, joinerUid: null,
+              multiplier: 1, currentTurn: null, lastRoll: null, winner: null, prizePool: 0,
+              players: { [bUid]: { name: bName, pos: 1 } },
+              pendingJoiners: new Map()
+            };
+            
+            room._waitTimeout = setTimeout(() => {
+              if (room.phase === 'waiting') {
+                ladderRooms.delete(room.id);
+                broadcastLadderLobby();
+              }
+            }, 5 * 60 * 1000);
+            
+            ladderRooms.set(roomId, room);
+            broadcastLadderLobby();
+        });
+    }
+}, 15000);
 
 // ============================================================================
 // WEBSOCKET SETUP
@@ -2127,6 +2173,18 @@ async function handle(ws, m) {
     ws._ladderLobby = false;
     broadcastLadder(room);
     broadcastLadderLobby();
+    
+    // Bot will join after 3-6 seconds
+    setTimeout(() => {
+        if (room.phase === 'waiting') {
+            const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+            const bUid = `__bot_${safeUser(bName)}`;
+            ensureUser(bUid, null, true).then(() => {
+                room.pendingJoiners.set(bUid, bName);
+                broadcastLadder(room);
+            });
+        }
+    }, 3000 + Math.random() * 3000);
     return;
   }
   if (m.type === 'ladder-request-join') {
@@ -2135,7 +2193,41 @@ async function handle(ws, m) {
     room.pendingJoiners.set(ws.uid, ws.displayName);
     ws._ladderRoomId = room.id;
     ws._ladderLobby = false;
-    broadcastLadder(room);
+    
+    if (room.creatorUid.startsWith('__bot_')) {
+        // Bot auto-approves player
+        setTimeout(() => {
+           if (room.phase === 'waiting' && room.pendingJoiners.has(ws.uid)) {
+               room.joinerUid = ws.uid;
+               room.players[ws.uid] = { name: ws.displayName, pos: 1 };
+               room.pendingJoiners.delete(ws.uid);
+               room.phase = 'betting';
+               if (room._waitTimeout) { clearTimeout(room._waitTimeout); room._waitTimeout = null; }
+               broadcastLadder(room);
+               
+               // Bot auto-accepts after 2s
+               setTimeout(() => {
+                   if (room.phase === 'betting') {
+                       room.multiplier = 1;
+                       room.phase = 'playing';
+                       room.currentTurn = room.creatorUid;
+                       broadcastLadder(room);
+                       // If bot starts, roll
+                       if (room.currentTurn.startsWith('__bot_')) {
+                           const bRoll = async () => {
+                              if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
+                                 await executeLadderRoll(room, room.creatorUid);
+                              }
+                           };
+                           setTimeout(bRoll, 1500);
+                       }
+                   }
+               }, 2000);
+           }
+        }, 1500);
+    } else {
+        broadcastLadder(room);
+    }
     return;
   }
   if (m.type === 'ladder-approve') {
@@ -2170,6 +2262,25 @@ async function handle(ws, m) {
     if (mult < 1 || mult > 5) return;
     room.multiplier = mult;
     broadcastLadder(room);
+    
+    // If bot is present, bot accepts after 2s
+    if (room.creatorUid.startsWith('__bot_') || room.joinerUid?.startsWith('__bot_')) {
+        setTimeout(() => {
+           if (room.phase === 'betting') {
+               room.phase = 'playing';
+               room.currentTurn = room.creatorUid;
+               broadcastLadder(room);
+               if (room.currentTurn.startsWith('__bot_')) {
+                   const bRoll = async () => {
+                      if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
+                         await executeLadderRoll(room, room.creatorUid);
+                      }
+                   };
+                   setTimeout(bRoll, 1500);
+               }
+           }
+        }, 2000);
+    }
     return;
   }
   if (m.type === 'ladder-start') {
@@ -2180,25 +2291,29 @@ async function handle(ws, m) {
     const cBal = await walletFor(room.creatorUid);
     const jBal = await walletFor(room.joinerUid);
     
-    if (cBal.play < cost || jBal.play < cost) {
-      return send(ws, { type: 'ladder-error', message: 'Insufficient play balance for one or both players.' });
+    if ((!room.creatorUid.startsWith('__bot_') && cBal.play < cost) || (!room.joinerUid.startsWith('__bot_') && jBal.play < cost)) {
+      return send(ws, { type: 'ladder-error', message: 'Insufficient play balance.' });
     }
     
-    const d1 = await debit(room.creatorUid, cost);
-    const d2 = await debit(room.joinerUid, cost);
-    
-    if (!d1.ok || !d2.ok) {
-      if (d1.ok) await refundWager(room.creatorUid, cost);
-      if (d2.ok) await refundWager(room.joinerUid, cost);
-      return send(ws, { type: 'ladder-error', message: 'Failed to deduct balance.' });
-    }
+    if (!room.creatorUid.startsWith('__bot_')) await debit(room.creatorUid, cost);
+    if (!room.joinerUid.startsWith('__bot_')) await debit(room.joinerUid, cost);
     
     room.prizePool = cost * 2;
     room.phase = 'playing';
     room.currentTurn = room.creatorUid; 
     room.lastRoll = null;
     broadcastLadder(room);
-    scheduleLadderTimeout(room, room.currentTurn);
+    
+    if (room.currentTurn.startsWith('__bot_')) {
+        const bRoll = async () => {
+           if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
+              await executeLadderRoll(room, room.creatorUid);
+           }
+        };
+        setTimeout(bRoll, 1500);
+    } else {
+        scheduleLadderTimeout(room, room.currentTurn);
+    }
     return;
   }
   if (m.type === 'ladder-kick') {
