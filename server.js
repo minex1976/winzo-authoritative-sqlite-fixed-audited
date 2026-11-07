@@ -1855,9 +1855,8 @@ async function executeLadderRoll(room, uid) {
     broadcastLadder(room);
     
     if (room.currentTurn && room.currentTurn.startsWith('__bot_')) {
-       const botWs = Array.from(conns.get(room.currentTurn) || []);
        const bRoll = async () => {
-          if (room.phase === 'playing' && room.currentTurn === botWs[0]?.uid) {
+          if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
              await executeLadderRoll(room, room.currentTurn);
           }
        };
@@ -2196,7 +2195,7 @@ async function handle(ws, m) {
     
     if (room.creatorUid.startsWith('__bot_')) {
         // Bot auto-approves player
-        setTimeout(() => {
+        setTimeout(async () => {
            if (room.phase === 'waiting' && room.pendingJoiners.has(ws.uid)) {
                room.joinerUid = ws.uid;
                room.players[ws.uid] = { name: ws.displayName, pos: 1 };
@@ -2206,17 +2205,27 @@ async function handle(ws, m) {
                broadcastLadder(room);
                
                // Bot auto-accepts after 2s
-               setTimeout(() => {
+               setTimeout(async () => {
                    if (room.phase === 'betting') {
-                       room.multiplier = 1;
+                       const cost = room.bet * room.multiplier;
+                       const deductRes = await debit(room.joinerUid, cost);
+                       if (!deductRes.ok) {
+                           send(ws, { type: 'ladder-error', message: 'Insufficient balance to play.' });
+                           room.joinerUid = null;
+                           delete room.players[ws.uid];
+                           room.phase = 'waiting';
+                           ws._ladderRoomId = null;
+                           broadcastLadder(room);
+                           return;
+                       }
+                       room.prizePool = cost * 2;
                        room.phase = 'playing';
-                       room.currentTurn = room.creatorUid;
+                       room.currentTurn = room.creatorUid; // Bot starts
                        broadcastLadder(room);
-                       // If bot starts, roll
                        if (room.currentTurn.startsWith('__bot_')) {
                            const bRoll = async () => {
-                              if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
-                                 await executeLadderRoll(room, room.creatorUid);
+                              if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
+                                 await executeLadderRoll(room, room.currentTurn);
                               }
                            };
                            setTimeout(bRoll, 1500);
@@ -2265,15 +2274,23 @@ async function handle(ws, m) {
     
     // If bot is present, bot accepts after 2s
     if (room.creatorUid.startsWith('__bot_') || room.joinerUid?.startsWith('__bot_')) {
-        setTimeout(() => {
+        setTimeout(async () => {
            if (room.phase === 'betting') {
+               const cost = room.bet * room.multiplier;
+               const humanUid = room.creatorUid.startsWith('__bot_') ? room.joinerUid : room.creatorUid;
+               const deductRes = await debit(humanUid, cost);
+               if (!deductRes.ok) {
+                   send(ws, { type: 'ladder-error', message: 'Insufficient balance to start game.' });
+                   return;
+               }
+               room.prizePool = cost * 2;
                room.phase = 'playing';
                room.currentTurn = room.creatorUid;
                broadcastLadder(room);
                if (room.currentTurn.startsWith('__bot_')) {
                    const bRoll = async () => {
-                      if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
-                         await executeLadderRoll(room, room.creatorUid);
+                      if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
+                         await executeLadderRoll(room, room.currentTurn);
                       }
                    };
                    setTimeout(bRoll, 1500);
@@ -2306,8 +2323,8 @@ async function handle(ws, m) {
     
     if (room.currentTurn.startsWith('__bot_')) {
         const bRoll = async () => {
-           if (room.phase === 'playing' && room.currentTurn === room.creatorUid) {
-              await executeLadderRoll(room, room.creatorUid);
+           if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
+              await executeLadderRoll(room, room.currentTurn);
            }
         };
         setTimeout(bRoll, 1500);
