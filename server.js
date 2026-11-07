@@ -28,19 +28,16 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
-// 🔒 FIX #3: SMS webhook secret is REQUIRED. No hardcoded fallback.
 const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET || '';
 if (!SMS_WEBHOOK_SECRET) {
   console.error('FATAL: SMS_WEBHOOK_SECRET is not set. SMS auto-deposit webhook will be disabled.');
 }
 
-// 🔒 FIX #2/#13: Session secret for HTTP auth. Falls back to random per-process.
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '');
 if (SESSION_SECRET.length < 32) {
   throw new Error('FATAL: SESSION_SECRET must be configured with at least 32 characters.');
 }
 
-// 🔒 FIX #4: No hardcoded IP salt. Random per-process if unset.
 const IP_HASH_SALT = process.env.IP_HASH_SALT || crypto.randomBytes(32).toString('hex');
 if (!process.env.IP_HASH_SALT) {
   console.warn('WARNING: IP_HASH_SALT not set. Multi-account detection will not work across restarts.');
@@ -83,14 +80,11 @@ const WS_MAX_CONNECTIONS_PER_IP = Math.max(2, Number(process.env.WS_MAX_CONNECTI
 const WS_CONNECTION_RATE_WINDOW_MS = 60_000;
 const WS_CONNECTION_RATE_MAX = Math.max(5, Number(process.env.WS_CONNECTION_RATE_MAX || 20));
 
-// 🔒 FIX #5: Multi-account detection thresholds.
 const MULTI_ACCOUNT_IP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_IP_THRESHOLD || 5);
 const MULTI_ACCOUNT_FP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_FP_THRESHOLD || 3);
 
-// 🔒 FIX #10: Admin idle timeout.
 const ADMIN_IDLE_MS = Number(process.env.ADMIN_IDLE_MS || 30 * 60 * 1000);
 
-// 🔒 FIX #12: Transfer rate limit (in-memory; per-instance).
 const TRANSFER_RATE_WINDOW_MS = 60 * 1000;
 const TRANSFER_RATE_MAX = 10;
 
@@ -213,7 +207,6 @@ async function initDb() {
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_by VARCHAR(64);
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS broadcast_id VARCHAR(128);
       CREATE TABLE IF NOT EXISTS security_scan_logs(id VARCHAR(128) PRIMARY KEY, scanned INT NOT NULL, flagged INT NOT NULL, findings JSONB NOT NULL DEFAULT '[]'::jsonb, created_at BIGINT NOT NULL);
-      -- 🔒 FIX #1/#7: provably-fair commit-reveal seeds
       ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);
       ALTER TABLE rooms         ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);
     `);
@@ -249,10 +242,6 @@ async function initDb() {
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);`);
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);`);
 
-    // Enforce one phone number per Telegram account. Normalize formatting so
-    // +251 9xx xxx xxx and +251-9xx-xxx-xxx are treated as the same number.
-    // Any legacy duplicate claims are cleared for re-verification rather than
-    // arbitrarily assigning the number to one account.
     await client.query(`
       ALTER TABLE telegram_contacts ADD COLUMN IF NOT EXISTS phone_normalized VARCHAR(32);
       UPDATE telegram_contacts
@@ -313,8 +302,6 @@ function toFiniteNumber(value, fallback = 0) {
 function now() { return Date.now(); }
 function normalizeTelegramPhoneNumber(value) {
   const digits = String(value || '').replace(/\D/g, '');
-  // Telegram contact numbers are normally international/E.164. Reject
-  // implausible values rather than allowing empty or partial numbers to claim an account.
   if (digits.length < 7 || digits.length > 15) return '';
   return digits;
 }
@@ -332,7 +319,6 @@ function normalizedClientIp(ip) {
   if (value === '::1') return '127.0.0.1';
   return value;
 }
-// 🔒 FIX #4: use module-level salt (no hardcoded fallback string)
 function hashWithRotatingSalt(value, dayOffset = 0) {
   const d = new Date(Date.now() - dayOffset * DAY).toISOString().slice(0, 10);
   const salt = `${IP_HASH_SALT}|${d}`;
@@ -346,7 +332,6 @@ function websocketClientIp(ws) {
   return normalizedClientIp(ws?._socket?.remoteAddress || '');
 }
 
-// 🔒 FIX #2/#13: session tokens for authenticated HTTP endpoints.
 function issueSessionToken(uid) {
   const ts = Date.now();
   const payload = `${uid}:${ts}`;
@@ -366,7 +351,6 @@ function verifySessionToken(token) {
   } catch { return null; }
 }
 
-// 🔒 FIX #12: transfer rate limiter (per-process; swap for Redis for multi-instance).
 const transferRate = new Map();
 function checkTransferRate(uid) {
   const since = now() - TRANSFER_RATE_WINDOW_MS;
@@ -382,7 +366,6 @@ class Mutex {
   run(fn) { const n = this._t.then(fn, fn); this._t = n.then(() => {}, () => {}); return n; }
 }
 
-// 🔒 FIX #1/#7: deterministic seeded RNG (HMAC-based, verifiable).
 class SeededRNG {
   constructor(seedHex) {
     this.seed = Buffer.from(String(seedHex), 'hex');
@@ -474,7 +457,7 @@ function validateInitData(initData, maxAge = 86400) {
 }
 
 // ============================================================================
-// 🔒 FIX #5: multi-account detection
+// MULTI-ACCOUNT DETECTION
 // ============================================================================
 async function detectMultiAccount(username, ipHash = null, fingerprint = null) {
   const signals = [];
@@ -612,7 +595,6 @@ async function sendWallet(uid) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-
 async function addNotification(username, data) {
   const id = data.id || crypto.randomUUID();
   const timestamp = Number(data.timestamp || now());
@@ -642,9 +624,6 @@ async function notifyTransaction(username, tx) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '' }));
 }
 
-// ============================================================================
-// 🔒 FIX #8: audit trail for direct wallet credits
-// ============================================================================
 async function recordWalletCredit(client, username, amount, type, meta = {}) {
   const id = crypto.randomUUID();
   const t = now();
@@ -1007,7 +986,6 @@ async function markNotificationRead(uid, id) {
   await pool.query('UPDATE notifications SET read = true WHERE id = $1 AND username = $2', [id, uid]);
 }
 
-// 🔒 FIX #8: game payouts now also appear in the `transactions` table.
 async function claimPayout(uid, amount, roomId, round, kind) {
   const key = `payout:${roomId}_${round}_${uid}_${kind}`;
   const client = await pool.connect();
@@ -1025,7 +1003,6 @@ async function claimPayout(uid, amount, roomId, round, kind) {
   finally { client.release(); }
 }
 
-// 🔒 FIX #8: referral credits also audited in `transactions`.
 async function creditReferral(ref, amount, roomId, round, winnerUid) {
   if (!ref || ref === winnerUid || amount <= 0) return false;
   const key = `ref:${roomId}_${round}_${winnerUid}_${ref}`;
@@ -1088,7 +1065,6 @@ class Room {
     this.lastResult = row?.last_result_json ? JSON.parse(row.last_result_json) : null;
     this.mutex = new Mutex(); this.botTimers = []; this.dirty = true;
     this.roundStartedAt = now();
-    // 🔒 FIX #1: load or generate server seed
     this.serverSeed = row?.server_seed || null;
     this.serverSeedHash = row?.server_seed_hash || null;
     if (!this.serverSeed) {
@@ -1116,7 +1092,6 @@ class Room {
       totalBets, humanBets, totalPicks, displayedPrizePool: Math.floor(totalBets * PAYOUT_RATE),
       onlineCount: activePlayers.length, botCount: activePlayers.filter(p => p.isBot).length, realPlayerCount: activePlayers.filter(p => !p.isBot).length,
       serverNow: now(), lastResult: this.lastResult,
-      // 🔒 FIX #1: expose commitment so clients can verify once the round ends
       serverSeedHash: this.serverSeedHash,
     };
   }
@@ -1219,7 +1194,6 @@ async function refundDisconnectedPlayer(room, p) {
   p.picks = []; p.active = false; room.dirty = true;
 }
 
-// 🔒 FIX #1: provably-fair draw using committed server seed.
 async function toSpinning(room) {
   if (room.phase !== 'selection') return;
   const allWithPicks = [...room.players.values()].filter(p => p.picks.length > 0 && (p.isBot || p.active));
@@ -1227,7 +1201,6 @@ async function toSpinning(room) {
   const allNums = [...new Set(allWithPicks.flatMap(p => p.picks))];
   if (!allNums.length) return resetRound(room, 'no-picks');
 
-  // Deterministic draw: HMAC(serverSeed, room:round:nums). Verifiable post-round.
   const commitment = crypto.createHmac('sha256', Buffer.from(room.serverSeed, 'hex'))
     .update(`${room.id}:${room.round}:${allNums.join(',')}`)
     .digest();
@@ -1257,7 +1230,6 @@ async function toSpinning(room) {
     });
   } catch (e) { console.error('[ROUND-SNAPSHOT] persist failed:', e.message); }
 
-  // 🔒 FIX #1: reveal seed after commit
   room.lastResult = {
     round: room.round, winningNumber,
     winners: winners.map(uid => room.players.get(uid)?.displayName || uid),
@@ -1305,7 +1277,6 @@ async function resetRound(room, why) {
   room.taken.clear(); room.winningNumber = null; room.winners = []; room.prizePool = 0; room.lastResult = null;
   for (const p of room.players.values()) { p.picks = []; p.active = false; }
   room.roundStartedAt = now();
-  // 🔒 FIX #1: rotate server seed per round
   room.serverSeed = crypto.randomBytes(32).toString('hex');
   room.serverSeedHash = crypto.createHash('sha256').update(room.serverSeed).digest('hex');
   room.dirty = true;
@@ -1387,7 +1358,7 @@ setInterval(async () => {
 }, 500);
 
 // ============================================================================
-/* WINZO BINGO (with provably-fair commit-reveal) */
+/* WINZO BINGO */
 // ============================================================================
 const BINGO_DEFAULT_STAKE = [15,30].includes(Number(process.env.BINGO_STAKE)) ? Number(process.env.BINGO_STAKE) : 15;
 const BINGO_STAKES = [15, 30];
@@ -1425,7 +1396,6 @@ function bingoWithRoundLock(round, fn) {
 function clearBingoBots(round){for(const t of (round.botTimers||[]))clearTimeout(t);round.botTimers=[];}
 function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}return pool;}
 
-// 🔒 FIX #7: deterministic given (serverSeed, sorted entry IDs). Verifier can reproduce.
 function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
   const entries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!entries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
@@ -1490,7 +1460,6 @@ function bingoForceWinner(round) {
   return { ...best, pattern: bestPattern.name };
 }
 
-// 🔒 FIX #6: bot inserts now serialized inside the round lock + DB transaction
 function scheduleBingoBots(round){
   clearBingoBots(round);if(!round||round.phase!=='selection')return;
   const shuffled=[...BOT_NAMES].sort(()=>0.5-Math.random());
@@ -1529,7 +1498,6 @@ function scheduleBingoBots(round){
 
 async function bingoNewRound(stake){
   stake=bingoStake(stake);const counter=(bingoRoundCounters.get(stake)||0)+1;bingoRoundCounters.set(stake,counter);
-  // 🔒 FIX #7: commit-reveal seed
   const serverSeed=crypto.randomBytes(32).toString('hex');
   const serverSeedHash=crypto.createHash('sha256').update(serverSeed).digest('hex');
   const round={stake,id:crypto.randomUUID(),gameId:'B'+bingoId(),roundNumber:counter,phase:'selection',prizePool:0,startedAt:Date.now(),endsAt:Date.now()+BINGO_SELECTION_SECONDS*1000,called:[],pool:bingoShuffle(Array.from({length:75},(_,i)=>i+1)),entries:new Map(),winners:[],botTimers:[],tickRunning:false,operationQueue:Promise.resolve(),serverSeed,serverSeedHash};
@@ -1543,7 +1511,6 @@ async function restoreOneBingoRound(stake){
   const r=latest.rows[0];
   const round={stake,id:r.id,gameId:r.game_id,roundNumber:Number(r.round_number),phase:r.phase,prizePool:Number(r.prize_pool),startedAt:Number(r.started_at),endsAt:Number(r.ends_at),called:Array.isArray(r.called_numbers)?r.called_numbers:[],pool:[],entries:new Map(),winners:Array.isArray(r.winners)?r.winners:[],botTimers:[],tickRunning:false,operationQueue:Promise.resolve(),serverSeed:r.server_seed,serverSeedHash:r.server_seed_hash};
   if (!round.serverSeed) {
-    // legacy row without seed — generate fresh
     round.serverSeed = crypto.randomBytes(32).toString('hex');
     round.serverSeedHash = crypto.createHash('sha256').update(round.serverSeed).digest('hex');
   }
@@ -1584,7 +1551,7 @@ function bingoBuildBroadcastSnapshot(round){
     phase:round.phase,stake:round.stake,prizePool:Number(round.prizePool.toFixed(2)),
     called:[...round.called],taken:entries.map(e=>e.cardNumber),
     playerCount:byUid.size,endsAt:round.endsAt,winners:round.winners,byUid,
-    serverSeedHash:round.serverSeedHash,  // 🔒 FIX #7
+    serverSeedHash:round.serverSeedHash,
   };
 }
 function bingoPublicState(round,uid,snapshot=null){
@@ -1597,7 +1564,7 @@ function bingoPublicState(round,uid,snapshot=null){
     called:shared.called,taken:shared.taken,playerCount:shared.playerCount,
     endsAt:shared.endsAt,mySelections:mine.map(e=>e.cardNumber),
     myCards:mine.map(e=>({id:e.cardNumber,grid:e.grid,won:!!e.won})),winners:shared.winners,
-    serverSeedHash:shared.serverSeedHash,  // 🔒 FIX #7
+    serverSeedHash:shared.serverSeedHash,
   };
 }
 function bingoSendState(ws,snapshot=null){if(ws?.readyState===1&&ws.authed){const round=bingoRoundFor(ws);send(ws,{type:'bingo-state',state:bingoPublicState(round,ws.uid,snapshot)});}}
@@ -1622,7 +1589,6 @@ function bingoBroadcast(stake){
   setImmediate(()=>{bingoBroadcastPending.delete(key);bingoBroadcastNow(key==='__all__'?null:key);});
 }
 
-// 🔒 FIX #11: idempotency key uses per-entry UUID (not card number) so re-select/unselect cycles refund correctly.
 async function bingoSelectUnlocked(ws,numbers){
   const round=bingoRoundFor(ws);if(!round||round.phase!=='selection'||Date.now()>=round.endsAt)return send(ws,{type:'bingo-error',message:'Card selection is closed for this round.'});
   if(!Array.isArray(numbers)||numbers.length<1||numbers.length>2||numbers.some(n=>!Number.isInteger(n)||n<1||n>400)||new Set(numbers).size!==numbers.length)return send(ws,{type:'bingo-error',message:'Choose one or two different card numbers from 1 to 400.'});
@@ -1642,7 +1608,6 @@ async function bingoSelectUnlocked(ws,numbers){
     for(const n of numbers){
       const grid=bingoNewCard(),id=crypto.randomUUID();
       await db.query('INSERT INTO bingo_entries(id,round_id,username,card_number,card_data,stake,created_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[id,round.id,ws.uid,n,JSON.stringify(grid),round.stake,Date.now()]);
-      // 🔒 FIX #11: use entry UUID in key
       await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[crypto.randomUUID(),round.id,ws.uid,'stake',round.stake,'bingo-stake:'+id,Date.now()]);
       newEntries.push({id,uid:ws.uid,name:ws.displayName||ws.uid,cardNumber:n,grid,stake:round.stake,won:false});
     }
@@ -1678,7 +1643,6 @@ async function bingoUnselectUnlocked(ws,number){
     if(!entryRes.rows.length)throw new Error('That card is not reserved by your account.');
     removed=entryRes.rows[0];
     const refund=Number(removed.stake);
-    // 🔒 FIX #11: use entry UUID in key
     const ledger=await db.query(
       `INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at)
        VALUES($1,$2,$3,'refund',$4,$5,$6) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id`,
@@ -1739,7 +1703,6 @@ async function bingoFinish(round,winners){
         winners: winnersPayload, called: calledSnapshot,
         winningNumber: calledSnapshot.length ? calledSnapshot[calledSnapshot.length - 1] : null,
         roundId: round.id, gameId: round.gameId, prizePool: round.prizePool,
-        // 🔒 FIX #7: reveal seed for verification
         serverSeed: round.serverSeed, serverSeedHash: round.serverSeedHash,
       });
     }
@@ -1793,6 +1756,153 @@ async function bingoTick(round){
 setInterval(()=>{for(const round of bingoRounds.values())bingoTick(round).catch(e=>console.error(`[BINGO-TICK ${round.stake}]`,e.message));},250);
 
 // ============================================================================
+// WINZO LADDER GAME
+// ============================================================================
+const LADDER_STAKES = [15, 30];
+const LADDER_TARGET = 50;
+const LADDER_SNAKES = {26:6, 34:12, 48:18, 42:25, 37:9, 15:3};
+const LADDER_LADDERS = {6:16, 8:22, 11:29, 19:35, 23:41, 30:45};
+const ladderRooms = new Map();
+
+function getLadderSnapshot(room) {
+  return {
+    id: room.id,
+    bet: room.bet,
+    phase: room.phase,
+    creatorUid: room.creatorUid,
+    joinerUid: room.joinerUid,
+    multiplier: room.multiplier,
+    currentTurn: room.currentTurn,
+    players: room.players,
+    lastRoll: room.lastRoll,
+    winner: room.winner,
+    prizePool: room.prizePool,
+    pendingJoiners: Array.from(room.pendingJoiners.entries()).map(([uid, name]) => ({ uid, name }))
+  };
+}
+
+function broadcastLadder(room) {
+  const payload = JSON.stringify({ type: 'ladder-state', room: getLadderSnapshot(room) });
+  for (const ws of wss.clients) {
+    if (ws.readyState === 1 && ws.authed && ws._ladderRoomId === room.id) {
+      ws.send(payload);
+    }
+  }
+}
+
+function broadcastLadderLobby() {
+  const openRooms = Array.from(ladderRooms.values())
+    .filter(r => r.phase === 'waiting')
+    .map(r => ({ id: r.id, bet: r.bet, creatorName: r.players[r.creatorUid]?.name || 'Unknown' }));
+  const payload = JSON.stringify({ type: 'ladder-lobby', rooms: openRooms });
+  for (const ws of wss.clients) {
+    if (ws.readyState === 1 && ws.authed && ws._ladderLobby) {
+      ws.send(payload);
+    }
+  }
+}
+
+function scheduleLadderTimeout(room, uid) {
+  if (room._timeout) clearTimeout(room._timeout);
+  room._timeout = setTimeout(async () => {
+    if (room.phase === 'playing' && room.currentTurn === uid) {
+      await executeLadderRoll(room, uid); // auto-roll
+    }
+  }, 20000);
+}
+
+async function executeLadderRoll(room, uid) {
+  if (room.phase !== 'playing' || room.currentTurn !== uid) return;
+  
+  if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+
+  const dice = Math.floor(Math.random() * 6) + 1;
+  room.lastRoll = dice;
+  const p = room.players[uid];
+  if (!p) return;
+  
+  let newPos = p.pos + dice;
+  if (newPos > LADDER_TARGET) newPos = LADDER_TARGET; 
+  
+  if (LADDER_LADDERS[newPos]) newPos = LADDER_LADDERS[newPos];
+  else if (LADDER_SNAKES[newPos]) newPos = LADDER_SNAKES[newPos];
+  
+  p.pos = newPos;
+  
+  if (p.pos >= LADDER_TARGET) {
+    room.phase = 'results';
+    room.winner = uid;
+    const prize = Math.floor(room.prizePool * 0.8);
+    await claimPayout(uid, prize, `ladder_${room.id}`, 1, 'win');
+    broadcastLadder(room);
+    
+    setTimeout(() => {
+      ladderRooms.delete(room.id);
+      for (const client of wss.clients) {
+        if (client._ladderRoomId === room.id) {
+          client._ladderRoomId = null;
+          send(client, { type: 'ladder-left', reason: 'game-over' });
+        }
+      }
+      broadcastLadderLobby();
+    }, 10000);
+  } else {
+    room.currentTurn = (uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
+    broadcastLadder(room);
+    scheduleLadderTimeout(room, room.currentTurn);
+  }
+}
+
+async function handleLadderLeave(ws) {
+  const roomId = ws._ladderRoomId;
+  if (!roomId) return;
+  const room = ladderRooms.get(roomId);
+  if (!room) { ws._ladderRoomId = null; return; }
+  
+  if (room.pendingJoiners.has(ws.uid)) {
+    room.pendingJoiners.delete(ws.uid);
+    ws._ladderRoomId = null;
+    send(ws, { type: 'ladder-left', reason: 'cancelled' });
+    broadcastLadder(room);
+    return;
+  }
+
+  if (room.phase === 'waiting' || room.phase === 'betting') {
+    if (room.creatorUid === ws.uid) {
+      const joinerWs = Array.from(conns.get(room.joinerUid) || []).find(w => w._ladderRoomId === roomId);
+      if (joinerWs) { joinerWs._ladderRoomId = null; send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); }
+      ladderRooms.delete(room.id);
+    } else if (room.joinerUid === ws.uid) {
+      delete room.players[room.joinerUid];
+      room.joinerUid = null;
+      room.phase = 'waiting';
+      room.multiplier = 1;
+      room._waitTimeout = setTimeout(() => {
+        if (room.phase === 'waiting') {
+          ladderRooms.delete(room.id);
+          const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
+          if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+          broadcastLadderLobby();
+        }
+      }, 5 * 60 * 1000);
+      broadcastLadder(room);
+    }
+  } else if (room.phase === 'playing') {
+    room.phase = 'results';
+    room.winner = (ws.uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
+    if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+    if (room.winner) {
+      const prize = Math.floor(room.prizePool * 0.8);
+      await claimPayout(room.winner, prize, `ladder_${room.id}`, 1, 'win');
+    }
+    broadcastLadder(room);
+    setTimeout(() => { ladderRooms.delete(room.id); }, 10000);
+  }
+  ws._ladderRoomId = null;
+  broadcastLadderLobby();
+}
+
+// ============================================================================
 // WEBSOCKET SETUP
 // ============================================================================
 const conns = new Map();
@@ -1816,6 +1926,8 @@ wss.on('connection', (ws, req) => {
   ws.isAlive = true; ws.authenticatedAt = null;
   ws.authTimer = setTimeout(() => { if (!ws.authed) { try { ws.close(4001, 'authentication timeout'); } catch {} } }, 10000);
   ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false; ws.lastAdminActivity = 0;
+  ws._ladderLobby = false;
+  ws._ladderRoomId = null;
 
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', async raw => {
@@ -1832,6 +1944,7 @@ wss.on('connection', (ws, req) => {
     if (activeForIp) wsIpConnections.set(ws._ipKey, activeForIp); else wsIpConnections.delete(ws._ipKey);
     if (ws.uid) console.log(`[WS-CLOSE] uid=${ws.uid} code=${code} reason=${String(reason || '').slice(0, 80)}`);
     bingoMembers.delete(ws);
+    if (ws._ladderRoomId) await handleLadderLeave(ws);
     if (!ws.uid) return;
     const set = conns.get(ws.uid);
     if (set) { set.delete(ws); if (!set.size) { conns.delete(ws.uid); await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), ws.uid]).catch(()=>{}); } }
@@ -1866,8 +1979,6 @@ async function handle(ws, m) {
       try { ws.close(4003, 'invalid-auth-mode'); } catch {}
       return;
     }
-    // Limit repeated authentication attempts per source IP. This is an additional
-    // per-process safeguard; deploy multiple instances behind a shared limiter for global enforcement.
     const authIp = websocketClientIp(ws) || 'unknown';
     const authRateKey = `auth:${authIp}`;
     const authNow = now();
@@ -1879,10 +1990,6 @@ async function handle(ws, m) {
       [Number(telegramUser.id)]
     );
 
-    // Existing users can log in without re-sharing their phone. A new Telegram
-    // identity can only be created through the explicit signup path and a verified
-    // Telegram contact webhook record. This check happens before resolveTelegramUser,
-    // which is allowed to create the account row.
     if (m.authMode === 'login' && !existingAccount.rows.length) {
       send(ws, { type: 'login-required-signup', message: 'No account exists for this Telegram user. Please choose Sign Up first.' });
       return;
@@ -1916,7 +2023,6 @@ async function handle(ws, m) {
       await pool.query(`UPDATE users SET phone_number = (SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1), updated_at = $2 WHERE username = $3`, [Number(telegramUser.id), now(), uid]);
     }
 
-    // 🔒 FIX #5: multi-account detection (non-blocking, flags for review)
     const ipHash = clientIp ? hashWithRotatingSalt(clientIp) : null;
     detectMultiAccount(uid, ipHash, m.deviceFingerprint || null).catch(e => console.error('[MULTI-ACCOUNT]', e.message));
 
@@ -1930,7 +2036,6 @@ async function handle(ws, m) {
     await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), uid]);
 
     const holdRes = await pool.query('SELECT withdrawal_hold_until FROM users WHERE username = $1', [uid]);
-    // 🔒 FIX #2/#13: issue session token for HTTP endpoints
     const sessionToken = issueSessionToken(uid);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
 
@@ -1951,7 +2056,7 @@ async function handle(ws, m) {
   }
 
   if (ws.isAdmin) {
-    ws.lastAdminActivity = now();  // 🔒 FIX #10
+    ws.lastAdminActivity = now();
     if (m.type === 'admin-list-transactions') return send(ws, { type: 'admin-transactions', transactions: await adminListTransactions() });
     if (m.type === 'admin-decision') {
       const r = await adminDecision(String(m.id || ''), String(m.decision || ''), String(m.reason || ''));
@@ -1982,12 +2087,149 @@ async function handle(ws, m) {
   if (m.type === 'bingo-select') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoSelect(ws,m.numbers); }
   if (m.type === 'bingo-unselect') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoUnselect(ws,m.number); }
   if (m.type === 'bingo-history') {
-    // 🔒 FIX #12: rate-limit history query
     if (!checkTransferRate(`bingo-history:${ws.uid}`)) return send(ws, { type: 'error', message: 'rate-limited' });
     const r=await pool.query(`SELECT DISTINCT r.game_id,r.round_number,r.phase,r.prize_pool,r.called_numbers,r.completed_at
       FROM bingo_rounds r JOIN bingo_entries e ON e.round_id=r.id
       WHERE e.username=$1 ORDER BY r.completed_at DESC NULLS LAST, r.round_number DESC LIMIT 20`,[ws.uid]);
     return send(ws,{type:'bingo-history',items:r.rows});
+  }
+
+  // LADDER HANDLERS
+  if (m.type === 'ladder-join-lobby') {
+    ws._ladderLobby = true;
+    broadcastLadderLobby();
+    return;
+  }
+  if (m.type === 'ladder-leave-lobby') {
+    ws._ladderLobby = false;
+    return;
+  }
+  if (m.type === 'ladder-create') {
+    const bet = Number(m.bet);
+    if (!LADDER_STAKES.includes(bet)) return send(ws, { type: 'ladder-error', message: 'Invalid bet' });
+    const roomId = 'L' + crypto.randomBytes(3).toString('hex').toUpperCase();
+    const room = {
+      id: roomId, bet, phase: 'waiting', creatorUid: ws.uid, joinerUid: null,
+      multiplier: 1, currentTurn: null, lastRoll: null, winner: null, prizePool: 0,
+      players: { [ws.uid]: { name: ws.displayName, pos: 1 } },
+      pendingJoiners: new Map()
+    };
+    room._waitTimeout = setTimeout(() => {
+      if (room.phase === 'waiting') {
+        ladderRooms.delete(room.id);
+        const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
+        if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+        broadcastLadderLobby();
+      }
+    }, 5 * 60 * 1000);
+    ladderRooms.set(roomId, room);
+    ws._ladderRoomId = roomId;
+    ws._ladderLobby = false;
+    broadcastLadder(room);
+    broadcastLadderLobby();
+    return;
+  }
+  if (m.type === 'ladder-request-join') {
+    const room = ladderRooms.get(m.roomId);
+    if (!room || room.phase !== 'waiting' || room.creatorUid === ws.uid) return send(ws, { type: 'ladder-error', message: 'Room not available' });
+    room.pendingJoiners.set(ws.uid, ws.displayName);
+    ws._ladderRoomId = room.id;
+    ws._ladderLobby = false;
+    broadcastLadder(room);
+    return;
+  }
+  if (m.type === 'ladder-approve') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (!room || room.creatorUid !== ws.uid || room.phase !== 'waiting') return;
+    const joinerUid = m.targetUid;
+    if (!room.pendingJoiners.has(joinerUid)) return;
+    room.joinerUid = joinerUid;
+    room.players[joinerUid] = { name: room.pendingJoiners.get(joinerUid), pos: 1 };
+    room.pendingJoiners.delete(joinerUid);
+    room.phase = 'betting';
+    if (room._waitTimeout) { clearTimeout(room._waitTimeout); room._waitTimeout = null; }
+    broadcastLadder(room);
+    return;
+  }
+  if (m.type === 'ladder-reject') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (!room || room.creatorUid !== ws.uid) return;
+    room.pendingJoiners.delete(m.targetUid);
+    const targetWs = Array.from(conns.get(m.targetUid) || []).find(w => w._ladderRoomId === room.id);
+    if (targetWs) {
+      targetWs._ladderRoomId = null;
+      send(targetWs, { type: 'ladder-rejected' });
+    }
+    broadcastLadder(room);
+    return;
+  }
+  if (m.type === 'ladder-set-mult') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (!room || room.phase !== 'betting') return;
+    const mult = Number(m.mult);
+    if (mult < 1 || mult > 5) return;
+    room.multiplier = mult;
+    broadcastLadder(room);
+    return;
+  }
+  if (m.type === 'ladder-start') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (!room || room.phase !== 'betting') return;
+    
+    const cost = room.bet * room.multiplier;
+    const cBal = await walletFor(room.creatorUid);
+    const jBal = await walletFor(room.joinerUid);
+    
+    if (cBal.play < cost || jBal.play < cost) {
+      return send(ws, { type: 'ladder-error', message: 'Insufficient play balance for one or both players.' });
+    }
+    
+    const d1 = await debit(room.creatorUid, cost);
+    const d2 = await debit(room.joinerUid, cost);
+    
+    if (!d1.ok || !d2.ok) {
+      if (d1.ok) await refundWager(room.creatorUid, cost);
+      if (d2.ok) await refundWager(room.joinerUid, cost);
+      return send(ws, { type: 'ladder-error', message: 'Failed to deduct balance.' });
+    }
+    
+    room.prizePool = cost * 2;
+    room.phase = 'playing';
+    room.currentTurn = room.creatorUid; 
+    room.lastRoll = null;
+    broadcastLadder(room);
+    scheduleLadderTimeout(room, room.currentTurn);
+    return;
+  }
+  if (m.type === 'ladder-kick') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (!room || room.creatorUid !== ws.uid || room.phase !== 'betting') return;
+    const joinerUid = room.joinerUid;
+    if (joinerUid) {
+      const targetWs = Array.from(conns.get(joinerUid) || []).find(w => w._ladderRoomId === room.id);
+      if (targetWs) {
+        targetWs._ladderRoomId = null;
+        send(targetWs, { type: 'ladder-kicked' });
+      }
+      delete room.players[joinerUid];
+      room.joinerUid = null;
+      room.phase = 'waiting';
+      room.multiplier = 1;
+      broadcastLadder(room);
+      broadcastLadderLobby();
+    }
+    return;
+  }
+  if (m.type === 'ladder-roll') {
+    const room = ladderRooms.get(ws._ladderRoomId);
+    if (room && room.phase === 'playing' && room.currentTurn === ws.uid) {
+      await executeLadderRoll(room, ws.uid);
+    }
+    return;
+  }
+  if (m.type === 'ladder-leave') {
+    await handleLadderLeave(ws);
+    return;
   }
 
   if (m.type === 'join') {
@@ -2025,7 +2267,6 @@ async function handle(ws, m) {
   }
 
   if (m.type === 'transfer') {
-    // 🔒 FIX #12: rate limit transfers
     if (!checkTransferRate(ws.uid)) return send(ws, { type: 'error', message: 'rate-limited' });
     const amount = Number(m.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return send(ws, { type: 'error', message: 'bad-amount' });
@@ -2082,7 +2323,6 @@ async function handle(ws, m) {
   if (m.type === 'notification-delete') { await pool.query("DELETE FROM notifications WHERE id=$1 AND username=$2 AND dismiss_policy='user'",[String(m.id||''),ws.uid]); return; }
 }
 
-// 🔒 FIX #10: admin idle timeout in ping loop
 setInterval(() => {
   for (const ws of wss.clients) {
     if (!ws.isAlive) { ws.terminate(); continue; }
@@ -2100,10 +2340,6 @@ setInterval(() => {
 // ============================================================================
 const app = express();
 
-// CORS must run BEFORE every route, including /api/telegram-contact/status.
-// The Mini App is commonly hosted on GitHub Pages while this API is on another
-// domain. JSON POST requests trigger an OPTIONS preflight; handling CORS after
-// the route makes that preflight fail and the browser silently blocks polling.
 app.use((req, res, next) => {
   const origin = String(req.headers.origin || '').trim();
   if (origin && WS_ALLOWED_ORIGINS.has(origin)) {
@@ -2121,8 +2357,6 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '3mb' }));
 
-
-// 🔒 FIX #3: fail closed + constant-time compare.
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
   if (!SMS_WEBHOOK_SECRET) {
     console.warn('[SECURITY] SMS webhook called but SMS_WEBHOOK_SECRET is not configured.');
@@ -2165,8 +2399,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
   }
 });
 
-// Telegram delivers the phone contact to the bot as a message.contact update.
-// Only accept contacts whose contact.user_id matches the sender's Telegram ID.
 app.post('/api/telegram/webhook', async (req, res) => {
   if (!TELEGRAM_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'telegram-webhook-secret-not-configured' });
   const supplied = req.get('x-telegram-bot-api-secret-token') || '';
@@ -2180,8 +2412,6 @@ app.post('/api/telegram/webhook', async (req, res) => {
     const normalizedPhone = normalizeTelegramPhoneNumber(phone);
     if (senderId > 0 && contactUserId === senderId && normalizedPhone && phone.length <= 64) {
       try {
-        // The unique index is the final concurrency-safe guard. A pre-check alone
-        // would allow two simultaneous webhook requests to claim the same number.
         await pool.query(`INSERT INTO telegram_contacts
             (telegram_id, phone_number, phone_normalized, first_name, last_name, updated_at)
           VALUES ($1,$2,$3,$4,$5,$6)
@@ -2214,7 +2444,6 @@ app.post('/api/telegram/webhook', async (req, res) => {
   }
 });
 
-// Called by the Mini App after requestContact; initData is validated server-side.
 app.post('/api/telegram-contact/status', async (req, res) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
@@ -2232,13 +2461,8 @@ app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreS
 app.get('/health', (_, res) => res.status(200).send('OK'));
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
-function sessionUid(req) {
-  // Session tokens are accepted only in headers; never in URLs where they can
-  // leak through browser history, access logs, analytics, or referrer headers.
-  return verifySessionToken(req.get('x-session-token'));
-}
+function sessionUid(req) { return verifySessionToken(req.get('x-session-token')); }
 
-// 🔒 FIX #2: authenticated user notifications
 app.get('/user/notifications', async (req, res) => {
   const uid = sessionUid(req);
   if (!uid) return res.status(401).json({ ok: false, error: 'unauthorized' });
@@ -2298,8 +2522,6 @@ app.get('/admin/finance-summary', async (req,res)=>{
       WHERE ( $1::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date >= $1::date )
         AND ( $2::date IS NULL OR (to_timestamp(timestamp/1000.0) AT TIME ZONE 'Africa/Addis_Ababa')::date <= $2::date )
       GROUP BY 1 ORDER BY 1 DESC`, [from,to,excluded]);
-    // Service-fee income is 20% of prizes actually paid to human winners,
-    // not 20% of the whole prize pool or deposits.
     const fee = await pool.query(`
       SELECT day_key, SUM(human_prize)*0.20 AS fee FROM (
         SELECT to_char(to_timestamp(ended_at/1000.0) AT TIME ZONE 'Africa/Addis_Ababa','YYYY-MM-DD') AS day_key,
@@ -2513,9 +2735,6 @@ app.get('/admin/trace', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ============================================================================
-// ANALYTICS
-// ============================================================================
 function dayRangeToMs(fromDate, toDate) {
   const startMs = Date.parse(fromDate + 'T00:00:00Z');
   const endMs = Date.parse(toDate + 'T00:00:00Z') + 24 * 60 * 60 * 1000;
@@ -2628,9 +2847,6 @@ app.post('/admin/force-approve', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ============================================================================
-// 🔒 FIX #9: data pruning
-// ============================================================================
 async function expireSignupBonus(uid){
   const c=await pool.connect();
   try{
@@ -2688,9 +2904,6 @@ async function pruneOldData() {
   } catch (err) { console.error('[PRUNE] failed:', err.message); }
 }
 
-// ============================================================================
-// SERVER BOOT
-// ============================================================================
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
   const origin = String(req.headers.origin || '').trim();
@@ -2724,7 +2937,6 @@ server.listen(PORT, '0.0.0.0', () => {
         room.persist().catch(err => console.error('Room persist failed:', err));
         scheduleBots(room);
       }
-      // 🔒 FIX #9: prune every 6h
       pruneOldData().catch(e => console.error('[PRUNE] initial', e.message));
       setInterval(() => pruneOldData().catch(e => console.error('[PRUNE]', e.message)), 6 * 60 * 60 * 1000);
       console.log('✅ Background initialization complete.');
