@@ -1766,10 +1766,12 @@ const ladderRooms = new Map();
 
 function getCombinedSnakes(room) {
     const snakes = { ...LADDER_SNAKES };
-    for (const p of Object.values(room.players)) {
-        if (p.virtualSnakes) {
-            for (const head of p.virtualSnakes) {
-                snakes[head] = head - 20;
+    if (room && room.players) {
+        for (const p of Object.values(room.players)) {
+            if (p && p.virtualSnakes) {
+                for (const head of p.virtualSnakes) {
+                    snakes[head] = head - 20;
+                }
             }
         }
     }
@@ -1836,19 +1838,28 @@ async function executeLadderRoll(room, uid) {
   if (!p) return;
   
   const startPos = p.pos;
-  let intermediatePos = startPos + dice;
-  if (intermediatePos > LADDER_TARGET) intermediatePos = LADDER_TARGET; 
+  const actualDiceTarget = Math.min(startPos + dice, LADDER_TARGET);
+  
+  const path = [];
+  for (let i = startPos + 1; i <= actualDiceTarget; i++) { path.push(i); }
   
   const snakes = getCombinedSnakes(room);
-  let finalPos = intermediatePos;
+  let finalPos = actualDiceTarget;
   let hitSnake = false;
   let hitLadder = false;
   
-  if (snakes[intermediatePos]) { finalPos = snakes[intermediatePos]; hitSnake = true; }
-  else if (LADDER_LADDERS[intermediatePos]) { finalPos = LADDER_LADDERS[intermediatePos]; hitLadder = true; }
+  if (snakes[actualDiceTarget]) { 
+      finalPos = snakes[actualDiceTarget]; 
+      hitSnake = true; 
+      path.push(finalPos); 
+  } else if (LADDER_LADDERS[actualDiceTarget]) { 
+      finalPos = LADDER_LADDERS[actualDiceTarget]; 
+      hitLadder = true; 
+      path.push(finalPos); 
+  }
   
   p.pos = finalPos;
-  room.lastMovePath = [startPos, intermediatePos, finalPos];
+  room.lastMovePath = [startPos, ...path];
   
   // Delay turn switch to allow client to animate
   room.phase = 'moving';
@@ -1895,7 +1906,7 @@ async function executeLadderRoll(room, uid) {
             }
         }
     }
-  }, 3500); // 3.5 seconds delay for animation
+  }, 5000); // 5 seconds delay for animation
 }
 
 async function handleLadderLeave(ws) {
