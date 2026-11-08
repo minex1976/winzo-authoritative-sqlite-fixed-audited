@@ -868,13 +868,13 @@
         .move-path-line { fill: none; stroke: #fff; stroke-width: 6; stroke-dasharray: 10 6; animation: dash 1s linear infinite; filter: drop-shadow(0 0 8px #fff); z-index: 15; }
         @keyframes dash { to { stroke-dashoffset: -16; } }
 
-        .ladder-marker { position: absolute; width: clamp(16px, 3vw, 22px); height: clamp(16px, 3vw, 22px); border-radius: 50%; border: 2px solid white; z-index: 20; transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 0 12px rgba(0,0,0,0.9), inset 0 0 6px rgba(255,255,255,0.6); bottom: 4px; display: flex; justify-content: center; align-items: center; font-size: clamp(7px, 1.2vw, 9px); font-weight: 900; color: white; text-shadow: 0 1px 2px #000; }
-        .ladder-marker.p1 { background: radial-gradient(circle at 30% 30%, #ff8a8a, #cc0000); left: 4px; }
-        .ladder-marker.p2 { background: radial-gradient(circle at 30% 30%, #8a8aff, #0000cc); right: 4px; }
+        .ladder-marker { position: absolute; width: clamp(16px, 3vw, 22px); height: clamp(16px, 3vw, 22px); border-radius: 50%; border: 2px solid white; z-index: 25; box-shadow: 0 0 12px rgba(0,0,0,0.9), inset 0 0 6px rgba(255,255,255,0.6); display: flex; justify-content: center; align-items: center; font-size: clamp(7px, 1.2vw, 9px); font-weight: 900; color: white; text-shadow: 0 1px 2px #000; transform: translate(-50%, -50%); transition: left 0.26s linear, top 0.26s linear; pointer-events: none; }
+        .ladder-marker.p1 { background: radial-gradient(circle at 30% 30%, #ff8a8a, #cc0000); }
+        .ladder-marker.p2 { background: radial-gradient(circle at 30% 30%, #8a8aff, #0000cc); }
 
-        .ladder-controls { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 15px 0; flex-wrap: wrap; }
+        .ladder-controls { display: grid; grid-template-columns: auto 1fr 1fr 1fr; gap: 8px; padding: 15px 0; align-items: center; }
         .ladder-dice { width: 60px; height: 60px; background: linear-gradient(135deg, #30204f, #1b1431); border: 2px solid #ffcc44; border-radius: 12px; display: flex; justify-content: center; align-items: center; font-size: 1.8rem; font-weight: 900; color: #ffcc44; box-shadow: inset 0 0 15px rgba(0,0,0,0.9), 0 0 20px rgba(255, 204, 68, 0.3); }
-        .ladder-controls .ladder-btn.primary { padding: 15px 30px; font-size: 1.1rem; }
+        .ladder-controls .ladder-btn.primary { padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.attack { background: linear-gradient(135deg, #b55cff, #7f00ff); color: #fff; box-shadow: 0 4px 0 #4a0099; padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.skip { background: linear-gradient(135deg, #ffb347, #ff7b00); color: #1a0a2e; box-shadow: 0 4px 0 #b35400; padding: 10px 15px; font-size: 0.9rem; }
 
@@ -4032,7 +4032,26 @@
     // ============================================================================
     // WINZO LADDER GAME
     // ============================================================================
-    const ladderUi = { state: null, active: false, lobbyRooms: [], animating: false };
+    const ladderUi = { state: null, active: false, lobbyRooms: [], animating: false, animatedPathKey: null };
+    const LADDER_SNAKES = {71:50, 82:62, 56:36};
+    const LADDER_LADDERS = {24:44, 33:68};
+
+    function ladderCellXY(n) {
+        const rowFromBottom = Math.floor((n - 1) / 10);
+        const offset = (n - 1) % 10;
+        const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
+        const row = 9 - rowFromBottom;
+        return { x: col * 100 + 50, y: row * 100 + 50 };
+    }
+
+    function ladderCellPercent(n, isP1) {
+        const rowFromBottom = Math.floor((n - 1) / 10);
+        const offset = (n - 1) % 10;
+        const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
+        const rowFromTop = 9 - rowFromBottom;
+        const xOffset = isP1 ? -2.8 : 2.8;
+        return { leftPct: (col + 0.5) * 10 + xOffset, topPct: (rowFromTop + 0.5) * 10 };
+    }
 
     function openLadder() {
         setBingoViewportMode(false);
@@ -4041,16 +4060,18 @@
         document.getElementById('gameScreen').style.display = 'none';
         document.getElementById('ladderScreen').classList.remove('hidden');
         ladderUi.active = true;
+        ladderUi.animatedPathKey = null;
         if (client) client.rawSend({ type: 'ladder-join-lobby' });
-        
         renderLadderLobbyView();
     }
 
     function showLadderSection(id) {
         ['ladderLobby', 'ladderWaitingView', 'ladderBettingView', 'ladderGameView'].forEach(v => {
-            document.getElementById(v).classList.add('hidden');
+            const el = document.getElementById(v);
+            if (el) el.classList.add('hidden');
         });
-        document.getElementById(id).classList.remove('hidden');
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('hidden');
     }
 
     window.handleLadderLobby = function(m) {
@@ -4062,7 +4083,8 @@
 
     function renderLadderLobbyView() {
         showLadderSection('ladderLobby');
-        document.getElementById('ladderStatusLabel').textContent = 'Lobby';
+        const statusEl = document.getElementById('ladderStatusLabel');
+        if (statusEl) statusEl.textContent = 'Lobby';
         document.getElementById('ladderMainWallet').textContent = safeNum(walletData.main, 0) + ' Br';
         document.getElementById('ladderPlayWallet').textContent = safeNum(walletData.play, 0) + ' Br';
 
@@ -4093,12 +4115,12 @@
             renderLadderRoom(room);
         } else if (m.type === 'ladder-rejected' || m.type === 'ladder-kicked' || m.type === 'ladder-left') {
             ladderUi.state = null;
-            
+            ladderUi.animatedPathKey = null;
+            ladderUi.animating = false;
             if (ladderUi.active) {
                 if (client) client.rawSend({ type: 'ladder-join-lobby' });
                 renderLadderLobbyView();
             }
-            
             if (m.type === 'ladder-rejected') bingoNotice('The room creator rejected your request.');
             if (m.type === 'ladder-kicked') bingoNotice('You were removed from the room by the creator.');
             if (m.type === 'ladder-left') {
@@ -4116,15 +4138,13 @@
     function buildLadderBoard() {
         const grid = document.getElementById('ladderGrid');
         const svg = document.getElementById('ladderLinks');
+        if (!grid || !svg) return;
         grid.innerHTML = '';
         svg.innerHTML = '';
         
-        const LADDER_SNAKES = {71:50, 82:62, 56:36};
-        const LADDER_LADDERS = {24:44, 33:68};
         const snakeTails = Object.values(LADDER_SNAKES);
         const ladderTops = Object.values(LADDER_LADDERS);
 
-        // Build 10x10 grid
         for (let row = 9; row >= 0; row--) {
             const nums = Array.from({length: 10}, (_, i) => row % 2 === 0 ? row * 10 + i + 1 : row * 10 + 10 - i);
             nums.forEach(num => {
@@ -4136,31 +4156,16 @@
                 if (num === 1) cell.classList.add('start');
                 if (num === 100) cell.classList.add('finish');
                 
-                if (LADDER_SNAKES[num]) {
-                    cell.innerHTML += `<span class="cell-icon">🐍</span>`;
-                } else if (snakeTails.includes(num)) {
-                    cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬇</span>`;
-                }
+                if (LADDER_SNAKES[num]) cell.innerHTML += `<span class="cell-icon">🐍</span>`;
+                else if (snakeTails.includes(num)) cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬇</span>`;
                 
-                if (LADDER_LADDERS[num]) {
-                    cell.innerHTML += `<span class="cell-icon">🪜</span>`;
-                } else if (ladderTops.includes(num)) {
-                    cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬆</span>`;
-                }
+                if (LADDER_LADDERS[num]) cell.innerHTML += `<span class="cell-icon">🪜</span>`;
+                else if (ladderTops.includes(num)) cell.innerHTML += `<span class="cell-icon" style="opacity:0.5">⬆</span>`;
                 
                 grid.appendChild(cell);
             });
         }
 
-        // Draw SVG lines
-        const cellXY = (n) => {
-            const rowFromBottom = Math.floor((n - 1) / 10);
-            const offset = (n - 1) % 10;
-            const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
-            const row = 9 - rowFromBottom;
-            return { x: col * 100 + 50, y: row * 100 + 50 };
-        };
-        
         const ns = 'http://www.w3.org/2000/svg';
         const addSvg = (tag, attrs) => {
             const e = document.createElementNS(ns, tag);
@@ -4170,7 +4175,7 @@
         };
 
         Object.entries(LADDER_SNAKES).forEach(([a, b], i) => {
-            const p = cellXY(+a), q = cellXY(b), dx = q.x - p.x;
+            const p = ladderCellXY(+a), q = ladderCellXY(b);
             const bend = (i % 2 ? 1 : -1) * 55;
             const d = `M ${p.x} ${p.y} C ${p.x+bend} ${p.y+85}, ${q.x-bend} ${q.y-85}, ${q.x} ${q.y}`;
             addSvg('path', { d, class: 'snake-line' });
@@ -4180,7 +4185,7 @@
         });
         
         Object.entries(LADDER_LADDERS).forEach(([a, b]) => {
-            const p = cellXY(+a), q = cellXY(b), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy), ox = -dy/len*13, oy = dx/len*13;
+            const p = ladderCellXY(+a), q = ladderCellXY(b), dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy), ox = -dy/len*13, oy = dx/len*13;
             addSvg('line', { x1: p.x+ox, y1: p.y+oy, x2: q.x+ox, y2: q.y+oy, class: 'ladder-rail' });
             addSvg('line', { x1: p.x-ox, y1: p.y-oy, x2: q.x-ox, y2: q.y-oy, class: 'ladder-rail' });
             for (let t = .12; t < .95; t += .18) {
@@ -4193,17 +4198,8 @@
     function drawVirtualSnakes(room) {
         const svg = document.getElementById('ladderLinks');
         if (!svg) return;
-        
-        // Remove existing virtual snakes
-        svg.querySelectorAll('.virtual-snake-line, .virtual-snake-highlight, .virtual-snake-eye').forEach(el => el.remove());
-
-        const cellXY = (n) => {
-            const rowFromBottom = Math.floor((n - 1) / 10);
-            const offset = (n - 1) % 10;
-            const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
-            const row = 9 - rowFromBottom;
-            return { x: col * 100 + 50, y: row * 100 + 50 };
-        };
+        svg.querySelectorAll('.virtual-snake-line, .virtual-snake-highlight, .virtual-snake-head, .virtual-snake-eye').forEach(el => el.remove());
+        if (!room || !room.players) return;
         
         const ns = 'http://www.w3.org/2000/svg';
         const addSvg = (tag, attrs) => {
@@ -4213,19 +4209,17 @@
             return e;
         };
 
-        if (!room || !room.players) return;
-        
         let snakeIndex = 0;
         for (const p of Object.values(room.players)) {
-            if (p.virtualSnakes) {
+            if (p && Array.isArray(p.virtualSnakes)) {
                 for (const head of p.virtualSnakes) {
                     const tail = head - 20;
-                    const p1 = cellXY(head), q = cellXY(tail), dx = q.x - p1.x;
+                    const p1 = ladderCellXY(head), q = ladderCellXY(tail);
                     const bend = (snakeIndex % 2 ? 1 : -1) * 45;
                     const d = `M ${p1.x} ${p1.y} C ${p1.x+bend} ${p1.y+85}, ${q.x-bend} ${q.y-85}, ${q.x} ${q.y}`;
                     addSvg('path', { d, class: 'virtual-snake-line' });
                     addSvg('path', { d, class: 'virtual-snake-highlight' });
-                    addSvg('circle', { cx: p1.x+4, cy: p1.y-2, r: 12, fill: '#b55cff', stroke: '#f2d5ff', 'stroke-width': 3 });
+                    addSvg('circle', { cx: p1.x+4, cy: p1.y-2, r: 12, fill: '#b55cff', stroke: '#f2d5ff', 'stroke-width': 3, class: 'virtual-snake-head' });
                     addSvg('circle', { cx: p1.x+8, cy: p1.y-5, r: 2.7, fill: '#fff', class: 'virtual-snake-eye' });
                     snakeIndex++;
                 }
@@ -4233,119 +4227,74 @@
         }
     }
 
-    async function animateLadderPath(room) {
-        if (!room.lastMovePath || room.lastMovePath.length < 2) return;
-        
-        ladderUi.animating = true;
-        const [start, mid, end] = room.lastMovePath;
-        const svg = document.getElementById('ladderLinks');
-        
-        const cellXY = (n) => {
-            const rowFromBottom = Math.floor((n - 1) / 10);
-            const offset = (n - 1) % 10;
-            const col = rowFromBottom % 2 === 0 ? offset : 9 - offset;
-            const row = 9 - rowFromBottom;
-            return { x: col * 100 + 50, y: row * 100 + 50 };
-        };
-        
-        const ns = 'http://www.w3.org/2000/svg';
-        const addSvg = (tag, attrs) => {
-            const e = document.createElementNS(ns, tag);
-            Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
-            svg.appendChild(e);
-            return e;
-        };
-        
-        const p1 = cellXY(start), p2 = cellXY(mid), p3 = cellXY(end);
-        
-        const path1 = addSvg('path', { 
-            d: `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`, 
-            class: 'move-path-line' 
-        });
-        
-        let path2 = null;
-        if (mid !== end) {
-            path2 = addSvg('path', { 
-                d: `M ${p2.x} ${p2.y} L ${p3.x} ${p3.y}`, 
-                class: 'move-path-line' 
-            });
-        }
-
-        // We need to animate the marker
-        const markers = Array.from(document.querySelectorAll('.ladder-marker:not(.hidden)'));
-        const marker = markers.find(m => m.textContent === (room.currentTurn === currentUser ? 'Opp' : 'You') || true); 
-        // Better way: Find the marker belonging to the player who just moved.
-        // The player who just moved is NOT currentTurn (since turn hasn't switched yet).
-        const justMovedUid = room.currentTurn; // Wait, server switches turn AFTER animation. So currentTurn IS the one who moved.
-        
-        // Actually, in my server logic: room.currentTurn is the one who rolled. Then room.phase = 'moving'. Then after 3.5s it switches.
-        // So the player who rolled is room.currentTurn.
-        const movingMarker = Array.from(document.querySelectorAll('.ladder-marker')).find(m => 
-            (room.currentTurn === room.creatorUid && m.id === 'ladderMarkerP1') ||
-            (room.currentTurn === room.joinerUid && m.id === 'ladderMarkerP2')
-        );
-        
-        if (!movingMarker) {
-            // Fallback
-            ladderUi.animating = false;
-            if (path1) path1.remove();
-            if (path2) path2.remove();
-            return;
-        }
-
-        const startMarkerPos = { left: movingMarker.style.left, top: movingMarker.style.top };
-        const cell1 = document.getElementById(`ladder-cell-${mid}`);
-        const cell2 = document.getElementById(`ladder-cell-${end}`);
-        
-        if (!cell1 || !cell2) {
-            ladderUi.animating = false;
-            return;
-        }
-
-        const target1 = { left: (cell1.offsetLeft + (movingMarker.id === 'ladderMarkerP1' ? 4 : cell1.offsetWidth - movingMarker.offsetWidth - 4)) + 'px', top: (cell1.offsetTop + cell1.offsetHeight - movingMarker.offsetHeight - 4) + 'px' };
-        const target2 = { left: (cell2.offsetLeft + (movingMarker.id === 'ladderMarkerP1' ? 4 : cell2.offsetWidth - movingMarker.offsetWidth - 4)) + 'px', top: (cell2.offsetTop + cell2.offsetHeight - movingMarker.offsetHeight - 4) + 'px' };
-
-        // Animate Step 1 (Start to Mid)
-        movingMarker.style.transition = 'all 1s ease-in-out';
-        movingMarker.style.left = target1.left;
-        movingMarker.style.top = target1.top;
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Animate Step 2 (Mid to End)
-        if (mid !== end) {
-            movingMarker.style.transition = 'all 1s ease-in-out';
-            movingMarker.style.left = target2.left;
-            movingMarker.style.top = target2.top;
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-
-        // Cleanup lines
-        if (path1) path1.remove();
-        if (path2) path2.remove();
-        
-        ladderUi.animating = false;
-    }
-
-    function positionLadderMarker(markerId, pos, playerNum, uid, playerName) {
-        const cell = document.getElementById(`ladder-cell-${pos}`);
+    function positionLadderMarker(markerId, pos, uid) {
+        const grid = document.getElementById('ladderGrid');
         const marker = document.getElementById(markerId);
-        if (!cell || !marker) return;
+        if (!grid || !marker) return;
         
-        if (marker.parentElement !== cell) {
-            cell.appendChild(marker);
-        }
+        if (marker.parentElement !== grid) grid.appendChild(marker);
+        
+        const isP1 = markerId === 'ladderMarkerP1';
+        const { leftPct, topPct } = ladderCellPercent(pos, isP1);
+        
+        marker.style.left = leftPct + '%';
+        marker.style.top = topPct + '%';
         marker.classList.remove('hidden');
         marker.textContent = (uid === currentUser) ? 'You' : 'Opp';
     }
 
+    async function animateLadderPath(room) {
+        if (!room || !room.lastMovePath || room.lastMovePath.length < 2) return;
+        if (ladderUi.animating) return;
+        
+        const path = room.lastMovePath;
+        const moverUid = room.currentTurn;
+        const moverMarkerId = moverUid === room.creatorUid ? 'ladderMarkerP1' : 'ladderMarkerP2';
+        const marker = document.getElementById(moverMarkerId);
+        const svg = document.getElementById('ladderLinks');
+        if (!marker || !svg) return;
+        
+        ladderUi.animating = true;
+        svg.querySelectorAll('.move-path-line').forEach(el => el.remove());
+        
+        // Draw stepped path segments (9 -> 10 -> 11 style, not diagonal)
+        const ns = 'http://www.w3.org/2000/svg';
+        const pathEls = [];
+        for (let i = 0; i < path.length - 1; i++) {
+            const a = ladderCellXY(path[i]);
+            const b = ladderCellXY(path[i + 1]);
+            const line = document.createElementNS(ns, 'path');
+            line.setAttribute('d', `M ${a.x} ${a.y} L ${b.x} ${b.y}`);
+            line.setAttribute('class', 'move-path-line');
+            svg.appendChild(line);
+            pathEls.push(line);
+        }
+        
+        // Snap to start, then animate step-by-step
+        marker.style.transition = 'none';
+        positionLadderMarker(moverMarkerId, path[0], moverUid);
+        void marker.offsetWidth;
+        marker.style.transition = 'left 0.26s linear, top 0.26s linear';
+        
+        for (let i = 1; i < path.length; i++) {
+            positionLadderMarker(moverMarkerId, path[i], moverUid);
+            await new Promise(r => setTimeout(r, 280));
+        }
+        
+        await new Promise(r => setTimeout(r, 300));
+        pathEls.forEach(el => el.remove());
+        marker.style.transition = '';
+        ladderUi.animating = false;
+    }
+
     function renderLadderRoom(room) {
-        if (!ladderUi.active) return;
+        if (!ladderUi.active || !room) return;
         const isCreator = room.creatorUid === currentUser;
 
         if (room.phase === 'waiting') {
             showLadderSection('ladderWaitingView');
-            document.getElementById('ladderStatusLabel').textContent = 'Waiting Room';
+            const statusEl = document.getElementById('ladderStatusLabel');
+            if (statusEl) statusEl.textContent = 'Waiting Room';
             document.getElementById('ladderRoomCode').textContent = room.id;
             
             const reqBox = document.getElementById('ladderPendingRequest');
@@ -4361,13 +4310,14 @@
         } 
         else if (room.phase === 'betting') {
             showLadderSection('ladderBettingView');
-            document.getElementById('ladderStatusLabel').textContent = 'Betting Phase';
+            const statusEl = document.getElementById('ladderStatusLabel');
+            if (statusEl) statusEl.textContent = 'Betting Phase';
             
             const grid = document.getElementById('ladderBetOptions');
             let html = '';
             for (let i = 1; i <= 5; i++) {
                 const cost = room.bet * i;
-                const prize = Math.floor(cost * 2 * 0.8); // 20% fee
+                const prize = Math.floor(cost * 2 * 0.8);
                 const active = room.multiplier === i;
                 html += `
                     <div class="bet-option ${active ? 'active' : ''}" onclick="selectLadderMult(${i})">
@@ -4381,7 +4331,6 @@
 
             const startBtn = document.getElementById('ladderStartBtn');
             const kickBtn = document.getElementById('ladderKickBtn');
-            
             startBtn.disabled = false; 
             startBtn.onclick = () => client.rawSend({ type: 'ladder-start' });
             
@@ -4394,28 +4343,34 @@
         }
         else if (room.phase === 'playing' || room.phase === 'results' || room.phase === 'moving') {
             showLadderSection('ladderGameView');
-            
+            const statusEl = document.getElementById('ladderStatusLabel');
             if (room.phase === 'results') {
-                document.getElementById('ladderStatusLabel').textContent = 'Game Over';
+                if (statusEl) statusEl.textContent = 'Game Over';
             } else if (room.phase === 'moving') {
-                document.getElementById('ladderStatusLabel').textContent = 'Moving...';
+                if (statusEl) statusEl.textContent = 'Moving...';
             } else {
-                document.getElementById('ladderStatusLabel').textContent = 'Game in Progress';
+                if (statusEl) statusEl.textContent = 'Game in Progress';
             }
 
             if (document.getElementById('ladderGrid').children.length === 0) {
                 buildLadderBoard();
             }
-            
             drawVirtualSnakes(room);
-
             document.getElementById('ladderPrizePool').textContent = room.displayPrize;
 
             const p1 = room.players[room.creatorUid];
             const p2 = room.players[room.joinerUid];
 
-            if (p1) positionLadderMarker('ladderMarkerP1', p1.pos, 1, room.creatorUid, p1.name);
-            if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, 2, room.joinerUid, p2.name);
+            const pathKey = room.lastMovePath ? JSON.stringify(room.lastMovePath) + '|' + room.currentTurn : null;
+            const shouldAnimate = room.phase === 'moving' && pathKey && pathKey !== ladderUi.animatedPathKey;
+            
+            if (shouldAnimate) {
+                ladderUi.animatedPathKey = pathKey;
+                animateLadderPath(room);
+            } else if (!ladderUi.animating) {
+                if (p1) positionLadderMarker('ladderMarkerP1', p1.pos, room.creatorUid);
+                if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, room.joinerUid);
+            }
 
             const ind = document.getElementById('ladderTurnIndicator');
             const rollBtn = document.getElementById('ladderRollBtn');
@@ -4423,7 +4378,6 @@
             const returnBtn = document.getElementById('ladderReturnLobbyBtn');
             const skipBtn = document.getElementById('ladderSkipBtn');
             const attackBtn = document.getElementById('ladderAttackBtn');
-            
             diceBox.textContent = room.lastRoll || '-';
 
             if (room.phase === 'results') {
@@ -4435,6 +4389,7 @@
                 returnBtn.classList.remove('hidden');
                 returnBtn.onclick = () => {
                     ladderUi.state = null;
+                    ladderUi.animatedPathKey = null;
                     if (client) client.rawSend({ type: 'ladder-leave' });
                 };
             } else {
@@ -4461,31 +4416,15 @@
             }
         }
     }
-    
-    // Watch for room state changes to trigger animation
-    let lastAnimatedPath = null;
-    setInterval(() => {
-        if (ladderUi.state && ladderUi.state.lastMovePath) {
-            const pathStr = JSON.stringify(ladderUi.state.lastMovePath);
-            if (pathStr !== lastAnimatedPath) {
-                lastAnimatedPath = pathStr;
-                animateLadderPath(ladderUi.state);
-            }
-        } else {
-            lastAnimatedPath = null;
-        }
-    }, 100);
 
     window.selectLadderMult = function(mult) {
         if (client) client.rawSend({ type: 'ladder-set-mult', mult });
     };
-    
     window.skipLadderTurn = function() {
         if (confirm('Are you sure you want to skip your turn?')) {
             if (client) client.rawSend({ type: 'ladder-skip' });
         }
     };
-
     window.attackLadder = function() {
         const input = prompt("Enter the snake HEAD position (21-99):\nThe tail will be 20 squares below it.\nCost: 10 Birr");
         if (!input) return;
@@ -4511,24 +4450,24 @@
         }
         if (client) client.rawSend({ type: 'ladder-leave-lobby' });
         ladderUi.active = false;
+        ladderUi.animatedPathKey = null;
         document.getElementById('ladderScreen').classList.add('hidden');
         showGameChooser();
     };
-
 
     document.getElementById('chooseSpinBtn').onclick = () => {
         window._pendingGameMode = 'spin';
         bingoUi.active = false;
         ladderUi.active = false;
-        const bingo = document.getElementById('bingoScreen'); if (bingo) bingo.classList.add('hidden');
-        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
-        const chooser = document.getElementById('gameChooserScreen'); if (chooser) chooser.classList.add('hidden');
+        document.getElementById('bingoScreen')?.classList.add('hidden');
+        document.getElementById('ladderScreen')?.classList.add('hidden');
+        document.getElementById('gameChooserScreen')?.classList.add('hidden');
         showWelcomeScreen();
     };
     document.getElementById('chooseBingoBtn').onclick = () => {
         window._pendingGameMode = 'bingo';
         ladderUi.active = false;
-        const ladder = document.getElementById('ladderScreen'); if (ladder) ladder.classList.add('hidden');
+        document.getElementById('ladderScreen')?.classList.add('hidden');
         document.getElementById('gameChooserScreen').classList.add('hidden');
         showWelcomeScreen();
     };
@@ -4758,7 +4697,6 @@
                 } else {
                     showGameChooser();
                 }
-
                 if (pendingMenuAction) {
                     setTimeout(() => {
                         handleMenuAction(pendingMenuAction);
@@ -4800,9 +4738,7 @@
             },
             onNotification: (m, key) => handleIncomingNotificationData(m, key),
             onUserEvent: (m) => { if (window.handleUserEventMessage) window.handleUserEventMessage(m); },
-            onAuthFailed: (reason) => {
-                showAuthFailureMessage();
-            },
+            onAuthFailed: (reason) => { showAuthFailureMessage(); },
             onAccountBlocked: (m) => {
                 if (window.handleUserEventMessage) {
                     window.handleUserEventMessage({
@@ -4841,4 +4777,4 @@
       </div>
     </div>
 </body>
-</html>
+</html>       
