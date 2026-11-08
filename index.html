@@ -919,7 +919,7 @@
           </div>
           <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
           <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes & Ladders against players!</small></span><span class="choice-arrow">›</span></button>
+          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes & Ladders against bots or players!</small></span><span class="choice-arrow">›</span></button>
           <div class="chooser-footer">
             <span id="chooserBalance">Play balance: 0 Birr</span>
             <div class="chooser-options-anchor">
@@ -1005,6 +1005,8 @@
                   <div class="ladder-board-container">
                       <div id="ladderGrid" class="ladder-grid"></div>
                       <svg class="ladder-links" id="ladderLinks" viewBox="0 0 1000 1000" preserveAspectRatio="none"></svg>
+                      <div id="ladderMarkerP1" class="ladder-marker p1 hidden">You</div>
+                      <div id="ladderMarkerP2" class="ladder-marker p2 hidden">Opp</div>
                   </div>
               </div>
               <div class="ladder-controls">
@@ -4082,7 +4084,12 @@
             renderLadderRoom(room);
         } else if (m.type === 'ladder-rejected' || m.type === 'ladder-kicked' || m.type === 'ladder-left') {
             ladderUi.state = null;
-            if (client) client.rawSend({ type: 'ladder-join-lobby' });
+            
+            if (ladderUi.active) {
+                if (client) client.rawSend({ type: 'ladder-join-lobby' });
+                renderLadderLobbyView();
+            }
+            
             if (m.type === 'ladder-rejected') bingoNotice('The room creator rejected your request.');
             if (m.type === 'ladder-kicked') bingoNotice('You were removed from the room by the creator.');
             if (m.type === 'ladder-left') {
@@ -4164,8 +4171,8 @@
             const p1 = room.players[room.creatorUid];
             const p2 = room.players[room.joinerUid];
 
-            if (p1) positionLadderMarker('ladderMarkerP1', p1.pos, 1, p1.name);
-            if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, 2, p2.name);
+            if (p1) positionLadderMarker('ladderMarkerP1', p1.pos, 1, room.creatorUid, p1.name);
+            if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, 2, room.joinerUid, p2.name);
 
             const ind = document.getElementById('ladderTurnIndicator');
             const rollBtn = document.getElementById('ladderRollBtn');
@@ -4275,7 +4282,7 @@
         });
     }
 
-    function positionLadderMarker(markerId, pos, playerNum, playerName) {
+    function positionLadderMarker(markerId, pos, playerNum, uid, playerName) {
         const cell = document.getElementById(`ladder-cell-${pos}`);
         const marker = document.getElementById(markerId);
         if (!cell || !marker) return;
@@ -4284,7 +4291,7 @@
             cell.appendChild(marker);
         }
         marker.classList.remove('hidden');
-        marker.textContent = (playerName === currentDisplayName) ? 'You' : 'Opp';
+        marker.textContent = (uid === currentUser) ? 'You' : 'Opp';
     }
 
     document.getElementById('ladderCreate15Btn').onclick = () => { if (client) client.rawSend({ type: 'ladder-create', bet: 15 }); };
