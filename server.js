@@ -1871,7 +1871,11 @@ async function handleLadderLeave(ws) {
   const roomId = ws._ladderRoomId;
   if (!roomId) return;
   const room = ladderRooms.get(roomId);
-  if (!room) { ws._ladderRoomId = null; return; }
+  if (!room) { 
+      ws._ladderRoomId = null; 
+      send(ws, { type: 'ladder-left', reason: 'left' });
+      return; 
+  }
   
   if (room.pendingJoiners.has(ws.uid)) {
     room.pendingJoiners.delete(ws.uid);
@@ -1913,6 +1917,8 @@ async function handleLadderLeave(ws) {
     setTimeout(() => { ladderRooms.delete(room.id); }, 10000);
   }
   ws._ladderRoomId = null;
+  
+  send(ws, { type: 'ladder-left', reason: 'left' });
   broadcastLadderLobby();
 }
 
@@ -2203,35 +2209,6 @@ async function handle(ws, m) {
                room.phase = 'betting';
                if (room._waitTimeout) { clearTimeout(room._waitTimeout); room._waitTimeout = null; }
                broadcastLadder(room);
-               
-               // Bot auto-accepts after 2s
-               setTimeout(async () => {
-                   if (room.phase === 'betting') {
-                       const cost = room.bet * room.multiplier;
-                       const deductRes = await debit(room.joinerUid, cost);
-                       if (!deductRes.ok) {
-                           send(ws, { type: 'ladder-error', message: 'Insufficient balance to play.' });
-                           room.joinerUid = null;
-                           delete room.players[ws.uid];
-                           room.phase = 'waiting';
-                           ws._ladderRoomId = null;
-                           broadcastLadder(room);
-                           return;
-                       }
-                       room.prizePool = cost * 2;
-                       room.phase = 'playing';
-                       room.currentTurn = room.creatorUid; // Bot starts
-                       broadcastLadder(room);
-                       if (room.currentTurn.startsWith('__bot_')) {
-                           const bRoll = async () => {
-                              if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
-                                 await executeLadderRoll(room, room.currentTurn);
-                              }
-                           };
-                           setTimeout(bRoll, 1500);
-                       }
-                   }
-               }, 2000);
            }
         }, 1500);
     } else {
@@ -2271,33 +2248,6 @@ async function handle(ws, m) {
     if (mult < 1 || mult > 5) return;
     room.multiplier = mult;
     broadcastLadder(room);
-    
-    // If bot is present, bot accepts after 2s
-    if (room.creatorUid.startsWith('__bot_') || room.joinerUid?.startsWith('__bot_')) {
-        setTimeout(async () => {
-           if (room.phase === 'betting') {
-               const cost = room.bet * room.multiplier;
-               const humanUid = room.creatorUid.startsWith('__bot_') ? room.joinerUid : room.creatorUid;
-               const deductRes = await debit(humanUid, cost);
-               if (!deductRes.ok) {
-                   send(ws, { type: 'ladder-error', message: 'Insufficient balance to start game.' });
-                   return;
-               }
-               room.prizePool = cost * 2;
-               room.phase = 'playing';
-               room.currentTurn = room.creatorUid;
-               broadcastLadder(room);
-               if (room.currentTurn.startsWith('__bot_')) {
-                   const bRoll = async () => {
-                      if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
-                         await executeLadderRoll(room, room.currentTurn);
-                      }
-                   };
-                   setTimeout(bRoll, 1500);
-               }
-           }
-        }, 2000);
-    }
     return;
   }
   if (m.type === 'ladder-start') {
@@ -2312,8 +2262,17 @@ async function handle(ws, m) {
       return send(ws, { type: 'ladder-error', message: 'Insufficient play balance.' });
     }
     
-    if (!room.creatorUid.startsWith('__bot_')) await debit(room.creatorUid, cost);
-    if (!room.joinerUid.startsWith('__bot_')) await debit(room.joinerUid, cost);
+    if (!room.creatorUid.startsWith('__bot_')) {
+        const d1 = await debit(room.creatorUid, cost);
+        if (!d1.ok) return send(ws, { type: 'ladder-error', message: 'Failed to deduct creator balance.' });
+    }
+    if (!room.joinerUid.startsWith('__bot_')) {
+        const d2 = await debit(room.joinerUid, cost);
+        if (!d2.ok) {
+            if (!room.creatorUid.startsWith('__bot_')) await refundWager(room.creatorUid, cost);
+            return send(ws, { type: 'ladder-error', message: 'Failed to deduct joiner balance.' });
+        }
+    }
     
     room.prizePool = cost * 2;
     room.phase = 'playing';
