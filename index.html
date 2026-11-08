@@ -849,7 +849,7 @@
         .ladder-board-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; padding: 10px 0; }
         .ladder-board-container { position: relative; width: 100%; max-width: 500px; aspect-ratio: 1 / 1; background: #0b0815; border: 3px solid #4b356b; border-radius: 16px; padding: 6px; box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 10px 30px rgba(0,0,0,0.6); }
         .ladder-grid { display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr); width: 100%; height: 100%; gap: 2px; position: relative; z-index: 2; }
-        .ladder-cell { background: rgba(30, 20, 50, 0.6); border: 1px solid rgba(120, 80, 200, 0.2); border-radius: 4px; display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; padding: 3px; position: relative; }
+        .ladder-cell { background: rgba(30, 20, 150, 0.6); border: 3px solid rgba(120, 80, 200, 0.2); border-radius: 4px; display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; padding: 3px; position: relative; }
         .ladder-cell:nth-child(even) { background: rgba(40, 25, 65, 0.6); }
         .ladder-cell.start { background: rgba(20, 81, 63, 0.8); }
         .ladder-cell.finish { background: rgba(114, 82, 28, 0.8); }
@@ -926,7 +926,7 @@
           </div>
           <button id="chooseSpinBtn" class="game-choice spin-choice"><span class="choice-icon">🎡</span><span class="choice-copy"><strong>Winzo Spin</strong><small>Play the classic Winzo number game</small></span><span class="choice-arrow">›</span></button>
           <button id="chooseBingoBtn" class="game-choice bingo-choice"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
-          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes & Ladders against bots or players!</small></span><span class="choice-arrow">›</span></button>
+          <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes & Ladders against friends!</small></span><span class="choice-arrow">›</span></button>
           <div class="chooser-footer">
             <span id="chooserBalance">Play balance: 0 Birr</span>
             <div class="chooser-options-anchor">
