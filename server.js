@@ -1756,7 +1756,7 @@ async function bingoTick(round){
 setInterval(()=>{for(const round of bingoRounds.values())bingoTick(round).catch(e=>console.error(`[BINGO-TICK ${round.stake}]`,e.message));},250);
 
 // ============================================================================
-// WINZO LADDER GAME
+// WINZO LADDER GAME (ENHANCED)
 // ============================================================================
 const LADDER_STAKES = [15, 30];
 const LADDER_TARGET = 100;
@@ -1764,234 +1764,367 @@ const LADDER_SNAKES = {71: 50, 82: 62, 56: 36};
 const LADDER_LADDERS = {24: 44, 33: 68};
 const ladderRooms = new Map();
 
+// Timing constants for inactivity / abandonment
+const LADDER_INACTIVITY_WARN_MS = 45 * 1000;
+const LADDER_INACTIVITY_FORFEIT_75_MS = 2 * 60 * 1000;
+const LADDER_INACTIVITY_MAX_MS = 5 * 60 * 1000;
+const LADDER_ABANDON_GRACE_MS = 2 * 60 * 1000;
+const LADDER_AFK_WARN_MESSAGE = 'እንስቃሴ ሳያደርጉ ከ45 ሰከንድ በላይ ወስደዋል። ወደ ጨዋታ ካልተመለሱ፣ የርሶ ተጋጣሚ አሸናፊ ይሆናል።';
+const LADDER_OPP_WARN_MESSAGE = 'የእርሶ ተጋጣሚ ጨዋታውን እያስቀጠለ አይደለም። ወደ ጨዋታው ካለተመለሰ፣ እርሶ እንዳሸነፉ የሚቆጠር ይሆናል።';
+
 function getCombinedSnakes(room) {
     const snakes = { ...LADDER_SNAKES };
     if (room && room.players) {
         for (const p of Object.values(room.players)) {
-            if (p && p.virtualSnakes) {
-                for (const head of p.virtualSnakes) {
-                    snakes[head] = head - 20;
-                }
+            if (p && Array.isArray(p.virtualSnakes)) {
+                for (const head of p.virtualSnakes) snakes[head] = head - 20;
             }
         }
     }
     return snakes;
 }
 
+function calculateLadderWinChance(playerPos, opponentPos) {
+    const a = Number(playerPos || 1);
+    const b = Number(opponentPos || 1);
+    const diff = a - b;
+    return Math.max(0.05, Math.min(0.95, 0.5 + diff * 0.01));
+}
+
+function notifyLadderPlayer(roomId, uid, message) {
+    try {
+        if (!uid) return;
+        const ws = Array.from(conns.get(uid) || []).find(w => w._ladderRoomId === roomId && w.readyState === 1);
+        if (ws) send(ws, { type: 'ladder-notification', message });
+    } catch (e) { console.error('[LADDER-NOTIFY]', e.message); }
+}
+
+function awardLadderWin(room, winnerUid) {
+    try {
+        if (!room || !winnerUid) return;
+        room.phase = 'results';
+        room.winner = winnerUid;
+        room.abandonment = null;
+        if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+        const prize = Math.floor(room.prizePool * 0.8);
+        if (prize > 0 && !String(winnerUid).startsWith('__bot_')) {
+            claimPayout(winnerUid, prize, `ladder_${room.id}`, 1, 'win')
+                .catch(e => console.error('[LADDER-PAYOUT]', e.message));
+        }
+        const loserUid = winnerUid === room.creatorUid ? room.joinerUid : room.creatorUid;
+        notifyLadderPlayer(room.id, winnerUid, `🎉 እንኳን ደስ አለዎት! ${prize} ብር አሸንፈዋል።`);
+        if (loserUid) notifyLadderPlayer(room.id, loserUid, 'ጨዋታው ተጠናቅቋል። በሚቀጥለው ጊዜ ይሞክሩ።');
+        try { broadcastLadder(room); } catch (e) {}
+        setTimeout(() => { try { ladderRooms.delete(room.id); } catch (e) {} }, 12000);
+    } catch (e) { console.error('[LADDER-AWARD]', e.message); }
+}
+
+function startLadderAbandonGrace(room, leaverUid) {
+    try {
+        if (!room || room.phase !== 'playing') return;
+        const remainingUid = leaverUid === room.creatorUid ? room.joinerUid : room.creatorUid;
+        if (!remainingUid) {
+            if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+            ladderRooms.delete(room.id);
+            return;
+        }
+        const leaverPos = room.players[leaverUid]?.pos || 1;
+        const remainingPos = room.players[remainingUid]?.pos || 1;
+        const remainingChance = calculateLadderWinChance(remainingPos, leaverPos);
+
+        if (remainingChance < 0.75) {
+            awardLadderWin(room, remainingUid);
+            return;
+        }
+
+        room.abandonment = {
+            leaverUid, remainingUid,
+            at: Date.now(),
+            deadline: Date.now() + LADDER_ABANDON_GRACE_MS
+        };
+        if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+
+        notifyLadderPlayer(room.id, remainingUid, LADDER_OPP_WARN_MESSAGE);
+        notifyLadderPlayer(room.id, leaverUid, LADDER_AFK_WARN_MESSAGE);
+
+        try { broadcastLadder(room); } catch (e) {}
+        console.log(`[LADDER-GRACE] ${room.id}: ${leaverUid} abandoned, ${remainingUid} has ${(remainingChance*100).toFixed(1)}% chance.`);
+    } catch (e) { console.error('[LADDER-GRACE]', e.message); }
+}
+
+function resetLadderActivity(room, uid) {
+    if (!room || !uid) return;
+    room.lastActionAt = room.lastActionAt || {};
+    room.lastActionAt[uid] = Date.now();
+    room.inactivityWarned = room.inactivityWarned || {};
+    room.inactivityWarned[uid] = false;
+    if (room.abandonment && room.abandonment.leaverUid === uid) {
+        room.abandonment = null;
+    }
+}
+
 function getLadderSnapshot(room) {
   return {
-    id: room.id,
-    bet: room.bet,
-    phase: room.phase,
-    creatorUid: room.creatorUid,
-    joinerUid: room.joinerUid,
-    multiplier: room.multiplier,
-    currentTurn: room.currentTurn,
-    players: room.players,
-    lastRoll: room.lastRoll,
+    id: room.id, bet: room.bet, phase: room.phase,
+    creatorUid: room.creatorUid, joinerUid: room.joinerUid,
+    multiplier: room.multiplier, currentTurn: room.currentTurn,
+    players: room.players, lastRoll: room.lastRoll,
     lastMovePath: room.lastMovePath || null,
-    winner: room.winner,
-    prizePool: room.prizePool,
+    winner: room.winner, prizePool: room.prizePool,
     displayPrize: Math.floor(room.prizePool * 0.8),
-    pendingJoiners: Array.from(room.pendingJoiners.entries()).map(([uid, name]) => ({ uid, name }))
+    pendingJoiners: Array.from(room.pendingJoiners.entries()).map(([uid, name]) => ({ uid, name })),
+    abandonment: room.abandonment ? {
+      leaverUid: room.abandonment.leaverUid,
+      remainingUid: room.abandonment.remainingUid,
+      deadline: room.abandonment.deadline,
+      remainingMs: Math.max(0, room.abandonment.deadline - Date.now())
+    } : null
   };
 }
 
 function broadcastLadder(room) {
-  const payload = JSON.stringify({ type: 'ladder-state', room: getLadderSnapshot(room) });
-  for (const ws of wss.clients) {
-    if (ws.readyState === 1 && ws.authed && ws._ladderRoomId === room.id) {
-      ws.send(payload);
+  try {
+    const payload = JSON.stringify({ type: 'ladder-state', room: getLadderSnapshot(room) });
+    for (const ws of wss.clients) {
+      if (ws.readyState === 1 && ws.authed && ws._ladderRoomId === room.id) {
+        try { ws.send(payload); } catch (e) {}
+      }
     }
-  }
+  } catch (e) { console.error('[LADDER-BROADCAST]', e.message); }
 }
 
 function broadcastLadderLobby() {
-  const openRooms = Array.from(ladderRooms.values())
-    .filter(r => r.phase === 'waiting')
-    .map(r => ({ id: r.id, bet: r.bet, creatorName: r.players[r.creatorUid]?.name || 'Unknown', isBot: r.creatorUid.startsWith('__bot_') }));
-  const payload = JSON.stringify({ type: 'ladder-lobby', rooms: openRooms });
-  for (const ws of wss.clients) {
-    if (ws.readyState === 1 && ws.authed && ws._ladderLobby) {
-      ws.send(payload);
+  try {
+    const openRooms = Array.from(ladderRooms.values())
+      .filter(r => r.phase === 'waiting')
+      .map(r => ({
+        id: r.id, bet: r.bet,
+        creatorName: r.players[r.creatorUid]?.name || 'Unknown',
+        isBot: r.creatorUid.startsWith('__bot_')
+      }));
+    const payload = JSON.stringify({ type: 'ladder-lobby', rooms: openRooms });
+    for (const ws of wss.clients) {
+      if (ws.readyState === 1 && ws.authed && ws._ladderLobby) {
+        try { ws.send(payload); } catch (e) {}
+      }
     }
-  }
-}
-
-function scheduleLadderTimeout(room, uid) {
-  if (room._timeout) clearTimeout(room._timeout);
-  room._timeout = setTimeout(async () => {
-    if (room.phase === 'playing' && room.currentTurn === uid) {
-      await executeLadderRoll(room, uid); // auto-roll
-    }
-  }, 20000); 
+  } catch (e) { console.error('[LADDER-LOBBY-BROADCAST]', e.message); }
 }
 
 async function executeLadderRoll(room, uid) {
-  if (room.phase !== 'playing' || room.currentTurn !== uid) return;
-  
-  if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+    if (!room || room.phase !== 'playing' || room.currentTurn !== uid) return;
+    if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
 
-  const dice = Math.floor(Math.random() * 6) + 1;
-  room.lastRoll = dice;
-  const p = room.players[uid];
-  if (!p) return;
-  
-  const startPos = p.pos;
-  const actualDiceTarget = Math.min(startPos + dice, LADDER_TARGET);
-  
-  const path = [];
-  for (let i = startPos + 1; i <= actualDiceTarget; i++) { path.push(i); }
-  
-  const snakes = getCombinedSnakes(room);
-  let finalPos = actualDiceTarget;
-  let hitSnake = false;
-  let hitLadder = false;
-  
-  if (snakes[actualDiceTarget]) { 
-      finalPos = snakes[actualDiceTarget]; 
-      hitSnake = true; 
-      path.push(finalPos); 
-  } else if (LADDER_LADDERS[actualDiceTarget]) { 
-      finalPos = LADDER_LADDERS[actualDiceTarget]; 
-      hitLadder = true; 
-      path.push(finalPos); 
-  }
-  
-  p.pos = finalPos;
-  room.lastMovePath = [startPos, ...path];
-  
-  // Delay turn switch to allow client to animate
-  room.phase = 'moving';
-  broadcastLadder(room);
-  
-  setTimeout(() => {
-    if (room.players[uid]) {
-        if (p.pos >= LADDER_TARGET) {
-            room.phase = 'results';
-            room.winner = uid;
-            
-            if (!uid.startsWith('__bot_')) {
-               const prize = Math.floor(room.prizePool * 0.8);
-               claimPayout(uid, prize, `ladder_${room.id}`, 1, 'win');
+    resetLadderActivity(room, uid);
+
+    const dice = Math.floor(Math.random() * 6) + 1;
+    room.lastRoll = dice;
+    const p = room.players[uid];
+    if (!p) return;
+
+    const startPos = p.pos;
+    const actualDiceTarget = Math.min(startPos + dice, LADDER_TARGET);
+    const path = [];
+    for (let i = startPos + 1; i <= actualDiceTarget; i++) path.push(i);
+
+    const snakes = getCombinedSnakes(room);
+    let finalPos = actualDiceTarget;
+    if (snakes[actualDiceTarget]) { finalPos = snakes[actualDiceTarget]; path.push(finalPos); }
+    else if (LADDER_LADDERS[actualDiceTarget]) { finalPos = LADDER_LADDERS[actualDiceTarget]; path.push(finalPos); }
+
+    p.pos = finalPos;
+    room.lastMovePath = [startPos, ...path];
+    room.phase = 'moving';
+    try { broadcastLadder(room); } catch (e) {}
+
+    setTimeout(() => {
+        try {
+            if (!room.players[uid]) return;
+            if (p.pos >= LADDER_TARGET) {
+                awardLadderWin(room, uid);
+                return;
             }
-            
-            broadcastLadder(room);
-            
-            setTimeout(() => {
-              ladderRooms.delete(room.id);
-              for (const client of wss.clients) {
-                if (client._ladderRoomId === room.id) {
-                  client._ladderRoomId = null;
-                  send(client, { type: 'ladder-left', reason: 'game-over' });
-                }
-              }
-              broadcastLadderLobby();
-            }, 10000);
-        } else {
             room.phase = 'playing';
             room.lastMovePath = null;
             room.currentTurn = (uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
-            broadcastLadder(room);
-            
+            resetLadderActivity(room, room.currentTurn);
+            try { broadcastLadder(room); } catch (e) {}
+
             if (room.currentTurn && room.currentTurn.startsWith('__bot_')) {
-               const bRoll = async () => {
-                  if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
-                     await executeLadderRoll(room, room.currentTurn);
-                  }
-               };
-               setTimeout(bRoll, 1500 + Math.random() * 1000);
-            } else {
-               scheduleLadderTimeout(room, room.currentTurn);
+                setTimeout(() => {
+                    try {
+                        if (room.phase === 'playing' && room.currentTurn && room.currentTurn.startsWith('__bot_')) {
+                            executeLadderRoll(room, room.currentTurn).catch(e => console.error('[LADDER-BOT-ROLL]', e.message));
+                        }
+                    } catch (e) { console.error('[LADDER-BOT-ROLL]', e.message); }
+                }, 1500 + Math.random() * 1000);
             }
-        }
-    }
-  }, 5000); // 5 seconds delay for animation
+        } catch (e) { console.error('[LADDER-ROLL-CB]', e.message); }
+    }, 5000);
 }
 
-async function handleLadderLeave(ws) {
-  const roomId = ws._ladderRoomId;
-  if (!roomId) return;
-  const room = ladderRooms.get(roomId);
-  if (!room) { 
-      ws._ladderRoomId = null; 
-      send(ws, { type: 'ladder-left', reason: 'left' });
-      return; 
-  }
-  
-  if (room.pendingJoiners.has(ws.uid)) {
-    room.pendingJoiners.delete(ws.uid);
-    ws._ladderRoomId = null;
-    send(ws, { type: 'ladder-left', reason: 'cancelled' });
-    broadcastLadder(room);
-    return;
-  }
-
-  if (room.phase === 'waiting' || room.phase === 'betting') {
-    if (room.creatorUid === ws.uid) {
-      const joinerWs = Array.from(conns.get(room.joinerUid) || []).find(w => w._ladderRoomId === roomId);
-      if (joinerWs) { joinerWs._ladderRoomId = null; send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); }
-      ladderRooms.delete(room.id);
-    } else if (room.joinerUid === ws.uid) {
-      delete room.players[room.joinerUid];
-      room.joinerUid = null;
-      room.phase = 'waiting';
-      room.multiplier = 1;
-      room._waitTimeout = setTimeout(() => {
-        if (room.phase === 'waiting') {
-          ladderRooms.delete(room.id);
-          const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
-          if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
-          broadcastLadderLobby();
+async function handleLadderLeave(ws, isDisconnect = false) {
+    try {
+        const roomId = ws._ladderRoomId;
+        if (!roomId) return;
+        const room = ladderRooms.get(roomId);
+        if (!room) {
+            ws._ladderRoomId = null;
+            if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
+            return;
         }
-      }, 5 * 60 * 1000);
-      broadcastLadder(room);
+
+        if (room.pendingJoiners.has(ws.uid)) {
+            room.pendingJoiners.delete(ws.uid);
+            ws._ladderRoomId = null;
+            if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'cancelled' }); } catch (e) {}
+            try { broadcastLadder(room); } catch (e) {}
+            return;
+        }
+
+        if (room.phase === 'waiting' || room.phase === 'betting') {
+            if (room.creatorUid === ws.uid) {
+                const joinerWs = Array.from(conns.get(room.joinerUid) || []).find(w => w._ladderRoomId === roomId);
+                if (joinerWs) { joinerWs._ladderRoomId = null; try { send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); } catch (e) {} }
+                if (room._waitTimeout) clearTimeout(room._waitTimeout);
+                ladderRooms.delete(room.id);
+            } else if (room.joinerUid === ws.uid) {
+                delete room.players[room.joinerUid];
+                room.joinerUid = null;
+                room.phase = 'waiting';
+                room.multiplier = 1;
+                if (room._waitTimeout) clearTimeout(room._waitTimeout);
+                room._waitTimeout = setTimeout(() => {
+                    try {
+                        if (room.phase === 'waiting') {
+                            ladderRooms.delete(room.id);
+                            const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
+                            if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+                            broadcastLadderLobby();
+                        }
+                    } catch (e) { console.error('[LADDER-WAIT-TIMEOUT]', e.message); }
+                }, 5 * 60 * 1000);
+                try { broadcastLadder(room); } catch (e) {}
+            }
+        } else if (room.phase === 'playing' || room.phase === 'moving') {
+            ws._ladderRoomId = null;
+            if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
+            startLadderAbandonGrace(room, ws.uid);
+            try { broadcastLadderLobby(); } catch (e) {}
+            return;
+        }
+
+        ws._ladderRoomId = null;
+        if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
+        try { broadcastLadderLobby(); } catch (e) {}
+    } catch (e) {
+        console.error('[LADDER-LEAVE]', e.message);
     }
-  } else if (room.phase === 'playing' || room.phase === 'moving') {
-    room.phase = 'results';
-    room.winner = (ws.uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
-    if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
-    if (room.winner && !room.winner.startsWith('__bot_')) {
-      const prize = Math.floor(room.prizePool * 0.8);
-      await claimPayout(room.winner, prize, `ladder_${room.id}`, 1, 'win');
-    }
-    broadcastLadder(room);
-    setTimeout(() => { ladderRooms.delete(room.id); }, 10000);
-  }
-  ws._ladderRoomId = null;
-  
-  send(ws, { type: 'ladder-left', reason: 'left' });
-  broadcastLadderLobby();
 }
+
+async function handleLadderRejoin(ws, roomId) {
+    try {
+        const room = ladderRooms.get(roomId);
+        if (!room) return send(ws, { type: 'ladder-error', message: 'Room no longer exists' });
+        if (!room.players[ws.uid]) return send(ws, { type: 'ladder-error', message: 'You are not a player in this room' });
+
+        ws._ladderRoomId = roomId;
+        ws._ladderLobby = false;
+
+        if (room.abandonment && room.abandonment.leaverUid === ws.uid && room.phase === 'playing') {
+            room.abandonment = null;
+            room.phase = 'playing';
+            if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+            const opponentUid = ws.uid === room.creatorUid ? room.joinerUid : room.creatorUid;
+            if (opponentUid) notifyLadderPlayer(roomId, opponentUid, 'ተጋጣሚዎ ወደ ጨዋታው ተመልሷል። ጨዋታው ይቀጥላል!');
+            resetLadderActivity(room, ws.uid);
+            if (opponentUid) resetLadderActivity(room, opponentUid);
+        }
+        try { broadcastLadder(room); } catch (e) {}
+    } catch (e) { console.error('[LADDER-REJOIN]', e.message); }
+}
+
+// --- Global tick for abandonment + inactivity ---
+setInterval(() => {
+    try {
+        const t = Date.now();
+        for (const [roomId, room] of ladderRooms) {
+            try {
+                if (!room) continue;
+
+                if (room.abandonment && room.phase === 'playing' && t >= room.abandonment.deadline) {
+                    console.log(`[LADDER-GRACE-EXPIRED] ${roomId}: awarding ${room.abandonment.remainingUid}`);
+                    awardLadderWin(room, room.abandonment.remainingUid);
+                    continue;
+                }
+
+                if (room.phase === 'playing' && room.currentTurn && !room.currentTurn.startsWith('__bot_')) {
+                    const lastAct = room.lastActionAt?.[room.currentTurn] || room.roundStartedAt || 0;
+                    const inactiveMs = t - lastAct;
+                    const opponentUid = room.currentTurn === room.creatorUid ? room.joinerUid : room.creatorUid;
+
+                    if (inactiveMs >= LADDER_INACTIVITY_WARN_MS && !room.inactivityWarned?.[room.currentTurn]) {
+                        room.inactivityWarned = room.inactivityWarned || {};
+                        room.inactivityWarned[room.currentTurn] = true;
+                        notifyLadderPlayer(roomId, room.currentTurn, LADDER_AFK_WARN_MESSAGE);
+                        if (opponentUid) notifyLadderPlayer(roomId, opponentUid, LADDER_OPP_WARN_MESSAGE);
+                        console.log(`[LADDER-AFK-WARN] ${roomId}: ${room.currentTurn} idle ${Math.floor(inactiveMs/1000)}s`);
+                    }
+
+                    if (inactiveMs >= LADDER_INACTIVITY_FORFEIT_75_MS && opponentUid) {
+                        const inactivePos = room.players[room.currentTurn]?.pos || 1;
+                        const opponentPos = room.players[opponentUid]?.pos || 1;
+                        const opponentChance = calculateLadderWinChance(opponentPos, inactivePos);
+                        if (opponentChance >= 0.75) {
+                            console.log(`[LADDER-AFK-FORFEIT-75] ${roomId}: ${room.currentTurn} forfeited`);
+                            awardLadderWin(room, opponentUid);
+                            continue;
+                        }
+                    }
+
+                    if (inactiveMs >= LADDER_INACTIVITY_MAX_MS && opponentUid) {
+                        console.log(`[LADDER-AFK-FORFEIT-MAX] ${roomId}: ${room.currentTurn} forfeited (5min)`);
+                        awardLadderWin(room, opponentUid);
+                        continue;
+                    }
+                }
+            } catch (e) { console.error(`[LADDER-TICK ${roomId}]`, e.message); }
+        }
+    } catch (e) { console.error('[LADDER-TICK-LOOP]', e.message); }
+}, 5000);
 
 // LADDER BOT ENGINE
 setInterval(() => {
-    const openBots = Array.from(ladderRooms.values()).filter(r => r.phase === 'waiting' && r.creatorUid.startsWith('__bot_'));
-    if (openBots.length < 3) {
-        const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
-        const bUid = `__bot_${safeUser(bName)}`;
-        const bet = LADDER_STAKES[Math.floor(Math.random() * LADDER_STAKES.length)];
-        
-        ensureUser(bUid, null, true).then(() => {
-            const roomId = 'L' + crypto.randomBytes(3).toString('hex').toUpperCase();
-            const room = {
-              id: roomId, bet, phase: 'waiting', creatorUid: bUid, joinerUid: null,
-              multiplier: 1, currentTurn: null, lastRoll: null, winner: null, prizePool: 0,
-              players: { [bUid]: { name: bName, pos: 1, virtualSnakes: [] } },
-              pendingJoiners: new Map()
-            };
-            
-            room._waitTimeout = setTimeout(() => {
-              if (room.phase === 'waiting') {
-                ladderRooms.delete(room.id);
+    try {
+        const openBots = Array.from(ladderRooms.values()).filter(r => r.phase === 'waiting' && r.creatorUid.startsWith('__bot_'));
+        if (openBots.length < 3) {
+            const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+            const bUid = `__bot_${safeUser(bName)}`;
+            const bet = LADDER_STAKES[Math.floor(Math.random() * LADDER_STAKES.length)];
+
+            ensureUser(bUid, null, true).then(() => {
+                const roomId = 'L' + crypto.randomBytes(3).toString('hex').toUpperCase();
+                const room = {
+                  id: roomId, bet, phase: 'waiting', creatorUid: bUid, joinerUid: null,
+                  multiplier: 1, currentTurn: null, lastRoll: null, winner: null, prizePool: 0,
+                  players: { [bUid]: { name: bName, pos: 1, virtualSnakes: [] } },
+                  pendingJoiners: new Map(),
+                  lastActionAt: {}, inactivityWarned: {}, abandonment: null,
+                  roundStartedAt: Date.now()
+                };
+
+                room._waitTimeout = setTimeout(() => {
+                  if (room.phase === 'waiting') {
+                    ladderRooms.delete(room.id);
+                    broadcastLadderLobby();
+                  }
+                }, 5 * 60 * 1000);
+
+                ladderRooms.set(roomId, room);
                 broadcastLadderLobby();
-              }
-            }, 5 * 60 * 1000);
-            
-            ladderRooms.set(roomId, room);
-            broadcastLadderLobby();
-        });
-    }
+            }).catch(e => console.error('[LADDER-BOT-CREATE]', e.message));
+        }
+    } catch (e) { console.error('[LADDER-BOT-ENGINE]', e.message); }
 }, 15000);
 
 // ============================================================================
@@ -2011,7 +2144,7 @@ function allowWsConnection(ip) {
   return true;
 }
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
-function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function send(ws, obj) { try { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (e) {} }
 
 wss.on('connection', (ws, req) => {
   ws._ipKey = normalizedClientIp((process.env.TRUST_PROXY_HEADERS === 'true' && req && req.headers && req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : (req && req.socket && req.socket.remoteAddress)) || 'unknown');
@@ -2036,7 +2169,10 @@ wss.on('connection', (ws, req) => {
     if (activeForIp) wsIpConnections.set(ws._ipKey, activeForIp); else wsIpConnections.delete(ws._ipKey);
     if (ws.uid) console.log(`[WS-CLOSE] uid=${ws.uid} code=${code} reason=${String(reason || '').slice(0, 80)}`);
     bingoMembers.delete(ws);
-    if (ws._ladderRoomId) await handleLadderLeave(ws);
+    if (ws._ladderRoomId) {
+      try { await handleLadderLeave(ws, true); }
+      catch (e) { console.error('[LADDER-CLOSE]', e.message); }
+    }
     if (!ws.uid) return;
     const set = conns.get(ws.uid);
     if (set) { set.delete(ws); if (!set.size) { conns.delete(ws.uid); await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), ws.uid]).catch(()=>{}); } }
@@ -2196,6 +2332,10 @@ async function handle(ws, m) {
     ws._ladderLobby = false;
     return;
   }
+  if (m.type === 'ladder-rejoin') {
+    await handleLadderRejoin(ws, String(m.roomId || ''));
+    return;
+  }
   if (m.type === 'ladder-create') {
     const bet = Number(m.bet);
     if (!LADDER_STAKES.includes(bet)) return send(ws, { type: 'ladder-error', message: 'Invalid bet' });
@@ -2204,32 +2344,37 @@ async function handle(ws, m) {
       id: roomId, bet, phase: 'waiting', creatorUid: ws.uid, joinerUid: null,
       multiplier: 1, currentTurn: null, lastRoll: null, winner: null, prizePool: 0,
       players: { [ws.uid]: { name: ws.displayName, pos: 1, virtualSnakes: [] } },
-      pendingJoiners: new Map()
+      pendingJoiners: new Map(),
+      lastActionAt: {}, inactivityWarned: {}, abandonment: null,
+      roundStartedAt: Date.now()
     };
     room._waitTimeout = setTimeout(() => {
-      if (room.phase === 'waiting') {
-        ladderRooms.delete(room.id);
-        const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
-        if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
-        broadcastLadderLobby();
-      }
+      try {
+        if (room.phase === 'waiting') {
+          ladderRooms.delete(room.id);
+          const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
+          if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+          broadcastLadderLobby();
+        }
+      } catch (e) { console.error('[LADDER-CREATE-TIMEOUT]', e.message); }
     }, 5 * 60 * 1000);
     ladderRooms.set(roomId, room);
     ws._ladderRoomId = roomId;
     ws._ladderLobby = false;
     broadcastLadder(room);
     broadcastLadderLobby();
-    
-    // Bot will join after 3-6 seconds
+
     setTimeout(() => {
+      try {
         if (room.phase === 'waiting') {
-            const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
-            const bUid = `__bot_${safeUser(bName)}`;
-            ensureUser(bUid, null, true).then(() => {
-                room.pendingJoiners.set(bUid, bName);
-                broadcastLadder(room);
-            });
+          const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+          const bUid = `__bot_${safeUser(bName)}`;
+          ensureUser(bUid, null, true).then(() => {
+            room.pendingJoiners.set(bUid, bName);
+            broadcastLadder(room);
+          }).catch(e => console.error('[LADDER-CREATE-BOT]', e.message));
         }
+      } catch (e) { console.error('[LADDER-CREATE-BOT-CB]', e.message); }
     }, 3000 + Math.random() * 3000);
     return;
   }
@@ -2239,18 +2384,19 @@ async function handle(ws, m) {
     room.pendingJoiners.set(ws.uid, ws.displayName);
     ws._ladderRoomId = room.id;
     ws._ladderLobby = false;
-    
+
     if (room.creatorUid.startsWith('__bot_')) {
-        // Bot auto-approves player
         setTimeout(async () => {
-           if (room.phase === 'waiting' && room.pendingJoiners.has(ws.uid)) {
-               room.joinerUid = ws.uid;
-               room.players[ws.uid] = { name: ws.displayName, pos: 1, virtualSnakes: [] };
-               room.pendingJoiners.delete(ws.uid);
-               room.phase = 'betting';
-               if (room._waitTimeout) { clearTimeout(room._waitTimeout); room._waitTimeout = null; }
-               broadcastLadder(room);
-           }
+           try {
+             if (room.phase === 'waiting' && room.pendingJoiners.has(ws.uid)) {
+                 room.joinerUid = ws.uid;
+                 room.players[ws.uid] = { name: ws.displayName, pos: 1, virtualSnakes: [] };
+                 room.pendingJoiners.delete(ws.uid);
+                 room.phase = 'betting';
+                 if (room._waitTimeout) { clearTimeout(room._waitTimeout); room._waitTimeout = null; }
+                 broadcastLadder(room);
+             }
+           } catch (e) { console.error('[LADDER-BOT-APPROVE]', e.message); }
         }, 1500);
     } else {
         broadcastLadder(room);
@@ -2294,15 +2440,15 @@ async function handle(ws, m) {
   if (m.type === 'ladder-start') {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (!room || room.phase !== 'betting') return;
-    
+
     const cost = room.bet * room.multiplier;
     const cBal = await walletFor(room.creatorUid);
     const jBal = await walletFor(room.joinerUid);
-    
+
     if ((!room.creatorUid.startsWith('__bot_') && cBal.play < cost) || (!room.joinerUid.startsWith('__bot_') && jBal.play < cost)) {
       return send(ws, { type: 'ladder-error', message: 'Insufficient play balance.' });
     }
-    
+
     if (!room.creatorUid.startsWith('__bot_')) {
         const d1 = await debit(room.creatorUid, cost);
         if (!d1.ok) return send(ws, { type: 'ladder-error', message: 'Failed to deduct creator balance.' });
@@ -2314,23 +2460,26 @@ async function handle(ws, m) {
             return send(ws, { type: 'ladder-error', message: 'Failed to deduct joiner balance.' });
         }
     }
-    
+
     room.prizePool = cost * 2;
     room.phase = 'playing';
-    room.currentTurn = room.creatorUid; 
+    room.currentTurn = room.creatorUid;
     room.lastRoll = null;
     room.lastMovePath = null;
+    room.lastActionAt = { [room.creatorUid]: Date.now(), [room.joinerUid]: Date.now() };
+    room.inactivityWarned = {};
+    room.abandonment = null;
+    room.roundStartedAt = Date.now();
     broadcastLadder(room);
-    
+
     if (room.currentTurn.startsWith('__bot_')) {
-        const bRoll = async () => {
-           if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
-              await executeLadderRoll(room, room.currentTurn);
-           }
-        };
-        setTimeout(bRoll, 1500);
-    } else {
-        scheduleLadderTimeout(room, room.currentTurn);
+        setTimeout(() => {
+          try {
+            if (room.phase === 'playing' && room.currentTurn && room.currentTurn.startsWith('__bot_')) {
+              executeLadderRoll(room, room.currentTurn).catch(e => console.error('[LADDER-START-BOT]', e.message));
+            }
+          } catch (e) { console.error('[LADDER-START-BOT-CB]', e.message); }
+        }, 1500);
     }
     return;
   }
@@ -2356,7 +2505,7 @@ async function handle(ws, m) {
   if (m.type === 'ladder-roll') {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (room && room.phase === 'playing' && room.currentTurn === ws.uid) {
-      await executeLadderRoll(room, ws.uid);
+      await executeLadderRoll(room, ws.uid).catch(e => console.error('[LADDER-ROLL]', e.message));
     }
     return;
   }
@@ -2364,23 +2513,25 @@ async function handle(ws, m) {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (room && room.phase === 'playing' && room.currentTurn === ws.uid) {
       if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
-      
+
       const opponent = (ws.uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
       room.currentTurn = opponent;
+      room.lastActionAt = room.lastActionAt || {};
+      room.lastActionAt[opponent] = Date.now();
+      if (room.inactivityWarned) room.inactivityWarned[opponent] = false;
       broadcastLadder(room);
-      
+
       const oppWs = Array.from(conns.get(opponent) || []).find(w => w._ladderRoomId === room.id);
       if (oppWs) send(oppWs, { type: 'ladder-notification', message: 'Opponent skipped their turn!' });
-      
+
       if (room.currentTurn.startsWith('__bot_')) {
-          const bRoll = async () => {
-             if (room.phase === 'playing' && room.currentTurn.startsWith('__bot_')) {
-                await executeLadderRoll(room, room.currentTurn);
-             }
-          };
-          setTimeout(bRoll, 1500);
-      } else {
-          scheduleLadderTimeout(room, room.currentTurn);
+          setTimeout(() => {
+            try {
+              if (room.phase === 'playing' && room.currentTurn && room.currentTurn.startsWith('__bot_')) {
+                executeLadderRoll(room, room.currentTurn).catch(e => console.error('[LADDER-SKIP-BOT]', e.message));
+              }
+            } catch (e) { console.error('[LADDER-SKIP-BOT-CB]', e.message); }
+          }, 1500);
       }
     }
     return;
@@ -2388,27 +2539,27 @@ async function handle(ws, m) {
   if (m.type === 'ladder-attack') {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (!room || room.phase !== 'playing' || room.currentTurn !== ws.uid) return;
-    
+
     const p = room.players[ws.uid];
     if (!p.virtualSnakes) p.virtualSnakes = [];
     if (p.virtualSnakes.length >= 2) return send(ws, { type: 'ladder-error', message: 'Max 2 virtual snakes allowed.' });
-    
+
     const head = Number(m.head);
     if (!Number.isInteger(head) || head < 21 || head > 99) return send(ws, { type: 'ladder-error', message: 'Invalid snake position. Choose 21-99.' });
-    
+
     if (getCombinedSnakes(room)[head] || LADDER_LADDERS[head] || head === 100) return send(ws, { type: 'ladder-error', message: 'Position occupied by another snake or ladder.' });
-    
+
     const cost = 10;
     const w = await walletFor(ws.uid);
     if (w.play < cost) return send(ws, { type: 'ladder-error', message: 'Insufficient play balance for attack.' });
-    
+
     const deduct = await debit(ws.uid, cost);
     if (!deduct.ok) return send(ws, { type: 'ladder-error', message: 'Failed to deduct balance.' });
-    
+
     p.virtualSnakes.push(head);
     broadcastLadder(room);
     send(ws, { type: 'ladder-notification', message: `Virtual snake placed at ${head}! -10 Birr` });
-    
+
     return;
   }
   if (m.type === 'ladder-leave') {
