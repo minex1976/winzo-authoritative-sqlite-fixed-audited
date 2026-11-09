@@ -464,19 +464,55 @@ async function detectMultiAccount(username, ipHash = null, fingerprint = null) {
   try {
     if (ipHash) {
       const r = await pool.query(
-        'SELECT COUNT(*)::int AS c FROM users WHERE last_ip_hash = $1 AND username <> $2',
+        `SELECT username, display_name FROM users
+         WHERE last_ip_hash = $1 AND username <> $2 ORDER BY created_at ASC`,
         [ipHash, username]
       );
-      if (r.rows[0].c >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind: 'ip-cluster', count: r.rows[0].c });
+      if (r.rowCount >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({
+        kind: 'ip-cluster', count: r.rowCount,
+        reason: `Shared IP cluster: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_IP_THRESHOLD + 1} including this account).`,
+        relatedAccounts: r.rows.map(x => ({ uid: x.username, name: x.display_name || x.username }))
+      });
     }
     if (fingerprint) {
       const r = await pool.query(
-        'SELECT COUNT(*)::int AS c FROM users WHERE device_fingerprint = $1 AND username <> $2',
+        `SELECT username, display_name FROM users
+         WHERE device_fingerprint = $1 AND username <> $2 ORDER BY created_at ASC`,
         [fingerprint, username]
       );
-      if (r.rows[0].c >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind: 'fingerprint-cluster', count: r.rows[0].c });
+      if (r.rowCount >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({
+        kind: 'fingerprint-cluster', count: r.rowCount,
+        reason: `Matching device fingerprint: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_FP_THRESHOLD + 1} including this account).`,
+        relatedAccounts: r.rows.map(x => ({ uid: x.username, name: x.display_name || x.username }))
+      });
     }
-    if (!signals.length) return { suspicious: false };
+
+    // Referral links are shown as relationship context, not treated as proof of fraud.
+    const rel = await pool.query(
+      `SELECT username, display_name, referred_by, 'referred-by-this-account' AS relation
+         FROM users WHERE referred_by = $1
+       UNION ALL
+       SELECT username, display_name, referred_by, 'same-referrer' AS relation
+         FROM users WHERE referred_by = (SELECT referred_by FROM users WHERE username = $1)
+           AND referred_by IS NOT NULL AND referred_by <> '' AND username <> $1
+       ORDER BY username LIMIT 100`,
+      [username]
+    );
+    if (rel.rowCount) {
+      const unique = new Map();
+      for (const x of rel.rows) unique.set(x.username, {
+        uid: x.username, name: x.display_name || x.username, relation: x.relation,
+        referredBy: x.referred_by || null
+      });
+      signals.push({
+        kind: 'account-relationships', count: unique.size,
+        reason: 'Referral relationship context only; this connection is not independently considered a fraud signal.',
+        relatedAccounts: [...unique.values()]
+      });
+    }
+
+    const fraudSignals = signals.filter(x => x.kind !== 'account-relationships');
+    if (!fraudSignals.length) return { suspicious: false, signals };
     await pool.query(
       `UPDATE users SET fraud_status = 'flagged', block_signals = $1, updated_at = $2
         WHERE username = $3 AND (fraud_status IS NULL OR fraud_status <> 'frozen')`,
@@ -2924,7 +2960,41 @@ app.post('/admin/remove-broadcast', async(req,res)=>{
     for(const set of conns.values())for(const ws of set)if(ws.readyState===1)send(ws,{type:'sticky-broadcast-remove',broadcastId:id});
     res.json({ok:true,removed:r.rowCount});}catch(e){res.status(500).json({ok:false,error:e.message});}
 });
-app.get('/admin/security-scans',async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false});try{const [r,u]=await Promise.all([pool.query('SELECT scanned,flagged,findings,created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30'),pool.query("SELECT username,display_name,block_signals,updated_at FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC")]);const flaggedUsers=u.rows.map(x=>{let parsed=x.block_signals||{};if(typeof parsed==='string'){try{parsed=JSON.parse(parsed);}catch{parsed={raw:parsed};}}return {uid:x.username,name:x.display_name,signals:Array.isArray(parsed?.signals)?parsed.signals:[],detectedAt:Number(parsed?.detectedAt||x.updated_at||0)};});res.json({ok:true,scans:r.rows,flaggedUsers});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.get('/admin/security-scans', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const [scans, users] = await Promise.all([
+      pool.query('SELECT scanned, flagged, findings, created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30'),
+      pool.query("SELECT username, display_name, block_signals, updated_at, last_ip_hash, device_fingerprint, referred_by FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC")
+    ]);
+    const flaggedUsers = [];
+    for (const x of users.rows) {
+      let parsed = x.block_signals || {};
+      if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch { parsed = {}; } }
+      let signals = Array.isArray(parsed?.signals) ? parsed.signals : [];
+      // Backfill useful context for accounts flagged by older versions that stored only counts.
+      if (x.last_ip_hash && !signals.some(v => v.kind === 'ip-cluster' && v.relatedAccounts)) {
+        const r = await pool.query('SELECT username, display_name FROM users WHERE last_ip_hash=$1 AND username<>$2 ORDER BY created_at ASC', [x.last_ip_hash, x.username]);
+        if (r.rowCount >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind:'ip-cluster', count:r.rowCount, reason:`Shared IP cluster: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_IP_THRESHOLD + 1} including this account).`, relatedAccounts:r.rows.map(v=>({uid:v.username,name:v.display_name||v.username})) });
+      }
+      if (x.device_fingerprint && !signals.some(v => v.kind === 'fingerprint-cluster' && v.relatedAccounts)) {
+        const r = await pool.query('SELECT username, display_name FROM users WHERE device_fingerprint=$1 AND username<>$2 ORDER BY created_at ASC', [x.device_fingerprint, x.username]);
+        if (r.rowCount >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind:'fingerprint-cluster', count:r.rowCount, reason:`Matching device fingerprint: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_FP_THRESHOLD + 1} including this account).`, relatedAccounts:r.rows.map(v=>({uid:v.username,name:v.display_name||v.username})) });
+      }
+      const rel = await pool.query(
+        `SELECT username, display_name, referred_by, 'referred-by-this-account' AS relation FROM users WHERE referred_by=$1
+         UNION ALL SELECT username, display_name, referred_by, 'same-referrer' AS relation FROM users
+         WHERE referred_by=(SELECT referred_by FROM users WHERE username=$1) AND referred_by IS NOT NULL AND referred_by<>'' AND username<>$1
+         ORDER BY username LIMIT 100`, [x.username]);
+      if (rel.rowCount && !signals.some(v => v.kind === 'account-relationships')) {
+        const unique = new Map(rel.rows.map(v => [v.username, {uid:v.username,name:v.display_name||v.username,relation:v.relation,referredBy:v.referred_by||null}]));
+        signals.push({kind:'account-relationships',count:unique.size,reason:'Referral relationship context only; not independently considered a fraud signal.',relatedAccounts:[...unique.values()]});
+      }
+      flaggedUsers.push({ uid:x.username, name:x.display_name, signals, detectedAt:Number(parsed?.detectedAt||x.updated_at||0) });
+    }
+    res.json({ ok:true, scans:scans.rows, flaggedUsers });
+  } catch (e) { res.status(500).json({ ok:false, error:e.message }); }
+});
 
 app.post('/admin/scan-suspicious', async(req,res)=>{
   if(!isAdmin(req))return res.status(403).json({ok:false});
