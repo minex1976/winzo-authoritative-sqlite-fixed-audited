@@ -942,7 +942,7 @@ async function transactionRequest(uid, data) {
     
     // Notify user instantly if they use a used reference
     if (e.message === 'reference-already-used') {
-        await sendBotDepositStatus(uid, "❌ *የተጠቀሙበት ማጣቀሻ (Reference)*\n\nይህንን የግብይት ማጣቀሻ ቀደም ሲል ተጠቅመዋል። እባክዎ አዲስ ግብይት ያድርጉ።");
+        await sendBotDepositStatus(uid, "❌ *የተጠቀሙበት ማጣቀሻ (Reference)*\n\nይህ Reference code ከዚህ በፊት አገልግሎት ላይ ውሏል። እባክዎ ሌላ ይሞክሩ።");
     }
     
     return { ok: false, reason: e.message, traceId };
