@@ -3,9 +3,19 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
-import TelegramBot from 'node-telegram-bot-api'; // <-- ADDED TELEGRAM IMPORT
+import TelegramBot from 'node-telegram-bot-api';
 
 const { Pool } = pg;
+
+// ============================================================================
+// PROCESS-LEVEL ERROR HANDLING (Keeps the server alive)
+// ============================================================================
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔥 [UNHANDLED REJECTION] at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('🔥 [UNCAUGHT EXCEPTION]', err);
+});
 
 // ============================================================================
 // DATABASE
@@ -67,7 +77,7 @@ const MAX_REFERENCE_LENGTH = 128;
 const MIN_TELEBIRR_REF_LENGTH = 8;
 const SMS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEPOSIT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_DEPOSIT_AMOUNT = 1;
+const MIN_DEPOSIT_AMOUNT = 15;
 const MAX_DEPOSIT_AMOUNT = 1_000_000;
 const DEPOSIT_RATE_LIMIT_WINDOW_MS = Number(process.env.DEPOSIT_RATE_WINDOW_MS || 10 * 60 * 1000);
 const DEPOSIT_RATE_LIMIT_MAX = Number(process.env.DEPOSIT_RATE_MAX || 15);
@@ -104,15 +114,30 @@ const DAY = 86400000;
 // TELEGRAM BOT SETUP
 // ============================================================================
 let bot = null;
+const botUserStates = new Map();
+
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
   console.log('✅ Telegram Bot initialized.');
+  
+  // Catch bot-level errors
+  bot.on('polling_error', (error) => console.error('[BOT POLLING ERROR]', error.message));
+  bot.on('webhook_error', (error) => console.error('[BOT WEBHOOK ERROR]', error.message));
+}
+
+// Safe wrapper to prevent crashes if Telegram API fails
+async function safeBotSend(chatId, text, options = {}) {
+  if (!bot) return;
+  try {
+    await bot.sendMessage(chatId, text, options);
+  } catch (err) {
+    console.error(`[BOT SEND ERROR] Failed to send message to ${chatId}:`, err.message);
+  }
 }
 
 function setupTelegramBot() {
   if (!bot) return;
   
-  // 1. Set the Menu Commands (This creates the list from your screenshot)
   bot.setMyCommands([
       { command: '/start', description: 'Start' },
       { command: '/register', description: 'Register' },
@@ -126,7 +151,6 @@ function setupTelegramBot() {
       { command: '/support', description: 'Support' }
   ]).catch(err => console.error('Bot commands error:', err.message));
 
-  // Updated: Now accepts an 'action' parameter to append to the URL
   const getMiniAppButton = (text = "Play Winzo 🎮", action = null) => {
       let url = process.env.MINI_APP_URL || 'https://your-aletcloud-url.com';
       if (action) {
@@ -141,66 +165,138 @@ function setupTelegramBot() {
       };
   };
   
-  // 2. Handle Commands
   bot.onText(/\/start/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
+      botUserStates.delete(msg.chat.id);
+      safeBotSend(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
   });
   
   bot.onText(/\/play/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
+      safeBotSend(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
   });
   
   bot.onText(/\/register/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
-  });
-  
-  bot.onText(/\/deposit/, (msg) => {
-      // Sends action=deposit
-      bot.sendMessage(msg.chat.id, "To deposit funds, launch the app and go to your wallet.", getMiniAppButton("Deposit 💰", "deposit"));
+      safeBotSend(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
   });
   
   bot.onText(/\/withdraw/, (msg) => {
-      // Sends action=withdraw
-      bot.sendMessage(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
+      safeBotSend(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
   });
   
   bot.onText(/\/transfer/, (msg) => {
-      // Sends action=transfer
-      bot.sendMessage(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
+      safeBotSend(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
   });
   
   bot.onText(/\/invite/, (msg) => {
       const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
-      // Provides both the direct link AND the button to open the referral modal
-      bot.sendMessage(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
+      safeBotSend(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
   });
   
   bot.onText(/\/instruction/, (msg) => {
       const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
-      bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+      safeBotSend(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
   
   bot.onText(/\/support/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Need help? Contact our support team: @winzosupportcenter");
+      safeBotSend(msg.chat.id, "Need help? Contact our support team: @winzosupportcenter");
   });
   
-  // Dynamic Balance Check (connects to your PostgreSQL DB!)
   bot.onText(/\/balance/, async (msg) => {
       const uid = `tg_${msg.from.id}`; 
       try {
           const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
           if (res.rows.length === 0) {
-              bot.sendMessage(msg.chat.id, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now", "register"));
+              safeBotSend(msg.chat.id, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now", "register"));
           } else {
               const main = Number(res.rows[0].main_wallet).toFixed(2);
               const play = Number(res.rows[0].play_wallet).toFixed(2);
-              bot.sendMessage(msg.chat.id, `📊 *Your Winzo Balance*\n\n💰 Main Wallet: *${main} Birr*\n🎮 Play Wallet: *${play} Birr*`, { parse_mode: 'Markdown', ...getMiniAppButton("Open App") });
+              safeBotSend(msg.chat.id, `📊 *Your Winzo Balance*\n\n💰 Main Wallet: *${main} Birr*\n🎮 Play Wallet: *${play} Birr*`, { parse_mode: 'Markdown', ...getMiniAppButton("Open App") });
           }
       } catch (e) {
           console.error('[BOT BALANCE]', e.message);
-          bot.sendMessage(msg.chat.id, "⚠️ Could not fetch balance. Please try again later.");
+          safeBotSend(msg.chat.id, "⚠️ Could not fetch balance. Please try again later.");
       }
   });
+
+  // Secure Conversational Deposit Flow
+  bot.onText(/\/deposit/, (msg) => {
+      const chatId = msg.chat.id;
+      botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
+      safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን ከታች ይፃፉ");
+  });
+
+  bot.on('message', async (msg) => {
+      try {
+          const chatId = msg.chat.id;
+          const state = botUserStates.get(chatId);
+          
+          if (!state || !msg.text || msg.text.startsWith('/')) return;
+
+          const text = msg.text.trim();
+
+          // Step 1: Amount input
+          if (state.state === 'WAITING_FOR_AMOUNT') {
+              const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
+              
+              if (isNaN(amount) || amount < 15) {
+                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን (ከ 15 ብር በላይ) ያስገቡ።");
+              }
+              
+              state.amount = amount;
+              state.state = 'WAITING_FOR_SMS';
+              botUserStates.set(chatId, state);
+
+              const instructions = `1 - በቴሌብር ወደ 0923002900 ያስገቡ።\n2 - የላኩበትን የቴሌብር መልእክት (SMS) ኮፒ ያድርጉ\n3 - ኮፒ ያደረጉትን SMS መልእክት ከታች 👇 ፔስት ያድርጉት። ከዚያም ወደእኛ ይላኩት።`;
+              return safeBotSend(chatId, instructions);
+          }
+
+          // Step 2: SMS input (Secured)
+          if (state.state === 'WAITING_FOR_SMS') {
+              const smsText = text;
+              const parsed = parsePaymentRecord({ text: smsText, sender: 'user_paste' });
+              
+              if (!parsed.reference) {
+                  return safeBotSend(chatId, "⚠️ ከመልእክቱ የግብይት ማጣቀሻ (Reference) ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
+              }
+
+              if (Math.abs((parsed.amount || 0) - state.amount) > 1) {
+                  return safeBotSend(chatId, `⚠️ በመልእክቱ ላይ ያለው መጠን (${parsed.amount}) እና እርስዎ የገለፁት (${state.amount}) አይገጥምም።`);
+              }
+
+              botUserStates.delete(chatId);
+              safeBotSend(chatId, "⏳ መልእክቱን ተቀብለናል። አሁን ከባንኩ ጋር በማመሳከር ላይ...");
+
+              const uid = `tg_${msg.from.id}`;
+
+              // 1. Create pending transaction in DB
+              const txRes = await transactionRequest(uid, {
+                  txType: 'deposit',
+                  amount: state.amount,
+                  reference: parsed.reference,
+                  clientRequestId: 'bot_' + Date.now()
+              });
+
+              if (!txRes.ok) {
+                  return safeBotSend(chatId, `❌ ስህተት: ${txRes.reason}`);
+              }
+
+              // 2. Save the pasted text to DB for Admin/Audit review (marked as user_paste)
+              const smsId = crypto.randomUUID();
+              const ts = now();
+              const textHash = crypto.createHash('sha256').update('user_paste|' + smsText).digest('hex');
+              await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [smsId, 'user_paste', smsText, ts, textHash]);
+
+              // 3. SECURITY FIX: Do NOT auto-approve based on user's pasted text. 
+              // We simply tell them to wait for the real SMS webhook to confirm it.
+              // If the user is an admin or testing, they can use the admin panel.
+              safeBotSend(chatId, `✅ የ Sms መልእክቱ ተቀብሏል። ግብይቱ በራስ-ሰር ሲረጋገጥ ብሩ ወደ መጫወቻ ዋሌትዎ ይገባል። (Reference: ${parsed.reference})`);
+          }
+      } catch (err) {
+          console.error('[BOT DEPOSIT ERROR]', err);
+          safeBotSend(msg.chat.id, "⚠️ ስህተት ተፈጥሯል። እባክዎ በኋላ ይሞክሩ።");
+      }
+  });
+}
+
 // ============================================================================
 // DATABASE SCHEMA + MIGRATIONS
 // ============================================================================
@@ -986,7 +1082,13 @@ async function autoApproveMatchingDeposits(smsId, smsRecord, parentTraceId = nul
   const traceId = parentTraceId || newTraceId();
   await trace(traceId, null, 'auto.sms', 'ok', { detail: { smsId, sender: smsRecord.sender || smsRecord.from } });
   const payment = parsePaymentRecord(smsRecord);
-  if (!payment.isTrusted) { await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference }); return { ok: false, reason: 'untrusted-sender', traceId }; }
+  
+  // If the sender is not trusted, reject. (This stops the bot's user_paste)
+  if (!payment.isTrusted) { 
+      await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference }); 
+      return { ok: false, reason: 'untrusted-sender', traceId }; 
+  }
+  
   if (!payment.reference) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'no-reference' }); return { ok: false, reason: 'no-reference', traceId }; }
   if (!isValidReference(payment.reference)) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'invalid-reference', reference: payment.reference }); return { ok: false, reason: 'invalid-reference', traceId }; }
   const smsAt = Number(smsRecord.timestamp || now());
@@ -1866,7 +1968,6 @@ const LADDER_SNAKES = {71: 50, 82: 62, 56: 36};
 const LADDER_LADDERS = {24: 44, 33: 68};
 const ladderRooms = new Map();
 
-// Timing constants for inactivity / abandonment
 const LADDER_INACTIVITY_WARN_MS = 45 * 1000;
 const LADDER_INACTIVITY_FORFEIT_75_MS = 2 * 60 * 1000;
 const LADDER_INACTIVITY_MAX_MS = 5 * 60 * 1000;
@@ -2146,7 +2247,6 @@ async function handleLadderRejoin(ws, roomId) {
     } catch (e) { console.error('[LADDER-REJOIN]', e.message); }
 }
 
-// --- Global tick for abandonment + inactivity ---
 setInterval(() => {
     try {
         const t = Date.now();
@@ -2195,7 +2295,6 @@ setInterval(() => {
     } catch (e) { console.error('[LADDER-TICK-LOOP]', e.message); }
 }, 5000);
 
-// LADDER BOT ENGINE
 setInterval(() => {
     try {
         const openBots = Array.from(ladderRooms.values()).filter(r => r.phase === 'waiting' && r.creatorUid.startsWith('__bot_'));
@@ -2424,7 +2523,6 @@ async function handle(ws, m) {
     return send(ws,{type:'bingo-history',items:r.rows});
   }
 
-  // LADDER HANDLERS
   if (m.type === 'ladder-join-lobby') {
     ws._ladderLobby = true;
     broadcastLadderLobby();
@@ -2799,8 +2897,13 @@ app.use(express.json({ limit: '3mb' }));
 // ============================================================================
 if (BOT_TOKEN) {
   app.post(`/bot${BOT_TOKEN}`, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
+    try {
+      bot.processUpdate(req.body);
+      res.sendStatus(200);
+    } catch (err) {
+      console.error('[BOT WEBHOOK CRASH PREVENTED]', err);
+      res.sendStatus(500);
+    }
   });
 }
 
