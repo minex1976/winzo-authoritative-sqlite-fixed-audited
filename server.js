@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
+import TelegramBot from 'node-telegram-bot-api'; // <-- ADDED TELEGRAM IMPORT
 
 const { Pool } = pg;
 
@@ -98,6 +99,100 @@ const BOT_NAMES = [
 
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
+
+// ============================================================================
+// TELEGRAM BOT SETUP
+// ============================================================================
+let bot = null;
+if (BOT_TOKEN) {
+  bot = new TelegramBot(BOT_TOKEN, { polling: false });
+  console.log('✅ Telegram Bot initialized.');
+}
+
+function setupTelegramBot() {
+  if (!bot) return;
+  
+  // 1. Set the Menu Commands (This creates the list from your screenshot)
+  bot.setMyCommands([
+      { command: '/start', description: 'Start' },
+      { command: '/register', description: 'Register' },
+      { command: '/play', description: 'Play' },
+      { command: '/deposit', description: 'Deposit' },
+      { command: '/balance', description: 'Balance' },
+      { command: '/withdraw', description: 'Withdraw' },
+      { command: '/transfer', description: 'Transfer' },
+      { command: '/invite', description: 'Invite' },
+      { command: '/instruction', description: 'Instruction' },
+      { command: '/support', description: 'Support' }
+  ]).catch(err => console.error('Bot commands error:', err.message));
+
+  const getMiniAppButton = (text = "Play Winzo 🎮") => {
+      return {
+          reply_markup: {
+              inline_keyboard: [[
+                  { text: text, web_app: { url: process.env.MINI_APP_URL || 'https://your-aletcloud-url.com' } }
+              ]]
+          }
+      };
+  };
+
+  // 2. Handle Commands
+  bot.onText(/\/start/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
+  });
+
+  bot.onText(/\/play/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲"));
+  });
+
+  bot.onText(/\/register/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now"));
+  });
+
+  bot.onText(/\/deposit/, (msg) => {
+      bot.sendMessage(msg.chat.id, "To deposit funds, launch the app and go to your wallet.", getMiniAppButton("Deposit 💰"));
+  });
+
+  bot.onText(/\/withdraw/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦"));
+  });
+
+  bot.onText(/\/transfer/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄"));
+  });
+
+  bot.onText(/\/invite/, (msg) => {
+      const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
+      bot.sendMessage(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\``, { parse_mode: 'Markdown' });
+  });
+
+  bot.onText(/\/instruction/, (msg) => {
+      const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
+      bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+  });
+
+  bot.onText(/\/support/, (msg) => {
+      bot.sendMessage(msg.chat.id, "Need help? Contact our support team: @winzosupportcenter");
+  });
+
+  // Dynamic Balance Check (connects to your PostgreSQL DB!)
+  bot.onText(/\/balance/, async (msg) => {
+      const uid = `tg_${msg.from.id}`; // Matches how your server identifies Telegram users
+      try {
+          const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
+          if (res.rows.length === 0) {
+              bot.sendMessage(msg.chat.id, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now"));
+          } else {
+              const main = Number(res.rows[0].main_wallet).toFixed(2);
+              const play = Number(res.rows[0].play_wallet).toFixed(2);
+              bot.sendMessage(msg.chat.id, `📊 *Your Winzo Balance*\n\n💰 Main Wallet: *${main} Birr*\n🎮 Play Wallet: *${play} Birr*`, { parse_mode: 'Markdown', ...getMiniAppButton("Open App") });
+          }
+      } catch (e) {
+          console.error('[BOT BALANCE]', e.message);
+          bot.sendMessage(msg.chat.id, "⚠️ Could not fetch balance. Please try again later.");
+      }
+  });
+}
 
 // ============================================================================
 // DATABASE SCHEMA + MIGRATIONS
@@ -464,55 +559,19 @@ async function detectMultiAccount(username, ipHash = null, fingerprint = null) {
   try {
     if (ipHash) {
       const r = await pool.query(
-        `SELECT username, display_name FROM users
-         WHERE last_ip_hash = $1 AND username <> $2 ORDER BY created_at ASC`,
+        'SELECT COUNT(*)::int AS c FROM users WHERE last_ip_hash = $1 AND username <> $2',
         [ipHash, username]
       );
-      if (r.rowCount >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({
-        kind: 'ip-cluster', count: r.rowCount,
-        reason: `Shared IP cluster: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_IP_THRESHOLD + 1} including this account).`,
-        relatedAccounts: r.rows.map(x => ({ uid: x.username, name: x.display_name || x.username }))
-      });
+      if (r.rows[0].c >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind: 'ip-cluster', count: r.rows[0].c });
     }
     if (fingerprint) {
       const r = await pool.query(
-        `SELECT username, display_name FROM users
-         WHERE device_fingerprint = $1 AND username <> $2 ORDER BY created_at ASC`,
+        'SELECT COUNT(*)::int AS c FROM users WHERE device_fingerprint = $1 AND username <> $2',
         [fingerprint, username]
       );
-      if (r.rowCount >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({
-        kind: 'fingerprint-cluster', count: r.rowCount,
-        reason: `Matching device fingerprint: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_FP_THRESHOLD + 1} including this account).`,
-        relatedAccounts: r.rows.map(x => ({ uid: x.username, name: x.display_name || x.username }))
-      });
+      if (r.rows[0].c >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind: 'fingerprint-cluster', count: r.rows[0].c });
     }
-
-    // Referral links are shown as relationship context, not treated as proof of fraud.
-    const rel = await pool.query(
-      `SELECT username, display_name, referred_by, 'referred-by-this-account' AS relation
-         FROM users WHERE referred_by = $1
-       UNION ALL
-       SELECT username, display_name, referred_by, 'same-referrer' AS relation
-         FROM users WHERE referred_by = (SELECT referred_by FROM users WHERE username = $1)
-           AND referred_by IS NOT NULL AND referred_by <> '' AND username <> $1
-       ORDER BY username LIMIT 100`,
-      [username]
-    );
-    if (rel.rowCount) {
-      const unique = new Map();
-      for (const x of rel.rows) unique.set(x.username, {
-        uid: x.username, name: x.display_name || x.username, relation: x.relation,
-        referredBy: x.referred_by || null
-      });
-      signals.push({
-        kind: 'account-relationships', count: unique.size,
-        reason: 'Referral relationship context only; this connection is not independently considered a fraud signal.',
-        relatedAccounts: [...unique.values()]
-      });
-    }
-
-    const fraudSignals = signals.filter(x => x.kind !== 'account-relationships');
-    if (!fraudSignals.length) return { suspicious: false, signals };
+    if (!signals.length) return { suspicious: false };
     await pool.query(
       `UPDATE users SET fraud_status = 'flagged', block_signals = $1, updated_at = $2
         WHERE username = $3 AND (fraud_status IS NULL OR fraud_status <> 'frozen')`,
@@ -2728,6 +2787,16 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '3mb' }));
 
+// ============================================================================
+// TELEGRAM BOT WEBHOOK ROUTE
+// ============================================================================
+if (BOT_TOKEN) {
+  app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+  });
+}
+
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
   if (!SMS_WEBHOOK_SECRET) {
     console.warn('[SECURITY] SMS webhook called but SMS_WEBHOOK_SECRET is not configured.');
@@ -2960,41 +3029,7 @@ app.post('/admin/remove-broadcast', async(req,res)=>{
     for(const set of conns.values())for(const ws of set)if(ws.readyState===1)send(ws,{type:'sticky-broadcast-remove',broadcastId:id});
     res.json({ok:true,removed:r.rowCount});}catch(e){res.status(500).json({ok:false,error:e.message});}
 });
-app.get('/admin/security-scans', async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ ok: false });
-  try {
-    const [scans, users] = await Promise.all([
-      pool.query('SELECT scanned, flagged, findings, created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30'),
-      pool.query("SELECT username, display_name, block_signals, updated_at, last_ip_hash, device_fingerprint, referred_by FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC")
-    ]);
-    const flaggedUsers = [];
-    for (const x of users.rows) {
-      let parsed = x.block_signals || {};
-      if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch { parsed = {}; } }
-      let signals = Array.isArray(parsed?.signals) ? parsed.signals : [];
-      // Backfill useful context for accounts flagged by older versions that stored only counts.
-      if (x.last_ip_hash && !signals.some(v => v.kind === 'ip-cluster' && v.relatedAccounts)) {
-        const r = await pool.query('SELECT username, display_name FROM users WHERE last_ip_hash=$1 AND username<>$2 ORDER BY created_at ASC', [x.last_ip_hash, x.username]);
-        if (r.rowCount >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind:'ip-cluster', count:r.rowCount, reason:`Shared IP cluster: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_IP_THRESHOLD + 1} including this account).`, relatedAccounts:r.rows.map(v=>({uid:v.username,name:v.display_name||v.username})) });
-      }
-      if (x.device_fingerprint && !signals.some(v => v.kind === 'fingerprint-cluster' && v.relatedAccounts)) {
-        const r = await pool.query('SELECT username, display_name FROM users WHERE device_fingerprint=$1 AND username<>$2 ORDER BY created_at ASC', [x.device_fingerprint, x.username]);
-        if (r.rowCount >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind:'fingerprint-cluster', count:r.rowCount, reason:`Matching device fingerprint: ${r.rowCount + 1} accounts (threshold: ${MULTI_ACCOUNT_FP_THRESHOLD + 1} including this account).`, relatedAccounts:r.rows.map(v=>({uid:v.username,name:v.display_name||v.username})) });
-      }
-      const rel = await pool.query(
-        `SELECT username, display_name, referred_by, 'referred-by-this-account' AS relation FROM users WHERE referred_by=$1
-         UNION ALL SELECT username, display_name, referred_by, 'same-referrer' AS relation FROM users
-         WHERE referred_by=(SELECT referred_by FROM users WHERE username=$1) AND referred_by IS NOT NULL AND referred_by<>'' AND username<>$1
-         ORDER BY username LIMIT 100`, [x.username]);
-      if (rel.rowCount && !signals.some(v => v.kind === 'account-relationships')) {
-        const unique = new Map(rel.rows.map(v => [v.username, {uid:v.username,name:v.display_name||v.username,relation:v.relation,referredBy:v.referred_by||null}]));
-        signals.push({kind:'account-relationships',count:unique.size,reason:'Referral relationship context only; not independently considered a fraud signal.',relatedAccounts:[...unique.values()]});
-      }
-      flaggedUsers.push({ uid:x.username, name:x.display_name, signals, detectedAt:Number(parsed?.detectedAt||x.updated_at||0) });
-    }
-    res.json({ ok:true, scans:scans.rows, flaggedUsers });
-  } catch (e) { res.status(500).json({ ok:false, error:e.message }); }
-});
+app.get('/admin/security-scans',async(req,res)=>{if(!isAdmin(req))return res.status(403).json({ok:false});try{const [r,u]=await Promise.all([pool.query('SELECT scanned,flagged,findings,created_at FROM security_scan_logs ORDER BY created_at DESC LIMIT 30'),pool.query("SELECT username,display_name,block_signals,updated_at FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC")]);const flaggedUsers=u.rows.map(x=>{let parsed=x.block_signals||{};if(typeof parsed==='string'){try{parsed=JSON.parse(parsed);}catch{parsed={raw:parsed};}}return {uid:x.username,name:x.display_name,signals:Array.isArray(parsed?.signals)?parsed.signals:[],detectedAt:Number(parsed?.detectedAt||x.updated_at||0)};});res.json({ok:true,scans:r.rows,flaggedUsers});}catch(e){res.status(500).json({ok:false,error:e.message});}});
 
 app.post('/admin/scan-suspicious', async(req,res)=>{
   if(!isAdmin(req))return res.status(403).json({ok:false});
@@ -3326,6 +3361,16 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
   console.log(`🎁 Signup bonus for new users: ${SIGNUP_BONUS} Birr`);
+  
+  if (BOT_TOKEN) {
+    setupTelegramBot();
+    const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+    const webhookUrl = `${publicUrl.replace(/\/$/, '')}/bot${BOT_TOKEN}`;
+    bot.setWebHook(webhookUrl)
+      .then(() => console.log(`✅ Telegram Webhook set to: ${webhookUrl}`))
+      .catch(err => console.error('❌ Failed to set Telegram webhook:', err.message));
+  }
+
   (async () => {
     try {
       await initDb();
