@@ -126,62 +126,71 @@ function setupTelegramBot() {
       { command: '/support', description: 'Support' }
   ]).catch(err => console.error('Bot commands error:', err.message));
 
-  const getMiniAppButton = (text = "Play Winzo 🎮") => {
+  // Updated: Now accepts an 'action' parameter to append to the URL
+  const getMiniAppButton = (text = "Play Winzo 🎮", action = null) => {
+      let url = process.env.MINI_APP_URL || 'https://your-aletcloud-url.com';
+      if (action) {
+          url += (url.includes('?') ? '&' : '?') + 'action=' + action;
+      }
       return {
           reply_markup: {
               inline_keyboard: [[
-                  { text: text, web_app: { url: process.env.MINI_APP_URL || 'https://your-aletcloud-url.com' } }
+                  { text: text, web_app: { url: url } }
               ]]
           }
       };
   };
-
+  
   // 2. Handle Commands
   bot.onText(/\/start/, (msg) => {
       bot.sendMessage(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
   });
-
+  
   bot.onText(/\/play/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲"));
+      bot.sendMessage(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
   });
-
+  
   bot.onText(/\/register/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now"));
+      bot.sendMessage(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
   });
-
+  
   bot.onText(/\/deposit/, (msg) => {
-      bot.sendMessage(msg.chat.id, "To deposit funds, launch the app and go to your wallet.", getMiniAppButton("Deposit 💰"));
+      // Sends action=deposit
+      bot.sendMessage(msg.chat.id, "To deposit funds, launch the app and go to your wallet.", getMiniAppButton("Deposit 💰", "deposit"));
   });
-
+  
   bot.onText(/\/withdraw/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦"));
+      // Sends action=withdraw
+      bot.sendMessage(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
   });
-
+  
   bot.onText(/\/transfer/, (msg) => {
-      bot.sendMessage(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄"));
+      // Sends action=transfer
+      bot.sendMessage(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
   });
-
+  
   bot.onText(/\/invite/, (msg) => {
       const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
-      bot.sendMessage(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\``, { parse_mode: 'Markdown' });
+      // Provides both the direct link AND the button to open the referral modal
+      bot.sendMessage(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
   });
-
+  
   bot.onText(/\/instruction/, (msg) => {
       const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
       bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
-
+  
   bot.onText(/\/support/, (msg) => {
       bot.sendMessage(msg.chat.id, "Need help? Contact our support team: @winzosupportcenter");
   });
-
+  
   // Dynamic Balance Check (connects to your PostgreSQL DB!)
   bot.onText(/\/balance/, async (msg) => {
-      const uid = `tg_${msg.from.id}`; // Matches how your server identifies Telegram users
+      const uid = `tg_${msg.from.id}`; 
       try {
           const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
           if (res.rows.length === 0) {
-              bot.sendMessage(msg.chat.id, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now"));
+              bot.sendMessage(msg.chat.id, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now", "register"));
           } else {
               const main = Number(res.rows[0].main_wallet).toFixed(2);
               const play = Number(res.rows[0].play_wallet).toFixed(2);
@@ -192,8 +201,6 @@ function setupTelegramBot() {
           bot.sendMessage(msg.chat.id, "⚠️ Could not fetch balance. Please try again later.");
       }
   });
-}
-
 // ============================================================================
 // DATABASE SCHEMA + MIGRATIONS
 // ============================================================================
