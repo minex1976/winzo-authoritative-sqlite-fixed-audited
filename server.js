@@ -8,7 +8,7 @@ import TelegramBot from 'node-telegram-bot-api';
 const { Pool } = pg;
 
 // ============================================================================
-// PROCESS-LEVEL ERROR HANDLING (Keeps the server alive)
+// PROCESS-LEVEL ERROR HANDLING
 // ============================================================================
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🔥 [UNHANDLED REJECTION] at:', promise, 'reason:', reason);
@@ -120,18 +120,29 @@ if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
   console.log('✅ Telegram Bot initialized.');
   
-  // Catch bot-level errors
   bot.on('polling_error', (error) => console.error('[BOT POLLING ERROR]', error.message));
   bot.on('webhook_error', (error) => console.error('[BOT WEBHOOK ERROR]', error.message));
 }
 
-// Safe wrapper to prevent crashes if Telegram API fails
 async function safeBotSend(chatId, text, options = {}) {
   if (!bot) return;
   try {
     await bot.sendMessage(chatId, text, options);
   } catch (err) {
     console.error(`[BOT SEND ERROR] Failed to send message to ${chatId}:`, err.message);
+  }
+}
+
+// New: Bridge function to notify users via Telegram Bot
+async function sendBotDepositStatus(uid, message, parseMode = 'Markdown') {
+  if (!bot || !uid || !uid.startsWith('tg_')) return;
+  try {
+    const telegramId = uid.replace('tg_', '');
+    if (telegramId && !isNaN(telegramId)) {
+      await bot.sendMessage(telegramId, message, { parse_mode: parseMode });
+    }
+  } catch (e) {
+    console.error(`[BOT NOTIFY] Failed to send message to ${uid}:`, e.message);
   }
 }
 
@@ -217,7 +228,6 @@ function setupTelegramBot() {
       }
   });
 
-  // Secure Conversational Deposit Flow
   bot.onText(/\/deposit/, (msg) => {
       const chatId = msg.chat.id;
       botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
@@ -233,7 +243,6 @@ function setupTelegramBot() {
 
           const text = msg.text.trim();
 
-          // Step 1: Amount input
           if (state.state === 'WAITING_FOR_AMOUNT') {
               const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
               
@@ -249,13 +258,12 @@ function setupTelegramBot() {
               return safeBotSend(chatId, instructions);
           }
 
-          // Step 2: SMS input (Secured)
           if (state.state === 'WAITING_FOR_SMS') {
               const smsText = text;
               const parsed = parsePaymentRecord({ text: smsText, sender: 'user_paste' });
               
               if (!parsed.reference) {
-                  return safeBotSend(chatId, "⚠️ ከመልእክቱ የግብይት ማጣቀሻ (Reference) ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
+                  return safeBotSend(chatId, "⚠️ Reference ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
               }
 
               if (Math.abs((parsed.amount || 0) - state.amount) > 1) {
@@ -263,11 +271,10 @@ function setupTelegramBot() {
               }
 
               botUserStates.delete(chatId);
-              safeBotSend(chatId, "⏳ መልእክቱን ተቀብለናል። አሁን ከባንኩ ጋር በማመሳከር ላይ...");
+              safeBotSend(chatId, "⏳ መልእክቱን ተቀብለናል። በማመሳከር ላይ...");
 
               const uid = `tg_${msg.from.id}`;
 
-              // 1. Create pending transaction in DB
               const txRes = await transactionRequest(uid, {
                   txType: 'deposit',
                   amount: state.amount,
@@ -276,23 +283,20 @@ function setupTelegramBot() {
               });
 
               if (!txRes.ok) {
-                  return safeBotSend(chatId, `❌ ስህተት: ${txRes.reason}`);
+                  // The error handling is now inside transactionRequest, which will alert the user via bot if needed
+                  return; 
               }
 
-              // 2. Save the pasted text to DB for Admin/Audit review (marked as user_paste)
               const smsId = crypto.randomUUID();
               const ts = now();
               const textHash = crypto.createHash('sha256').update('user_paste|' + smsText).digest('hex');
               await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [smsId, 'user_paste', smsText, ts, textHash]);
 
-              // 3. SECURITY FIX: Do NOT auto-approve based on user's pasted text. 
-              // We simply tell them to wait for the real SMS webhook to confirm it.
-              // If the user is an admin or testing, they can use the admin panel.
-              safeBotSend(chatId, `✅ የ Sms መልእክቱ ተቀብሏል። ግብይቱ በራስ-ሰር ሲረጋገጥ ብሩ ወደ መጫወቻ ዋሌትዎ ይገባል። (Reference: ${parsed.reference})`);
+              safeBotSend(chatId, `✅ የ Sms መልእክቱ ተልኳል።  ትክክለኛነቱ ሲረጋገጥ ብሩ ወደዋሌትዎ ገቢ ይሆናል ። (Reference: ${parsed.reference})`);
           }
       } catch (err) {
           console.error('[BOT DEPOSIT ERROR]', err);
-          safeBotSend(msg.chat.id, "⚠️ ስህተት ተፈጥሯል። እባክዎ በኋላ ይሞክሩ።");
+          safeBotSend(msg.chat.id, "⚠️ ስህተት ተፈጥሯል። እባክዎ በድጋሜ ይሞክሩ።");
       }
   });
 }
@@ -806,15 +810,21 @@ async function addNotification(username, data) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
 
+// Modified: Now sends a Telegram notification when transaction status changes
 async function notifyTransaction(username, tx) {
   let message;
   if (tx.type === 'deposit' && tx.status === 'approved') {
     message = 'ትዕዛዙ ተፈፅሟል። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
+    // Notify via Bot
+    await sendBotDepositStatus(username, `✅ *Deposit Approved!*\n\nYour deposit of *${tx.amount} Birr* has been approved.\n\n💰 Main Wallet: *${(await walletFor(username)).main} Birr*\n🎮 Play Wallet: *${(await walletFor(username)).play} Birr*`);
   } else if (tx.status === 'approved') {
     message = `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.`;
+    await sendBotDepositStatus(username, `✅ *Withdrawal Approved!*\n\nYour withdrawal of *${tx.amount} Birr* has been approved.`);
   } else {
     message = 'Your request was rejected by admin.';
+    await sendBotDepositStatus(username, `❌ *Deposit Rejected*\n\nYour deposit request of *${tx.amount} Birr* was rejected.\nReason: ${tx.reason || 'Invalid request'}`);
   }
+  
   await addNotification(username, {
     type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '', message
   });
@@ -929,6 +939,12 @@ async function transactionRequest(uid, data) {
     if (!committed) { try { await client.query('ROLLBACK'); } catch (_) {} }
     await trace(traceId, uid, 'tx.rollback', 'fail', { type, amount, reference: rawRef, reason: e.message });
     console.error('[TX-REQUEST] FAILED', { traceId, uid, type, amount, reason: e.message });
+    
+    // Notify user instantly if they use a used reference
+    if (e.message === 'reference-already-used') {
+        await sendBotDepositStatus(uid, "❌ *የተጠቀሙበት ማጣቀሻ (Reference)*\n\nይህንን የግብይት ማጣቀሻ ቀደም ሲል ተጠቅመዋል። እባክዎ አዲስ ግብይት ያድርጉ።");
+    }
+    
     return { ok: false, reason: e.message, traceId };
   } finally { client.release(); }
 
@@ -943,6 +959,9 @@ async function transactionRequest(uid, data) {
           if (statusCheck.rows[0]?.status === 'pending') {
             await addNotification(uid, { type: 'notification', message: 'ገንዘብ ገቢ ማድረግዎን የሚያሳይ ማስረጃ አልተገኘም።' });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
+            
+            // Notify user via Bot if no SMS is found
+            await sendBotDepositStatus(uid, `⏳ *ግብይትዎ በመጠባበቅ ላይ*\n\nየላኩት የቴሌብር SMS ከሰርቨሩ ጋር አልተገናኘም። አስተዳዳሪ በቅርቡ ያረጋግጠዋል። (Ref: ${rawRef})`);
           }
         } catch (e) { console.error('[TX-WAIT-MSG]', e.message); }
       })
@@ -1083,7 +1102,6 @@ async function autoApproveMatchingDeposits(smsId, smsRecord, parentTraceId = nul
   await trace(traceId, null, 'auto.sms', 'ok', { detail: { smsId, sender: smsRecord.sender || smsRecord.from } });
   const payment = parsePaymentRecord(smsRecord);
   
-  // If the sender is not trusted, reject. (This stops the bot's user_paste)
   if (!payment.isTrusted) { 
       await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference }); 
       return { ok: false, reason: 'untrusted-sender', traceId }; 
