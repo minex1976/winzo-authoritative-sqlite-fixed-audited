@@ -149,7 +149,7 @@ async function sendBotDepositStatus(uid, message, parseMode = 'Markdown') {
 }
 
 // ============================================================================
-// NEW: FULL AMHARIC GAME INSTRUCTIONS (used by /instruction)
+// FULL AMHARIC GAME INSTRUCTIONS (used by /instruction)
 // ============================================================================
 function getGameInstructionsParts() {
   return [
@@ -270,7 +270,7 @@ function getGameInstructionsParts() {
 }
 
 // ============================================================================
-// NEW: Deposit instructions with auto-copy + telebirr deep-link
+// Deposit instructions with callback for easy copy
 // ============================================================================
 function buildDepositInstructions(amount) {
   const text =
@@ -286,7 +286,7 @@ function buildDepositInstructions(amount) {
     text,
     reply_markup: {
       inline_keyboard: [
-        [{ text: `📋 ቁጥሩን ኮፒ ያድርጉ (${DEPOSIT_PHONE_NUMBER})`, copy_text: { text: DEPOSIT_PHONE_NUMBER } }],
+        [{ text: `📋 ቁጥሩን ኮፒ ያድርጉ (${DEPOSIT_PHONE_NUMBER})`, callback_data: 'copy_deposit_phone' }],
         [{ text: '📱 ቴሌብር መተግበሪያ ይክፈቱ', url: 'telebirr://' }],
         [{ text: '⬇️ ቴሌብር አልከፈተም? Play Store', url: 'https://play.google.com/store/apps/details?id=com.ethiotelecom.telebirr' }],
       ]
@@ -350,7 +350,7 @@ function setupTelegramBot() {
       safeBotSend(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
   });
 
-  // ── NEW: /instruction — sends 4 sequential HTML messages ──
+  // ── /instruction — sends 4 sequential HTML messages ──
   bot.onText(/\/instruction/, async (msg) => {
     if (!bot) return;
     const chatId = msg.chat.id;
@@ -395,6 +395,17 @@ function setupTelegramBot() {
       safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
   });
 
+  // ── Handle callback queries for the copy button ──
+  bot.on('callback_query', async (query) => {
+    if (query.data === 'copy_deposit_phone') {
+      await bot.answerCallbackQuery(query.id);
+      await bot.sendMessage(query.message.chat.id, 
+        `👇 <b>ቁጥሩን ለመኮረጅ ከታች ያለውን ቁጥር ይንኩ (Tap to copy):</b>\n\n<code>${DEPOSIT_PHONE_NUMBER}</code>`, 
+        { parse_mode: 'HTML' }
+      );
+    }
+  });
+
   bot.on('message', async (msg) => {
       try {
           const chatId = msg.chat.id;
@@ -415,7 +426,6 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              // ── NEW: use buildDepositInstructions with auto-copy + telebirr buttons ──
               const dep = buildDepositInstructions(amount);
               return safeBotSend(chatId, dep.text, { parse_mode: 'HTML', reply_markup: dep.reply_markup });
           }
