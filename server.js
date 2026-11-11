@@ -254,7 +254,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `1 - በቴሌብር ወደ 0923002900 ያስገቡ።\n2 - የላኩበትን የቴሌብር መልእክት (SMS) ኮፒ ያድርጉ\n3 - ኮፒ ያደረጉትን SMS መልእክት ከታች 👇 ፔስት ያድርጉት። ከዚያም ወደእኛ ይላኩት።`;
+              const instructions = `1 - በቴሌብር ወደ 0923002900 ያስገቡ።\n2 - የላኩበትን የቴሌብር መልእክት (SMS) ኮፒ ያድርጉ\n3 - ኮፒ ያደረጉትን SMS መልእክት ከታች ባለው ቦታ ላይ ፔስት ያድርጉትና ይላኩልን።\n 👇👇👇 ከታች paste ያድርጉ`;
               return safeBotSend(chatId, instructions);
           }
 
@@ -263,11 +263,11 @@ function setupTelegramBot() {
               const parsed = parsePaymentRecord({ text: smsText, sender: 'user_paste' });
               
               if (!parsed.reference) {
-                  return safeBotSend(chatId, "⚠️ Reference ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
+                  return safeBotSend(chatId, "⚠️ የ'Reference' ኮድ ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
               }
 
               if (Math.abs((parsed.amount || 0) - state.amount) > 1) {
-                  return safeBotSend(chatId, `⚠️ በመልእክቱ ላይ ያለው መጠን (${parsed.amount}) እና እርስዎ የገለፁት (${state.amount}) አይገጥምም።`);
+                  return safeBotSend(chatId, `⚠️ በፅሁፍ መልእክቱ ላይ ያለው መጠን (${parsed.amount}) እና እርስዎ የገለፁት (${state.amount}) ተመሳሳይ አይደለም።`);
               }
 
               botUserStates.delete(chatId);
@@ -292,11 +292,11 @@ function setupTelegramBot() {
               const textHash = crypto.createHash('sha256').update('user_paste|' + smsText).digest('hex');
               await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [smsId, 'user_paste', smsText, ts, textHash]);
 
-              safeBotSend(chatId, `✅ የ Sms መልእክቱ ተልኳል።  ትክክለኛነቱ ሲረጋገጥ ብሩ ወደዋሌትዎ ገቢ ይሆናል ። (Reference: ${parsed.reference})`);
+              safeBotSend(chatId, `✅ ትዕዛዙ ተልኳል።  እባክዎ ትንሽ ይጠብቁ። (Reference: ${parsed.reference})`);
           }
       } catch (err) {
           console.error('[BOT DEPOSIT ERROR]', err);
-          safeBotSend(msg.chat.id, "⚠️ ስህተት ተፈጥሯል። እባክዎ በድጋሜ ይሞክሩ።");
+          safeBotSend(msg.chat.id, "⚠️ እባክዎ በድጋሜ ይሞክሩ።");
       }
   });
 }
