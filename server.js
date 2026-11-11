@@ -110,10 +110,6 @@ const BOT_NAMES = [
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
 
-// ── NEW: deposit constants ──────────────────────────────────────────────────
-const DEPOSIT_PHONE_NUMBER = '0923002900';
-const DEPOSIT_ACCOUNT_NAME = 'ምንይሁን ማሞ';
-
 // ============================================================================
 // TELEGRAM BOT SETUP
 // ============================================================================
@@ -123,6 +119,7 @@ const botUserStates = new Map();
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
   console.log('✅ Telegram Bot initialized.');
+  
   bot.on('polling_error', (error) => console.error('[BOT POLLING ERROR]', error.message));
   bot.on('webhook_error', (error) => console.error('[BOT WEBHOOK ERROR]', error.message));
 }
@@ -136,6 +133,7 @@ async function safeBotSend(chatId, text, options = {}) {
   }
 }
 
+// New: Bridge function to notify users via Telegram Bot
 async function sendBotDepositStatus(uid, message, parseMode = 'Markdown') {
   if (!bot || !uid || !uid.startsWith('tg_')) return;
   try {
@@ -148,155 +146,9 @@ async function sendBotDepositStatus(uid, message, parseMode = 'Markdown') {
   }
 }
 
-// ============================================================================
-// FULL AMHARIC GAME INSTRUCTIONS (used by /instruction)
-// ============================================================================
-function getGameInstructionsParts() {
-  return [
-    // ── Part 1: Title + Number Game ───────────────────────────────────────
-    `<b>🎮 የዊንዞ ጨዋታዎች ሙሉ መመሪያ እና ህጎች</b>\n\n` +
-    `<b>1️⃣ የቁጥር ጨዋታ (Number Game) — Room 15 እና Room 30</b>\n\n` +
-    `<b>📌 አጠቃላይ መግለጫ</b>\n` +
-    `ከ 1 እስከ 200 ባሉት ቁጥሮች መካከል ቁጥር የሚመርጡበት ጨዋታ ነው። የመረጡት ቁጥር ከሚወጣው አሸናፊ ቁጥር ጋር ከተገናኘ <b>ያሸንፋሉ</b>።\n\n` +
-    `<b>🕐 የዙር ደረጃዎች</b>\n` +
-    `• መምረጫ — 30 ሰከንድ\n` +
-    `• ማሽከረከር — 3 ሰከንድ\n` +
-    `• ውጤት — 13 ሰከንድ\n\n` +
-    `<b>🎯 እንዴት መጫወት እንደሚቻል</b>\n` +
-    `1. ክፍሉን ይምረጡ፦\n` +
-    `   • <b>Room 15</b> → በየምርጫው 15 ብር\n` +
-    `   • <b>Room 30</b> → በየምርጫው 30 ብር\n` +
-    `2. በዙር እስከ <b>5 ቁጥሮች</b> መምረጥ ይችላሉ\n` +
-    `3. ከ <b>1 እስከ 200</b> ቁጥር ይምረጡ — አንድ ቁጥር ለ<b>አንድ ተጫዋች ብቻ</b> ነው\n` +
-    `4. ምርጫዎን ለመሻር (<b>Unpick</b>) በመጫን ገንዘብዎን መመለስ ይችላሉ\n` +
-    `5. ጨዋታውን ለቀው ከወጡ ምርጫዎችዎ <b>ሙሉ ተመላሽ</b> ይደረጋሉ\n\n` +
-    `<b>💰 የሽልማት አሰራር</b>\n` +
-    `• ጠቅላላ ሽልማት = (ጠቅላላ ምርጫዎች × የክፍሉ ዋጋ) × <b>80%</b>\n` +
-    `• አሸናፊዎች ሽልማቱን <b>በእኩል</b> ይካፈላሉ\n` +
-    `• ሽልማት ወደ <b>ዋና ዋሌት (Main Wallet)</b> ይገባል\n` +
-    `• ወዳጅዎን ጋብዘው ካሸኈ <b>5% ኮሚሽን</b> ያገኛሉ\n\n` +
-    `<b>🔒 ፍትሃዊነት</b>\n` +
-    `ጨዋታው <b>Provably Fair</b> ነው — ውጤቱ በምስጢር ዘር (server seed) ይወሰናል፣ በማንም ሊቀየር አይችልም።`,
-
-    // ── Part 2: Bingo ─────────────────────────────────────────────────────
-    `<b>2️⃣ ቢንጎ ጨዋታ (Bingo)</b>\n\n` +
-    `<b>📌 አጠቃላይ መግለጫ</b>\n` +
-    `በ <b>5×5 ካርድ</b> ላይ ቁጥሮች ምልክት የሚደረጉበት ጨዋታ ነው። የተወሰነ <b>ንድፍ (Pattern)</b> ሲሞላ ያሸንፋሉ።\n\n` +
-    `<b>🕐 የዙር ደረጃዎች</b>\n` +
-    `• መምረጫ — 45 ሰከንድ\n` +
-    `• መጥራት — በየ 3 ሰከንድ\n` +
-    `• ውጤት — 12 ሰከንድ\n\n` +
-    `<b>🎯 እንዴት መጫወት እንደሚቻል</b>\n` +
-    `1. የክፍሉን ዋጋ ይምረጡ፦ <b>15 ብር</b> ወይም <b>30 ብር</b>\n` +
-    `2. ከ <b>1 እስከ 400</b> ባሉት የካርድ ቁጥሮች መካከል <b>እስከ 2 ካርዶች</b> ይምረጡ\n` +
-    `   • ማንም ሰው ሊወስዳቸው የማይችላቸውን ባዶ ካርዶች ይምረጡ\n` +
-    `3. የተመረጠው ካርድ ዋጋ ከ <b>play ዋሌት</b>ዎ ይቀነሳል\n` +
-    `4. ካርድ መርጠው ካልረኩ <b>Unselect</b> በማድረግ ገንዘብዎን መመለስ ይችላሉ\n` +
-    `5. ቁጥሮች መጥራት ሲጀምሩ ካርድዎ ላይ ያሉትን ቁጥሮች ይከታተሉ\n\n` +
-    `<b>🏆 የማሸነፊያ ንድፎች (Patterns)</b>\n` +
-    `1. <b>Horizontal Line</b> — አንድ ሙሉ አግድም ረድፍ\n` +
-    `2. <b>Vertical Line</b> — አንድ ሙሉ ቁልቁል አምድ\n` +
-    `3. <b>Diagonal Line</b> — ከማዕዘን ወደ ማዕዘን ሰያፍ\n` +
-    `4. <b>Four Corners</b> — አራቱ የካርዱ ማዕዘኖች\n` +
-    `5. <b>Full House</b> — ሁሉም 25 ቁጥሮች (ሙሉ ካርድ)\n\n` +
-    `<b>💰 የሽልማት አሰራር</b>\n` +
-    `• ጠቅላላ ሽልማት = (ጠቅላላ ገቢ) × <b>80%</b>\n` +
-    `• አሸናፊዎች ሽልማቱን <b>በእኩል</b> ይካፈላሉ\n` +
-    `• ሽልማት ወደ <b>ዋና ዋሌት</b> ይገባል\n\n` +
-    `<b>📝 ማስታወሻ</b>\n` +
-    `• የእያንዳንዱ ካርድ <b>መሃል</b> ላይ <b>FREE (0)</b> አለ — ሁልጊዜ ምልክት የተደረገ ነው`,
-
-    // ── Part 3: Ladder ─────────────────────────────────────────────────────
-    `<b>3️⃣ ደረጃ ጨዋታ (Ladder — Snakes &amp; Ladders)</b>\n\n` +
-    `<b>📌 አጠቃላይ መግለጫ</b>\n` +
-    `ይህ <b>ባለ ሁለት ተጫዋች</b> ጨዋታ ነው። እያንዳንዱ ተጫዋች ዳይስ እየጣለ ወደ ፊት ይሄዳል። <b>በመጀመሪያ ወደ 100 የሚደርስ ያሸንፋል</b>።\n\n` +
-    `<b>🎯 እንዴት መጫወት እንደሚቻል</b>\n` +
-    `1. <b>ክፍል ይፍጠሩ</b> ወይም ካለው ክፍል <b>ይቀላቀሉ</b>\n` +
-    `2. <b>የጨዋታ ዋጋ ይምረጡ፦</b> 15 ብር ወይም 30 ብር\n` +
-    `3. <b>ብዜት (Multiplier) ይምረጡ፦</b> 1x እስከ 5x\n` +
-    `   • ለምሳሌ: 30 ብር × 3x = <b>90 ብር</b> (ሁለቱም ተጫዋቾች ይከፍላሉ)\n` +
-    `4. ተጋጣሚ ሲያገኙ የመጀመሪያው ተጫዋች ዳይስ ይጣላል\n` +
-    `5. <b>ዳይስ (1–6)</b> ወደ ፊት ይመራዎታል\n` +
-    `6. ተራ ተራ ይጫወታሉ — በመጀመሪያ ወደ 100 የሚደርስ <b>ያሸንፋል</b>\n\n` +
-    `<b>🐍🪜 እባቦች እና መሰላሎች</b>\n` +
-    `<b>እባቦች</b> (ወደ ታች ይመልሳሉ)፦ 71 → 50, 82 → 62, 56 → 36\n` +
-    `<b>መሰላሎች</b> (ወደ ላይ ያወጣሉ)፦ 24 → 44, 33 → 68\n\n` +
-    `<b>🐍 ልዩ ችሎታ — ምናባዊ እባብ (Virtual Snake)</b>\n` +
-    `• በተራዎ <b>10 ብር</b> በመክፈል <b>ምናባዊ እባብ</b> ማስቀመጥ ይችላሉ\n` +
-    `• ከ <b>21 እስከ 99</b> ባሉት ቦታዎች መምረጥ ይችላሉ\n` +
-    `• ከፍተኛ <b>2 ምናባዊ እባቦች</b> ብቻ\n` +
-    `• ተጋጣሚዎ በዚያ ቁጥር ላይ ካረፈ <b>20 ደረጃ ወደ ታች</b> ይመለሳል\n\n` +
-    `<b>💰 የሽልማት አሰራር</b>\n` +
-    `• ጠቅላላ ሽልማት = (የሁለቱም ተጫዋቾች ውርርድ) × <b>80%</b>\n` +
-    `• አሸናፊው <b>ሁሉንም</b> ሽልማት ይወስዳል\n` +
-    `• ሽልማት ወደ <b>ዋና ዋሌት</b> ይገባል\n\n` +
-    `<b>⏱ የ AFK (ከስራ ውጪ) ህጎች</b>\n` +
-    `• <b>45 ሰከንድ</b> — ማስጠንቀቂያ ይደርሳል\n` +
-    `• <b>2 ደቂቃ</b> — ተጋጣሚዎ 75%+ የማሸነፍ እድል ካለው → <b>ተሸንፈዋል</b>\n` +
-    `• <b>5 ደቂቃ</b> — በራስ-ሰር <b>ተሸንፈዋል</b> ተብሎ ይቆጠራል\n\n` +
-    `<b>📝 ማስታወሻ</b>\n` +
-    `• <b>Turn Skip</b> ማድረግ ይችላሉ (ተራዎን መዝለል)\n` +
-    `• ጨዋታውን ለቀው ከወጡ ተጋጣሚዎ ያሸንፋል\n` +
-    `• ጨዋታውን <b>ተመልሰው መቀላቀል</b> ይችላሉ (2 ደቂቃ ውስጥ)`,
-
-    // ── Part 4: General Rules ─────────────────────────────────────────────
-    `<b>📢 ለሁሉም ጨዋታዎች የሚመለከቱ አጠቃላይ ህጎች</b>\n\n` +
-    `<b>💳 ዋሌቶች (Wallets)</b>\n` +
-    `• <b>ዋና ዋሌት (Main Wallet)</b> — ገቢ፣ ወጪ እና የጨዋታ ሽልማቶች\n` +
-    `• <b>የጨዋታ ዋሌት (Play Wallet)</b> — ለጨዋታ ውርርድ ብቻ\n` +
-    `💡 ጨዋታ ለመጫወት ገንዘብ ከ<b>ዋና ዋሌት</b> ወደ <b>Play ዋሌት</b> ማስተላለፍ ይችላሉ (Transfer)።\n\n` +
-    `<b>🎁 የአዲስ ተጫዋች ጉርሻ</b>\n` +
-    `• <b>15 ብር</b> የእንኳን ደህና መጡ ጉርሻ\n` +
-    `⚠️ በ <b>5 ደቂቃ</b> ውስጥ መጠቀም አለብዎት (ካልተጠቀሙበት ይወገዳል)\n\n` +
-    `<b>🔒 የወጪ ገደብ</b>\n` +
-    `• አዲስ መለያ ከተከፈተ <b>24 ሰዓት</b> ውስጥ ወጪ (Withdraw) ማድረግ አይችሉም\n\n` +
-    `<b>🤝 ተጋባዥ ወዳጅ ስርዓት (Referral)</b>\n` +
-    `• ወዳጅዎን ጋብዘው <b>5% ኮሚሽን</b> ያገኛሉ\n` +
-    `• ወዳጅዎ በሚያሸንፍበት ጊዜ ሁሉ ኮሚሽን ወደ <b>ዋና ዋሌት</b>ዎ ይገባል\n` +
-    `• የግል ማገናኛ (referral link) ከ <b>/invite</b> ትዕዛዝ ያገኛሉ\n\n` +
-    `<b>🚫 ደህንነት</b>\n` +
-    `• <b>አንድ ሰው ከአንድ መለያ በላይ</b> መክፈት አይፈቀድም\n` +
-    `• ማጭበርበር ከተገኘ <b>መለያዎ ይታገዳል</b>\n` +
-    `• የተጠረጠረ እንቅስቃሴ ካለ ለደህንነት ግምገማ ይታገዳል\n\n` +
-    `<b>💬 ድጋፍ</b>\n` +
-    `• ለእርዳታ: <b>@winzosupportcenter</b>\n` +
-    `• ትዕዛዞች: /play, /balance, /deposit, /withdraw, /transfer, /invite, /instruction, /support\n\n` +
-    `<b>🎲 የጨዋታ ምርጫዎ ምን ይሁን?</b>\n` +
-    `• <b>Number Game</b> — ቀላል እና ፈጣን ለሚፈልጉ ⚡\n` +
-    `• <b>Bingo</b> — ትዕግስት ያለው እና ካርድ መከታተል ለሚወዱ 🎴\n` +
-    `• <b>Ladder</b> — ተጋጣሚ ጋር ቀጥታ ለመወዳደር 🎯\n\n` +
-    `<b>መልካም ጨዋታ! 🎉</b>`,
-  ];
-}
-
-// ============================================================================
-// Deposit instructions with callback for easy copy
-// ============================================================================
-function buildDepositInstructions(amount) {
-  const text =
-    `<b>💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ</b> 💵\n\n` +
-    `1ኛ — በቴሌብር ወደ <b>${DEPOSIT_PHONE_NUMBER}</b> ይላኩ (👤 ${DEPOSIT_ACCOUNT_NAME})።\n` +
-    `2ኛ — የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n` +
-    `3ኛ — ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።\n\n` +
-    `<b>💡 ምቹ ለማድረግ ከታች ያሉትን አዝራሮች ይጠቀሙ፦</b>\n` +
-    `• <b>📋 ኮፒ</b> — ቁጥሩን ወዲያውኑ ወደ clipboard ይገለብጣል\n` +
-    `• <b>📱 ቴሌብር ክፈት</b> — የቴሌብር መተግበሪያውን በቀጥታ ይከፍታል\n\n` +
-    `💰 <b>የላኩት መጠን:</b> <b>${amount} ብር</b>`;
-  return {
-    text,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: `📋 ቁጥሩን ኮፒ ያድርጉ (${DEPOSIT_PHONE_NUMBER})`, callback_data: 'copy_deposit_phone' }],
-        [{ text: '📱 ቴሌብር መተግበሪያ ይክፈቱ', url: 'telebirr://' }],
-        [{ text: '⬇️ ቴሌብር አልከፈተም? Play Store', url: 'https://play.google.com/store/apps/details?id=com.ethiotelecom.telebirr' }],
-      ]
-    }
-  };
-}
-
 function setupTelegramBot() {
   if (!bot) return;
-
+  
   bot.setMyCommands([
       { command: '/start', description: 'Start' },
       { command: '/register', description: 'Register' },
@@ -323,57 +175,44 @@ function setupTelegramBot() {
           }
       };
   };
-
+  
   bot.onText(/\/start/, (msg) => {
       botUserStates.delete(msg.chat.id);
       safeBotSend(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
   });
-
+  
   bot.onText(/\/play/, (msg) => {
       safeBotSend(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
   });
-
+  
   bot.onText(/\/register/, (msg) => {
       safeBotSend(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
   });
-
+  
   bot.onText(/\/withdraw/, (msg) => {
       safeBotSend(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
   });
-
+  
   bot.onText(/\/transfer/, (msg) => {
       safeBotSend(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
   });
-
+  
   bot.onText(/\/invite/, (msg) => {
       const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
       safeBotSend(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
   });
-
-  // ── /instruction — sends 4 sequential HTML messages ──
-  bot.onText(/\/instruction/, async (msg) => {
-    if (!bot) return;
-    const chatId = msg.chat.id;
-    botUserStates.delete(chatId);
-    try {
-      const parts = getGameInstructionsParts();
-      for (let i = 0; i < parts.length; i++) {
-        await safeBotSend(chatId, parts[i], { parse_mode: 'HTML' });
-        if (i < parts.length - 1) await new Promise(r => setTimeout(r, 350));
-      }
-      await safeBotSend(chatId, '🎲 ዝግጁ ነዎት? አሁን ይጫወቱ!', getMiniAppButton("Play Now 🎲", "play"));
-    } catch (e) {
-      console.error('[BOT INSTRUCTION]', e.message);
-      await safeBotSend(chatId, '⚠️ መመሪያውን ማሳየት አልቻልንም። እባክዎ እንደገና ይሞክሩ።');
-    }
+  
+  bot.onText(/\/instruction/, (msg) => {
+      const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
+      safeBotSend(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
-
+  
   bot.onText(/\/support/, (msg) => {
       safeBotSend(msg.chat.id, "Need help? Contact our support team: @winzosupportcenter");
   });
-
+  
   bot.onText(/\/balance/, async (msg) => {
-      const uid = `tg_${msg.from.id}`;
+      const uid = `tg_${msg.from.id}`; 
       try {
           const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
           if (res.rows.length === 0) {
@@ -395,45 +234,34 @@ function setupTelegramBot() {
       safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
   });
 
-  // ── Handle callback queries for the copy button ──
-  bot.on('callback_query', async (query) => {
-    if (query.data === 'copy_deposit_phone') {
-      await bot.answerCallbackQuery(query.id);
-      await bot.sendMessage(query.message.chat.id, 
-        `👇 <b>ቁጥሩን ለመኮረጅ ከታች ያለውን ቁጥር ይንኩ (Tap to copy):</b>\n\n<code>${DEPOSIT_PHONE_NUMBER}</code>`, 
-        { parse_mode: 'HTML' }
-      );
-    }
-  });
-
   bot.on('message', async (msg) => {
       try {
           const chatId = msg.chat.id;
           const state = botUserStates.get(chatId);
-
+          
           if (!state || !msg.text || msg.text.startsWith('/')) return;
 
           const text = msg.text.trim();
 
           if (state.state === 'WAITING_FOR_AMOUNT') {
               const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
-
+              
               if (isNaN(amount) || amount < 15) {
                   return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን (ከ 15 ብር በላይ) ያስገቡ።");
               }
-
+              
               state.amount = amount;
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const dep = buildDepositInstructions(amount);
-              return safeBotSend(chatId, dep.text, { parse_mode: 'HTML', reply_markup: dep.reply_markup });
+              const instructions = `💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ💵\n1ኛ - በቴሌብር ወደ 0923002900 ይላኩ (👤 ምንይሁን ማሞ)።\n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
+              return safeBotSend(chatId, instructions);
           }
 
           if (state.state === 'WAITING_FOR_SMS') {
               const smsText = text;
               const parsed = parsePaymentRecord({ text: smsText, sender: 'user_paste' });
-
+              
               if (!parsed.reference) {
                   return safeBotSend(chatId, "⚠️ የላኩበትን 'Reference' ኮድ ማግኘት አልቻልንም። እባክዎ በትክክል መላክዎትን ያረጋግጡ።");
               }
@@ -455,7 +283,8 @@ function setupTelegramBot() {
               });
 
               if (!txRes.ok) {
-                  return;
+                  // The error handling is now inside transactionRequest, which will alert the user via bot if needed
+                  return; 
               }
 
               const smsId = crypto.randomUUID();
@@ -981,10 +810,12 @@ async function addNotification(username, data) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
 
+// Modified: Now sends a Telegram notification when transaction status changes
 async function notifyTransaction(username, tx) {
   let message;
   if (tx.type === 'deposit' && tx.status === 'approved') {
     message = 'ትዕዛዙ ተፈፅሟል። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
+    // Notify via Bot
     await sendBotDepositStatus(username, `✅ *Deposit Approved!*\n\nYour deposit of *${tx.amount} Birr* has been approved.\n\n💰 Main Wallet: *${(await walletFor(username)).main} Birr*\n🎮 Play Wallet: *${(await walletFor(username)).play} Birr*`);
   } else if (tx.status === 'approved') {
     message = `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.`;
@@ -993,6 +824,7 @@ async function notifyTransaction(username, tx) {
     message = 'Your request was rejected by admin.';
     await sendBotDepositStatus(username, `❌ *Deposit Rejected*\n\nYour deposit request of *${tx.amount} Birr* was rejected.\nReason: ${tx.reason || 'Invalid request'}`);
   }
+  
   await addNotification(username, {
     type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '', message
   });
@@ -1107,9 +939,12 @@ async function transactionRequest(uid, data) {
     if (!committed) { try { await client.query('ROLLBACK'); } catch (_) {} }
     await trace(traceId, uid, 'tx.rollback', 'fail', { type, amount, reference: rawRef, reason: e.message });
     console.error('[TX-REQUEST] FAILED', { traceId, uid, type, amount, reason: e.message });
+    
+    // Notify user instantly if they use a used reference
     if (e.message === 'reference-already-used') {
         await sendBotDepositStatus(uid, "❌ *Reference Error*\n\nይህ Reference code ከዚህ በፊት አገልግሎት ላይ የዋለ ነው።");
     }
+    
     return { ok: false, reason: e.message, traceId };
   } finally { client.release(); }
 
@@ -1124,6 +959,8 @@ async function transactionRequest(uid, data) {
           if (statusCheck.rows[0]?.status === 'pending') {
             await addNotification(uid, { type: 'notification', message: 'እባክዎ፣ ገንዘብ ገቢ ማድረግዎን ያረጋግጡና በድጋሚ ይሞክሩ።' });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
+            
+            // Notify user via Bot if no SMS is found
             await sendBotDepositStatus(uid, `⏳ *እባክዎ ትንሽ ይጠብቁ...*\n\nገንዘብ መላክዎትን የሚያሳይ መልእክት ወደ ሲሰተም አልደረሰም። (Ref: ${rawRef})`);
           }
         } catch (e) { console.error('[TX-WAIT-MSG]', e.message); }
@@ -1264,10 +1101,12 @@ async function autoApproveMatchingDeposits(smsId, smsRecord, parentTraceId = nul
   const traceId = parentTraceId || newTraceId();
   await trace(traceId, null, 'auto.sms', 'ok', { detail: { smsId, sender: smsRecord.sender || smsRecord.from } });
   const payment = parsePaymentRecord(smsRecord);
-  if (!payment.isTrusted) {
-      await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference });
-      return { ok: false, reason: 'untrusted-sender', traceId };
+  
+  if (!payment.isTrusted) { 
+      await trace(traceId, null, 'auto.sender', 'fail', { reason: 'untrusted-sender', reference: payment.reference }); 
+      return { ok: false, reason: 'untrusted-sender', traceId }; 
   }
+  
   if (!payment.reference) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'no-reference' }); return { ok: false, reason: 'no-reference', traceId }; }
   if (!isValidReference(payment.reference)) { await trace(traceId, null, 'auto.ref', 'fail', { reason: 'invalid-reference', reference: payment.reference }); return { ok: false, reason: 'invalid-reference', traceId }; }
   const smsAt = Number(smsRecord.timestamp || now());
@@ -1782,24 +1621,29 @@ function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.rand
 function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
   const entries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!entries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
+
   const entryFingerprint = crypto.createHash('sha256').update(entries.map(e => e.id).join(',')).digest('hex');
   const effectiveSeed = crypto.createHmac('sha256', Buffer.from(round.serverSeed, 'hex'))
     .update(`bingo:${round.id}:${round.roundNumber}:${entryFingerprint}`)
     .digest('hex');
   const rng = new SeededRNG(effectiveSeed);
+
   const shuffledEntries = seededShuffle([...entries], rng);
   const designated = shuffledEntries.slice(0, Math.min(guaranteedWinnerCount, shuffledEntries.length));
   const winnerCard = designated[0];
+
   const g = winnerCard.grid;
   const patternChoices = [];
   for (let r = 0; r < 5; r++) patternChoices.push([0,1,2,3,4].map(c => g[r][c]));
   for (let c = 0; c < 5; c++) patternChoices.push([0,1,2,3,4].map(r => g[r][c]));
   patternChoices.push([0,1,2,3,4].map(i => g[i][i]));
   patternChoices.push([0,1,2,3,4].map(i => g[i][4 - i]));
+
   const chosen = patternChoices[rng.nextInt(patternChoices.length)];
   const mustCall = chosen.filter(n => n > 0);
   const allNumbers = Array.from({ length: 75 }, (_, i) => i + 1);
   const fillerPool = seededShuffle(allNumbers.filter(n => !mustCall.includes(n)), rng);
+
   const pool = [];
   let mustIdx = 0;
   const maxMustPos = Math.min(30, mustCall.length * 5);
@@ -2070,6 +1914,7 @@ async function bingoFinish(round,winners){
     await db.query('UPDATE bingo_rounds SET phase=$1,completed_at=$2,winners=$3::jsonb WHERE id=$4',['results',Date.now(),JSON.stringify(eligible),round.id]);
     await db.query('COMMIT');
   }catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}finally{db.release();}
+
   round.winners=eligible;
   const winnersPayload = eligible.map(w => ({ name: w.name, prize: w.prize, cardNumber: w.cardNumber, grid: w.grid, pattern: w.pattern }));
   const calledSnapshot = [...round.called];
@@ -2207,18 +2052,22 @@ function startLadderAbandonGrace(room, leaverUid) {
         const leaverPos = room.players[leaverUid]?.pos || 1;
         const remainingPos = room.players[remainingUid]?.pos || 1;
         const remainingChance = calculateLadderWinChance(remainingPos, leaverPos);
+
         if (remainingChance < 0.75) {
             awardLadderWin(room, remainingUid);
             return;
         }
+
         room.abandonment = {
             leaverUid, remainingUid,
             at: Date.now(),
             deadline: Date.now() + LADDER_ABANDON_GRACE_MS
         };
         if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+
         notifyLadderPlayer(room.id, remainingUid, LADDER_OPP_WARN_MESSAGE);
         notifyLadderPlayer(room.id, leaverUid, LADDER_AFK_WARN_MESSAGE);
+
         try { broadcastLadder(room); } catch (e) {}
         console.log(`[LADDER-GRACE] ${room.id}: ${leaverUid} abandoned, ${remainingUid} has ${(remainingChance*100).toFixed(1)}% chance.`);
     } catch (e) { console.error('[LADDER-GRACE]', e.message); }
@@ -2286,32 +2135,42 @@ function broadcastLadderLobby() {
 async function executeLadderRoll(room, uid) {
     if (!room || room.phase !== 'playing' || room.currentTurn !== uid) return;
     if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+
     resetLadderActivity(room, uid);
+
     const dice = Math.floor(Math.random() * 6) + 1;
     room.lastRoll = dice;
     const p = room.players[uid];
     if (!p) return;
+
     const startPos = p.pos;
     const actualDiceTarget = Math.min(startPos + dice, LADDER_TARGET);
     const path = [];
     for (let i = startPos + 1; i <= actualDiceTarget; i++) path.push(i);
+
     const snakes = getCombinedSnakes(room);
     let finalPos = actualDiceTarget;
     if (snakes[actualDiceTarget]) { finalPos = snakes[actualDiceTarget]; path.push(finalPos); }
     else if (LADDER_LADDERS[actualDiceTarget]) { finalPos = LADDER_LADDERS[actualDiceTarget]; path.push(finalPos); }
+
     p.pos = finalPos;
     room.lastMovePath = [startPos, ...path];
     room.phase = 'moving';
     try { broadcastLadder(room); } catch (e) {}
+
     setTimeout(() => {
         try {
             if (!room.players[uid]) return;
-            if (p.pos >= LADDER_TARGET) { awardLadderWin(room, uid); return; }
+            if (p.pos >= LADDER_TARGET) {
+                awardLadderWin(room, uid);
+                return;
+            }
             room.phase = 'playing';
             room.lastMovePath = null;
             room.currentTurn = (uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
             resetLadderActivity(room, room.currentTurn);
             try { broadcastLadder(room); } catch (e) {}
+
             if (room.currentTurn && room.currentTurn.startsWith('__bot_')) {
                 setTimeout(() => {
                     try {
@@ -2335,6 +2194,7 @@ async function handleLadderLeave(ws, isDisconnect = false) {
             if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
             return;
         }
+
         if (room.pendingJoiners.has(ws.uid)) {
             room.pendingJoiners.delete(ws.uid);
             ws._ladderRoomId = null;
@@ -2342,6 +2202,7 @@ async function handleLadderLeave(ws, isDisconnect = false) {
             try { broadcastLadder(room); } catch (e) {}
             return;
         }
+
         if (room.phase === 'waiting' || room.phase === 'betting') {
             if (room.creatorUid === ws.uid) {
                 const joinerWs = Array.from(conns.get(room.joinerUid) || []).find(w => w._ladderRoomId === roomId);
@@ -2373,10 +2234,13 @@ async function handleLadderLeave(ws, isDisconnect = false) {
             try { broadcastLadderLobby(); } catch (e) {}
             return;
         }
+
         ws._ladderRoomId = null;
         if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
         try { broadcastLadderLobby(); } catch (e) {}
-    } catch (e) { console.error('[LADDER-LEAVE]', e.message); }
+    } catch (e) {
+        console.error('[LADDER-LEAVE]', e.message);
+    }
 }
 
 async function handleLadderRejoin(ws, roomId) {
@@ -2384,8 +2248,10 @@ async function handleLadderRejoin(ws, roomId) {
         const room = ladderRooms.get(roomId);
         if (!room) return send(ws, { type: 'ladder-error', message: 'Room no longer exists' });
         if (!room.players[ws.uid]) return send(ws, { type: 'ladder-error', message: 'You are not a player in this room' });
+
         ws._ladderRoomId = roomId;
         ws._ladderLobby = false;
+
         if (room.abandonment && room.abandonment.leaverUid === ws.uid && room.phase === 'playing') {
             room.abandonment = null;
             room.phase = 'playing';
@@ -2405,15 +2271,18 @@ setInterval(() => {
         for (const [roomId, room] of ladderRooms) {
             try {
                 if (!room) continue;
+
                 if (room.abandonment && room.phase === 'playing' && t >= room.abandonment.deadline) {
                     console.log(`[LADDER-GRACE-EXPIRED] ${roomId}: awarding ${room.abandonment.remainingUid}`);
                     awardLadderWin(room, room.abandonment.remainingUid);
                     continue;
                 }
+
                 if (room.phase === 'playing' && room.currentTurn && !room.currentTurn.startsWith('__bot_')) {
                     const lastAct = room.lastActionAt?.[room.currentTurn] || room.roundStartedAt || 0;
                     const inactiveMs = t - lastAct;
                     const opponentUid = room.currentTurn === room.creatorUid ? room.joinerUid : room.creatorUid;
+
                     if (inactiveMs >= LADDER_INACTIVITY_WARN_MS && !room.inactivityWarned?.[room.currentTurn]) {
                         room.inactivityWarned = room.inactivityWarned || {};
                         room.inactivityWarned[room.currentTurn] = true;
@@ -2421,6 +2290,7 @@ setInterval(() => {
                         if (opponentUid) notifyLadderPlayer(roomId, opponentUid, LADDER_OPP_WARN_MESSAGE);
                         console.log(`[LADDER-AFK-WARN] ${roomId}: ${room.currentTurn} idle ${Math.floor(inactiveMs/1000)}s`);
                     }
+
                     if (inactiveMs >= LADDER_INACTIVITY_FORFEIT_75_MS && opponentUid) {
                         const inactivePos = room.players[room.currentTurn]?.pos || 1;
                         const opponentPos = room.players[opponentUid]?.pos || 1;
@@ -2431,6 +2301,7 @@ setInterval(() => {
                             continue;
                         }
                     }
+
                     if (inactiveMs >= LADDER_INACTIVITY_MAX_MS && opponentUid) {
                         console.log(`[LADDER-AFK-FORFEIT-MAX] ${roomId}: ${room.currentTurn} forfeited (5min)`);
                         awardLadderWin(room, opponentUid);
@@ -2449,6 +2320,7 @@ setInterval(() => {
             const bName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
             const bUid = `__bot_${safeUser(bName)}`;
             const bet = LADDER_STAKES[Math.floor(Math.random() * LADDER_STAKES.length)];
+
             ensureUser(bUid, null, true).then(() => {
                 const roomId = 'L' + crypto.randomBytes(3).toString('hex').toUpperCase();
                 const room = {
@@ -2459,12 +2331,14 @@ setInterval(() => {
                   lastActionAt: {}, inactivityWarned: {}, abandonment: null,
                   roundStartedAt: Date.now()
                 };
+
                 room._waitTimeout = setTimeout(() => {
                   if (room.phase === 'waiting') {
                     ladderRooms.delete(room.id);
                     broadcastLadderLobby();
                   }
                 }, 5 * 60 * 1000);
+
                 ladderRooms.set(roomId, room);
                 broadcastLadderLobby();
             }).catch(e => console.error('[LADDER-BOT-CREATE]', e.message));
@@ -2498,6 +2372,7 @@ wss.on('connection', (ws, req) => {
   ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false; ws.lastAdminActivity = 0;
   ws._ladderLobby = false;
   ws._ladderRoomId = null;
+
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', async raw => {
     const size = raw?.length || raw?.byteLength || 0;
@@ -2506,6 +2381,7 @@ wss.on('connection', (ws, req) => {
     try { await handle(ws, m); }
     catch (e) { console.error('[WS-MSG]', { type: m?.type, err: e.message }); send(ws, { type: 'error', message: 'server-error' }); }
   });
+
   ws.on('close', async (code, reason) => {
     clearTimeout(ws.authTimer);
     const activeForIp = Math.max(0, Number(wsIpConnections.get(ws._ipKey) || 1) - 1);
@@ -2560,6 +2436,7 @@ async function handle(ws, m) {
       'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
       [Number(telegramUser.id)]
     );
+
     if (m.authMode === 'login' && !existingAccount.rows.length) {
       send(ws, { type: 'login-required-signup', message: 'No account exists for this Telegram user. Please choose Sign Up first.' });
       return;
@@ -2573,6 +2450,7 @@ async function handle(ws, m) {
     }
     const resolved = await resolveTelegramUser(telegramUser, m.authMode === 'signup' ? (m.ref || null) : null);
     if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed', reason: 'identity-failed' });
+
     const uid = resolved.uid;
     const isBlockedRes = await pool.query('SELECT blocked, block_reason, blocked_at FROM users WHERE username = $1', [uid]);
     if (isBlockedRes.rows[0]?.blocked) {
@@ -2580,6 +2458,7 @@ async function handle(ws, m) {
       try { ws.close(4003, 'account-blocked'); } catch {}
       return;
     }
+
     const clientIp = websocketClientIp(ws);
     await ensureUser(uid, m.ref || null, false, {
       telegram_id: telegramUser.id,
@@ -2590,23 +2469,29 @@ async function handle(ws, m) {
     if (m.authMode === 'signup') {
       await pool.query(`UPDATE users SET phone_number = (SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1), updated_at = $2 WHERE username = $3`, [Number(telegramUser.id), now(), uid]);
     }
+
     const ipHash = clientIp ? hashWithRotatingSalt(clientIp) : null;
     detectMultiAccount(uid, ipHash, m.deviceFingerprint || null).catch(e => console.error('[MULTI-ACCOUNT]', e.message));
+
     clearTimeout(ws.authTimer);
     ws.authenticatedAt = now(); ws.uid = uid; ws.authed = true;
     ws.displayName = resolved.user.display_name;
+
     let set = conns.get(uid);
     if (!set) { set = new Set(); conns.set(uid, set); }
     set.add(ws);
     await pool.query('UPDATE users SET last_seen_at = $1 WHERE username = $2', [now(), uid]);
+
     const holdRes = await pool.query('SELECT withdrawal_hold_until FROM users WHERE username = $1', [uid]);
     const sessionToken = issueSessionToken(uid);
     send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
+
     await sendPendingBroadcasts(uid, ws);
     await expireSignupBonus(uid);
     const bonusInfo = await pool.query('SELECT signup_bonus_remaining, signup_bonus_expires_at FROM users WHERE username=$1',[uid]);
     if (Number(bonusInfo.rows[0]?.signup_bonus_remaining||0)>0 && Number(bonusInfo.rows[0]?.signup_bonus_expires_at||0)>now()) send(ws,{type:'signup-bonus',amount:Number(bonusInfo.rows[0].signup_bonus_remaining),expiresAt:Number(bonusInfo.rows[0].signup_bonus_expires_at)});
     send(ws, { type: 'wallet', ...(await walletFor(uid)) });
+
     const txSnap = await pool.query("SELECT id, type, amount, status, timestamp FROM transactions WHERE wallet_uid = $1 AND status = 'pending' ORDER BY timestamp DESC LIMIT 10", [uid]);
     send(ws, { type: 'pending-transactions', transactions: txSnap.rows.map(t => ({ ...t, timestamp: Number(t.timestamp), amount: Number(t.amount) })) });
     return;
@@ -2696,6 +2581,7 @@ async function handle(ws, m) {
     ws._ladderLobby = false;
     broadcastLadder(room);
     broadcastLadderLobby();
+
     setTimeout(() => {
       try {
         if (room.phase === 'waiting') {
@@ -2716,6 +2602,7 @@ async function handle(ws, m) {
     room.pendingJoiners.set(ws.uid, ws.displayName);
     ws._ladderRoomId = room.id;
     ws._ladderLobby = false;
+
     if (room.creatorUid.startsWith('__bot_')) {
         setTimeout(async () => {
            try {
@@ -2771,12 +2658,15 @@ async function handle(ws, m) {
   if (m.type === 'ladder-start') {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (!room || room.phase !== 'betting') return;
+
     const cost = room.bet * room.multiplier;
     const cBal = await walletFor(room.creatorUid);
     const jBal = await walletFor(room.joinerUid);
+
     if ((!room.creatorUid.startsWith('__bot_') && cBal.play < cost) || (!room.joinerUid.startsWith('__bot_') && jBal.play < cost)) {
       return send(ws, { type: 'ladder-error', message: 'Insufficient play balance.' });
     }
+
     if (!room.creatorUid.startsWith('__bot_')) {
         const d1 = await debit(room.creatorUid, cost);
         if (!d1.ok) return send(ws, { type: 'ladder-error', message: 'Failed to deduct creator balance.' });
@@ -2788,6 +2678,7 @@ async function handle(ws, m) {
             return send(ws, { type: 'ladder-error', message: 'Failed to deduct joiner balance.' });
         }
     }
+
     room.prizePool = cost * 2;
     room.phase = 'playing';
     room.currentTurn = room.creatorUid;
@@ -2798,6 +2689,7 @@ async function handle(ws, m) {
     room.abandonment = null;
     room.roundStartedAt = Date.now();
     broadcastLadder(room);
+
     if (room.currentTurn.startsWith('__bot_')) {
         setTimeout(() => {
           try {
@@ -2839,14 +2731,17 @@ async function handle(ws, m) {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (room && room.phase === 'playing' && room.currentTurn === ws.uid) {
       if (room._timeout) { clearTimeout(room._timeout); room._timeout = null; }
+
       const opponent = (ws.uid === room.creatorUid) ? room.joinerUid : room.creatorUid;
       room.currentTurn = opponent;
       room.lastActionAt = room.lastActionAt || {};
       room.lastActionAt[opponent] = Date.now();
       if (room.inactivityWarned) room.inactivityWarned[opponent] = false;
       broadcastLadder(room);
+
       const oppWs = Array.from(conns.get(opponent) || []).find(w => w._ladderRoomId === room.id);
       if (oppWs) send(oppWs, { type: 'ladder-notification', message: 'Opponent skipped their turn!' });
+
       if (room.currentTurn.startsWith('__bot_')) {
           setTimeout(() => {
             try {
@@ -2862,20 +2757,27 @@ async function handle(ws, m) {
   if (m.type === 'ladder-attack') {
     const room = ladderRooms.get(ws._ladderRoomId);
     if (!room || room.phase !== 'playing' || room.currentTurn !== ws.uid) return;
+
     const p = room.players[ws.uid];
     if (!p.virtualSnakes) p.virtualSnakes = [];
     if (p.virtualSnakes.length >= 2) return send(ws, { type: 'ladder-error', message: 'Max 2 virtual snakes allowed.' });
+
     const head = Number(m.head);
     if (!Number.isInteger(head) || head < 21 || head > 99) return send(ws, { type: 'ladder-error', message: 'Invalid snake position. Choose 21-99.' });
+
     if (getCombinedSnakes(room)[head] || LADDER_LADDERS[head] || head === 100) return send(ws, { type: 'ladder-error', message: 'Position occupied by another snake or ladder.' });
+
     const cost = 10;
     const w = await walletFor(ws.uid);
     if (w.play < cost) return send(ws, { type: 'ladder-error', message: 'Insufficient play balance for attack.' });
+
     const deduct = await debit(ws.uid, cost);
     if (!deduct.ok) return send(ws, { type: 'ladder-error', message: 'Failed to deduct balance.' });
+
     p.virtualSnakes.push(head);
     broadcastLadder(room);
     send(ws, { type: 'ladder-notification', message: `Virtual snake placed at ${head}! -10 Birr` });
+
     return;
   }
   if (m.type === 'ladder-leave') {
@@ -3008,6 +2910,9 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '3mb' }));
 
+// ============================================================================
+// TELEGRAM BOT WEBHOOK ROUTE
+// ============================================================================
 if (BOT_TOKEN) {
   app.post(`/bot${BOT_TOKEN}`, (req, res) => {
     try {
@@ -3030,6 +2935,7 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
     console.warn('[SECURITY] Unauthorized SMS attempt.');
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
+
   const traceId = newTraceId();
   try {
     const { from, text } = req.body || {};
@@ -3583,7 +3489,7 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
   console.log(`🎁 Signup bonus for new users: ${SIGNUP_BONUS} Birr`);
-
+  
   if (BOT_TOKEN) {
     setupTelegramBot();
     const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
