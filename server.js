@@ -231,7 +231,7 @@ function setupTelegramBot() {
   bot.onText(/\/deposit/, (msg) => {
       const chatId = msg.chat.id;
       botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
-      safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን ከታች ይፃፉ");
+      safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
   });
 
   bot.on('message', async (msg) => {
@@ -254,7 +254,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `1 - በቴሌብር ወደ 0923002900 ያስገቡ።\n2 - የላኩበትን የቴሌብር መልእክት (SMS) ኮፒ ያድርጉ\n3 - ኮፒ ያደረጉትን SMS መልእክት ከታች ባለው ቦታ ላይ ፔስት ያድርጉትና ይላኩልን።\n 👇👇👇 ከታች paste ያድርጉ`;
+              const instructions = `💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ💵\n1ኛ - በቴሌብር ወደ 0923002900 ይላኩ (👤 ምንይሁን ማሞ)።\n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
               return safeBotSend(chatId, instructions);
           }
 
@@ -263,7 +263,7 @@ function setupTelegramBot() {
               const parsed = parsePaymentRecord({ text: smsText, sender: 'user_paste' });
               
               if (!parsed.reference) {
-                  return safeBotSend(chatId, "⚠️ የ'Reference' ኮድ ማግኘት አልቻልንም። እባክዎ ሙሉ የቴሌብር SMS መልእክቱን መላክዎን ያረጋግጡ።");
+                  return safeBotSend(chatId, "⚠️ የላኩበትን 'Reference' ኮድ ማግኘት አልቻልንም። እባክዎ በትክክል መላክዎትን ያረጋግጡ።");
               }
 
               if (Math.abs((parsed.amount || 0) - state.amount) > 1) {
@@ -271,7 +271,7 @@ function setupTelegramBot() {
               }
 
               botUserStates.delete(chatId);
-              safeBotSend(chatId, "⏳ መልእክቱን ተቀብለናል። በማመሳከር ላይ...");
+              safeBotSend(chatId, "⏳ ትእዛዝዎ ተልኳል ። Checking...");
 
               const uid = `tg_${msg.from.id}`;
 
@@ -296,7 +296,7 @@ function setupTelegramBot() {
           }
       } catch (err) {
           console.error('[BOT DEPOSIT ERROR]', err);
-          safeBotSend(msg.chat.id, "⚠️ እባክዎ በድጋሜ ይሞክሩ።");
+          safeBotSend(msg.chat.id, "⚠️ እባክዎ እንደገና ይሞክሩ።");
       }
   });
 }
@@ -942,7 +942,7 @@ async function transactionRequest(uid, data) {
     
     // Notify user instantly if they use a used reference
     if (e.message === 'reference-already-used') {
-        await sendBotDepositStatus(uid, "❌ *የተጠቀሙበት ማጣቀሻ (Reference)*\n\nይህ Reference code ከዚህ በፊት አገልግሎት ላይ ውሏል። እባክዎ ሌላ ይሞክሩ።");
+        await sendBotDepositStatus(uid, "❌ *Reference Error*\n\nይህ Reference code ከዚህ በፊት አገልግሎት ላይ የዋለ ነው።");
     }
     
     return { ok: false, reason: e.message, traceId };
@@ -957,11 +957,11 @@ async function transactionRequest(uid, data) {
         try {
           const statusCheck = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
           if (statusCheck.rows[0]?.status === 'pending') {
-            await addNotification(uid, { type: 'notification', message: 'ገንዘብ ገቢ ማድረግዎን የሚያሳይ ማስረጃ አልተገኘም።' });
+            await addNotification(uid, { type: 'notification', message: 'እባክዎ፣ ገንዘብ ገቢ ማድረግዎን ያረጋግጡና በድጋሚ ይሞክሩ።' });
             await trace(traceId, uid, 'tx.wait-msg', 'ok', { txId });
             
             // Notify user via Bot if no SMS is found
-            await sendBotDepositStatus(uid, `⏳ *ግብይትዎ በመጠባበቅ ላይ*\n\nየላኩት የቴሌብር SMS ከሰርቨሩ ጋር አልተገናኘም። አስተዳዳሪ በቅርቡ ያረጋግጠዋል። (Ref: ${rawRef})`);
+            await sendBotDepositStatus(uid, `⏳ *እባክዎ ትንሽ ይጠብቁ...*\n\nገንዘብ መላክዎትን የሚያሳይ መልእክት ወደ ሲሰተም አልደረሰም። (Ref: ${rawRef})`);
           }
         } catch (e) { console.error('[TX-WAIT-MSG]', e.message); }
       })
