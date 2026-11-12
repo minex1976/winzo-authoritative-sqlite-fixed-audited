@@ -107,7 +107,7 @@ const BOT_NAMES = [
   "Amanuel", "Sofia", "Zelalem", "Alem", "Beka", "Chala", "Desta", "Eyerus"
 ];
 
-const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
+const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom', 'user_paste'];
 const DAY = 86400000;
 
 // ============================================================================
@@ -254,8 +254,11 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ💵\n1ኛ - በቴሌብር ወደ 0923002900 ይላኩ (👤 ምንይሁን ማሞ)።\n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
-              return safeBotSend(chatId, instructions);
+              // Wrapped the phone number in <code> tags so it is copyable on tap
+              const instructions = `💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ💵\n1ኛ - በቴሌብር ወደ <code>0923002900</code> ይላኩ (👤 ምንይሁን ማሞ)።\n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
+              
+              // Added parse_mode: 'HTML'
+              return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
           }
 
           if (state.state === 'WAITING_FOR_SMS') {
@@ -1064,16 +1067,24 @@ function isValidReference(ref) {
 function parsePaymentRecord(r) {
   const text = String(r.text || r.message || '').replace(/\s+/g, ' ').trim();
   let reference = r.reference || '';
+  
   if (!reference && text) {
-    const m = text.match(/(?:transaction|txn|ref(?:erence)?)\s*(?:number|code|no\.?|id)?\s*(?:is|:|\-)?\s*([A-Z0-9]{6,})/i)
+    // 1. English pattern
+    // 2. Amharic pattern for "የሂሳብ እንቅስቃሴ ቁጥርዎ"
+    const m = text.match(/(?:transaction|txn|ref(?:erence)?|የሂሳብ እንቅስቃሴ ቁጥር(?:ዎ)?)\s*(?:number|code|no\.?|id)?\s*(?:is|:|\-)?\s*([A-Z0-9]{6,})/i)
            || text.match(/receipt\/([A-Za-z0-9]{6,24})/i);
     if (m) reference = m[1];
   }
+  
   let amount = Number(r.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    const m = text.match(/(?:ETB|Birr|ብር|Br\b|Amt|Amount)\s*[:\-]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+    // 1. Currency prefix pattern (English: ETB 300)
+    // 2. Currency suffix pattern (Amharic: 300.00 ብር)
+    const m = text.match(/(?:ETB|Birr|ብር|Br\b|Amt|Amount)\s*[:\-]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
+           || text.match(/([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር|Br\b)/i);
     if (m) amount = Number(String(m[1]).replace(/,/g, ''));
   }
+  
   return { reference: normalizePaymentReference(reference), amount: Number.isFinite(amount) ? amount : 0, isTrusted: isTrustedSmsSender(r), text };
 }
 async function logAutoActivity(kind, smsId, reference, amount, txId, reason) {
