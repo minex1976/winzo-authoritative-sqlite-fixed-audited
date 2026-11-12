@@ -259,7 +259,7 @@ function setupTelegramBot() {
               botUserStates.set(chatId, state);
 
               // Wrapped the phone number in <code> tags so it is copyable on tap
-              const instructions = `💵 ከታች ባለው ቅደም ተከተል መሰረት ገቢ ማድረግ ይችላሉ💵\n1ኛ - በቴሌብር ወደ <code>0923002900</code> ይላኩ (👤 ምንይሁን ማሞ)።\n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
+              const instructions = `💵 ገንዘብ ገቢ ለማድረግ: \n1ኛ - በቴሌብር ገንዘብ ገቢ ያድርጉ።\n <code>0923002900</code>\n 🔑 Minyihun Mamo \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
               
               // Added parse_mode: 'HTML'
               return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
