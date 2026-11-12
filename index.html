@@ -957,8 +957,8 @@
     </div>
     <div class="withdraw-modal" id="withdrawModal">
         <div class="modal-content">
-            <h3>ከዋናው ዋሌት ወጪ ማዘዣ</h3>
-            <div class="balance-info">ያለው የብር መጠን: <span class="amount" id="withdrawAvailableBalance">0</span> ብር</div>
+            <h3>ገንዘብ ወጪ ለማድረግ ከስር ያለውን መረጃ ይሙሉ ይላኩ</h3>
+            <div class="balance-info">አሁን ያሎት የብር መጠን: <span class="amount" id="withdrawAvailableBalance">0</span> ብር</div>
             <input type="text" class="modal-input" id="withdrawName" placeholder="Full Name" required>
             <input type="tel" class="modal-input" id="withdrawPhone" placeholder="Phone Number" required>
             <input type="number" class="modal-input" id="withdrawAmount" placeholder="Amount" min="1" required>
@@ -4416,7 +4416,7 @@
         if (referralBtn) referralBtn.onclick = openReferralModal;
         if (customerServiceBtn) customerServiceBtn.onclick = () => {
             closeMoreDropdown();
-            const url = 'https://t.me/winzosupportcenter';
+            const url = 'https://t.me/winzosupport_center';
             if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
         };
         if (referralCloseBtn) referralCloseBtn.onclick = () => { if (referralModal) referralModal.classList.remove('active'); };
