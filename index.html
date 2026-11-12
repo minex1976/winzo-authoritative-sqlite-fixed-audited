@@ -4416,7 +4416,7 @@
         if (referralBtn) referralBtn.onclick = openReferralModal;
         if (customerServiceBtn) customerServiceBtn.onclick = () => {
             closeMoreDropdown();
-            const url = 'https://t.me/winzosupport_center';
+            const url = '@winzosupport_center';
             if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
         };
         if (referralCloseBtn) referralCloseBtn.onclick = () => { if (referralModal) referralModal.classList.remove('active'); };
