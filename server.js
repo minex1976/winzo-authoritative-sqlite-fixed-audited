@@ -208,7 +208,9 @@ function setupTelegramBot() {
   });
   
   bot.onText(/\/support/, (msg) => {
-      safeBotSend(msg.chat.id, "Need help? Contact our support team: t.me/winzosupport_center");
+    const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzosupport_center">@winzosupport_center</a>`;
+    safeBotSend(msg.chat.id, supportMsg, { parse_mode: 'HTML' });
+
   });
   
   bot.onText(/\/balance/, async (msg) => {
