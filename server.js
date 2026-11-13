@@ -77,7 +77,7 @@ const MAX_REFERENCE_LENGTH = 128;
 const MIN_TELEBIRR_REF_LENGTH = 8;
 const SMS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEPOSIT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_DEPOSIT_AMOUNT = 15;
+const MIN_DEPOSIT_AMOUNT = 1;
 const MAX_DEPOSIT_AMOUNT = 1_000_000;
 const DEPOSIT_RATE_LIMIT_WINDOW_MS = Number(process.env.DEPOSIT_RATE_WINDOW_MS || 10 * 60 * 1000);
 const DEPOSIT_RATE_LIMIT_MAX = Number(process.env.DEPOSIT_RATE_MAX || 15);
@@ -107,7 +107,6 @@ const BOT_NAMES = [
   "Amanuel", "Sofia", "Zelalem", "Alem", "Beka", "Chala", "Desta", "Eyerus"
 ];
 
-// REVERTED: Exact same as original
 const SMS_TRUSTED_SENDERS = ['127', 'telebirr', 'ethio telecom', 'ethiotelecom', 'ethio-telecom'];
 const DAY = 86400000;
 
@@ -175,10 +174,25 @@ function setupTelegramBot() {
           }
       };
   };
+
+  const getMainKeyboard = () => {
+      return {
+          keyboard: [
+              [{ text: "Play 🎮" }, { text: "Register 📝" }],
+              [{ text: "Check Balance 💵" }, { text: "Deposit 💵" }],
+              [{ text: "Contact Support ☎️" }, { text: "Instruction 📖" }],
+              [{ text: "Transfer 🎁" }, { text: "Withdraw 🤑" }],
+              [{ text: "Invite 🔗" }, { text: "Convert Bonus 💱" }]
+          ],
+          resize_keyboard: true,
+          is_persistent: true
+      };
+  };
   
   bot.onText(/\/start/, (msg) => {
       botUserStates.delete(msg.chat.id);
-      safeBotSend(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu or launch the app.", { parse_mode: 'Markdown', ...getMiniAppButton() });
+      safeBotSend(msg.chat.id, "Welcome to *Winzo*! Choose an option from the menu below.", { parse_mode: 'Markdown', reply_markup: getMainKeyboard() });
+      safeBotSend(msg.chat.id, "Launch the app directly:", getMiniAppButton());
   });
   
   bot.onText(/\/play/, (msg) => {
@@ -212,7 +226,7 @@ function setupTelegramBot() {
     
     safeBotSend(msg.chat.id, supportMsg, { 
         parse_mode: 'HTML',
-        disable_web_page_preview: true // <-- This removes the preview box
+        disable_web_page_preview: true
     });
   });
   bot.onText(/\/balance/, async (msg) => {
@@ -235,33 +249,70 @@ function setupTelegramBot() {
   bot.onText(/\/deposit/, (msg) => {
       const chatId = msg.chat.id;
       botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
-      safeBotSend(chatId, "ከ 15 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
+      safeBotSend(chatId, "ከ 1 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
   });
 
   bot.on('message', async (msg) => {
       try {
           const chatId = msg.chat.id;
+          const text = msg.text ? msg.text.trim() : '';
+
+          // Handle Custom Keyboard Buttons
+          if (text === 'Play 🎮') return safeBotSend(chatId, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
+          if (text === 'Register 📝') return safeBotSend(chatId, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
+          if (text === 'Check Balance 💵') {
+              const uid = `tg_${msg.from.id}`; 
+              try {
+                  const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
+                  if (res.rows.length === 0) {
+                      safeBotSend(chatId, "You don't have an account yet. Please launch the Mini App to register.", getMiniAppButton("Register Now", "register"));
+                  } else {
+                      const main = Number(res.rows[0].main_wallet).toFixed(2);
+                      const play = Number(res.rows[0].play_wallet).toFixed(2);
+                      safeBotSend(chatId, `📊 *Your Winzo Balance*\n\n💰 Main Wallet: *${main} Birr*\n🎮 Play Wallet: *${play} Birr*`, { parse_mode: 'Markdown', ...getMiniAppButton("Open App") });
+                  }
+              } catch (e) { safeBotSend(chatId, "⚠️ Could not fetch balance. Please try again later."); }
+              return;
+          }
+          if (text === 'Deposit 💵') {
+              botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
+              return safeBotSend(chatId, "ከ 1 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
+          }
+          if (text === 'Contact Support ☎️') {
+              const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`;
+              return safeBotSend(chatId, supportMsg, { parse_mode: 'HTML', disable_web_page_preview: true });
+          }
+          if (text === 'Instruction 📖') {
+              const instructionText = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
+              return safeBotSend(chatId, instructionText, { parse_mode: 'Markdown' });
+          }
+          if (text === 'Transfer 🎁') return safeBotSend(chatId, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
+          if (text === 'Withdraw 🤑') return safeBotSend(chatId, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
+          if (text === 'Invite 🔗') {
+              const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
+              return safeBotSend(chatId, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
+          }
+          if (text === 'Convert Bonus 💱') {
+              return safeBotSend(chatId, "Please use the Mini App to convert your bonus.");
+          }
+
           const state = botUserStates.get(chatId);
           
           if (!state || !msg.text || msg.text.startsWith('/')) return;
 
-          const text = msg.text.trim();
-
           if (state.state === 'WAITING_FOR_AMOUNT') {
               const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
               
-              if (isNaN(amount) || amount < 15) {
-                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን (ከ 15 ብር በላይ) ያስገቡ።");
+              if (isNaN(amount) || amount < 1) {
+                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን (ከ 1 ብር በላይ) ያስገቡ።");
               }
               
               state.amount = amount;
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              // Wrapped the phone number in <code> tags so it is copyable on tap
               const instructions = `💵 በቴሌብር ገቢ ለማድረግ: \n1ኛ - ከታች ባለው ቁጥር  ያስገቡ ።\n ----- <code>0923002900</code>----\n ----- Minyihun Mamo ------ \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
               
-              // Added parse_mode: 'HTML'
               return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
           }
 
@@ -278,7 +329,6 @@ function setupTelegramBot() {
               }
 
               botUserStates.delete(chatId);
-              safeBotSend(chatId, "⏳ ትእዛዝዎ ተልኳል ። Checking...");
 
               const uid = `tg_${msg.from.id}`;
 
@@ -297,8 +347,8 @@ function setupTelegramBot() {
               const ts = now();
               const textHash = crypto.createHash('sha256').update('user_paste|' + smsText).digest('hex');
               await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [smsId, 'user_paste', smsText, ts, textHash]);
-
-              safeBotSend(chatId, `✅ ትዕዛዙ ተልኳል።  እባክዎ ትንሽ ይጠብቁ። (Reference: ${parsed.reference})`);
+              
+              // Redundant messages removed
           }
       } catch (err) {
           console.error('[BOT DEPOSIT ERROR]', err);
@@ -733,7 +783,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       signup_bonus_remaining: bot ? 0 : SIGNUP_BONUS,
       signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
       signup_bonus_expires_at: bot ? 0 : t + 5 * 60 * 1000,
-      withdrawal_hold_until: bot ? 0 : t + DAY, withdrawal_hold_reason: bot ? null : 'new-account-24h-hold',
+      withdrawal_hold_until: 0, withdrawal_hold_reason: null,
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
       device_fingerprint: extra.device_fingerprint ? String(extra.device_fingerprint).slice(0, 128) : null,
@@ -915,10 +965,12 @@ async function transactionRequest(uid, data) {
     }
 
     if (type === 'withdraw') {
-      if (Number(user.withdrawal_hold_until) > now()) throw new Error(`withdrawal-hold:${user.withdrawal_hold_reason}`);
       const main = Number(user.main_wallet);
       const pending = Number(user.pending_withdrawal);
+      
       if (main - pending < amount) throw new Error('insufficient-main');
+      if (main - pending - amount < 15) throw new Error("በ 'Main Wallet' ላይ በትንሹ 15 ብር ቀሪ ሊያኖሩ ይገባል! እባክዎ በድጋሜ ይዘዙ");
+      
       await client.query('UPDATE users SET pending_withdrawal = $1, updated_at = $2 WHERE username = $3', [pending + amount, now(), uid]);
       await trace(traceId, uid, 'tx.withdraw-hold', 'ok', { type, amount });
     }
@@ -1067,8 +1119,6 @@ function parsePaymentRecord(r) {
   let reference = r.reference || '';
   
   if (!reference && text) {
-    // 1. English pattern
-    // 2. Amharic pattern for "የሂሳብ እንቅስቃሴ ቁጥርዎ"
     const m = text.match(/(?:transaction|txn|ref(?:erence)?|የሂሳብ እንቅስቃሴ ቁጥር(?:ዎ)?)\s*(?:number|code|no\.?|id)?\s*(?:is|:|\-)?\s*([A-Z0-9]{6,})/i)
            || text.match(/receipt\/([A-Za-z0-9]{6,24})/i);
     if (m) reference = m[1];
@@ -1076,8 +1126,6 @@ function parsePaymentRecord(r) {
   
   let amount = Number(r.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    // 1. Currency prefix pattern (English: ETB 300)
-    // 2. Currency suffix pattern (Amharic: 300.00 ብር)
     const m = text.match(/(?:ETB|Birr|ብር|Br\b|Amt|Amount)\s*[:\-]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
            || text.match(/([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:ETB|Birr|ብር|Br\b)/i);
     if (m) amount = Number(String(m[1]).replace(/,/g, ''));
@@ -2493,7 +2541,7 @@ async function handle(ws, m) {
 
     const holdRes = await pool.query('SELECT withdrawal_hold_until FROM users WHERE username = $1', [uid]);
     const sessionToken = issueSessionToken(uid);
-    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: Number(holdRes.rows[0]?.withdrawal_hold_until || 0), sessionToken });
+    send(ws, { type: 'authed', uid, displayName: ws.displayName, telegramId: telegramUser.id, withdrawalHoldUntil: 0, sessionToken });
 
     await sendPendingBroadcasts(uid, ws);
     await expireSignupBonus(uid);
