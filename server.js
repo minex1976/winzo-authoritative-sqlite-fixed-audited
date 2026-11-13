@@ -3446,54 +3446,110 @@ app.get('/admin/analytics/games', async (req, res) => {
     if (!rng) return res.status(400).json({ ok: false, error: 'invalid-date-range' });
     const roomsWanted = room === 'both' ? ['room_15', 'room_30'] : [room];
     if (!roomsWanted.every(r => r === 'room_15' || r === 'room_30')) return res.status(400).json({ ok: false, error: 'invalid-room' });
+
     const snapRes = await pool.query(
-      `SELECT room_id, round, bet, human_count, human_picks, bot_count, bot_picks, total_picks, prize_pool, winning_number, winner_count, human_winner_count, human_win_amount, started_at, ended_at
-         FROM round_snapshots WHERE ended_at >= $1 AND ended_at < $2 AND room_id = ANY($3::text[]) ORDER BY ended_at ASC`,
+      `SELECT human_count, human_picks, bot_count, bot_picks, total_picks, prize_pool,
+              winner_count, human_winner_count, human_win_amount, human_player_ids, ended_at
+         FROM round_snapshots
+        WHERE ended_at >= $1 AND ended_at < $2 AND room_id = ANY($3::text[])
+        ORDER BY ended_at ASC`,
       [rng.startMs, rng.endMs, roomsWanted]
     );
-    const buckets = Array.from({ length: 24 }, (_, h) => ({ hour: h, games: 0, totalHumans: 0, totalHumanPicks: 0, totalBots: 0, totalPicks: 0, totalPrizePool: 0, totalWinners: 0, humanWinners: 0, humanWinAmount: 0 }));
+
+    const buckets = Array.from({ length: 24 }, (_, h) => ({
+      hour: h, rounds: 0, playerSet: new Set(),
+      totalHumans: 0, totalHumanPicks: 0, totalBots: 0, totalPicks: 0,
+      totalPrizePool: 0, totalWinners: 0, humanWinners: 0, humanWinAmount: 0,
+    }));
+    const rangePlayerSet = new Set();
+
     for (const row of snapRes.rows) {
       const h = new Date(Number(row.ended_at)).getUTCHours();
-      buckets[h].games += 1;
-      buckets[h].totalHumans += Number(row.human_count || 0);
-      buckets[h].totalHumanPicks += Number(row.human_picks || 0);
-      buckets[h].totalBots += Number(row.bot_count || 0);
-      buckets[h].totalPicks += Number(row.total_picks || 0);
-      buckets[h].totalPrizePool += Number(row.prize_pool || 0);
-      buckets[h].totalWinners += Number(row.winner_count || 0);
-      buckets[h].humanWinners += Number(row.human_winner_count || 0);
-      buckets[h].humanWinAmount += Number(row.human_win_amount || 0);
-    }
-    const hourly = buckets.map(b => ({ hour: b.hour, games: b.games, avgHumans: b.games ? b.totalHumans / b.games : 0, totalHumans: b.totalHumans, totalHumanPicks: b.totalHumanPicks, totalBots: b.totalBots, totalPicks: b.totalPicks, avgPrizePool: b.games ? b.totalPrizePool / b.games : 0, totalWinners: b.totalWinners, humanWinners: b.humanWinners, humanWinAmount: b.humanWinAmount }));
-    const hoursWithData = hourly.filter(h => h.games > 0).length;
-    const daily = hoursWithData ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData : 0;
-    const peak = hourly.reduce((m, h) => Math.max(m, h.avgHumans), 0);
-    const totalGames = hourly.reduce((s, h) => s + h.games, 0);
-    const totalHumans = hourly.reduce((s, h) => s + h.totalHumans, 0);
-    const totalHumanPicks = hourly.reduce((s, h) => s + h.totalHumanPicks, 0);
-    const totalBots = hourly.reduce((s, h) => s + h.totalBots, 0);
-    const totalWinners = hourly.reduce((s, h) => s + h.totalWinners, 0);
-    const humanWinners = hourly.reduce((s, h) => s + h.humanWinners, 0);
-    const humanWinAmount = hourly.reduce((s, h) => s + h.humanWinAmount, 0);
-    res.json({ ok: true, from, to, room, summary: { dailyAvgHumansPerGame: daily, peakHourlyAvg: peak, gamesRecorded: totalGames, hoursWithData, totalHumanParticipations: totalHumans, totalHumanPicks, totalBots, totalWinners, humanWinners, humanWinAmount }, hourly });
-  } catch (e) { console.error('[ANALYTICS/games]', e); res.status(500).json({ ok: false, error: e.message }); }
-});
+      buckets[h].rounds += 1;
+      buckets[h].totalHumans      += Number(row.human_count || 0);
+      buckets[h].totalHumanPicks  += Number(row.human_picks || 0);
+      buckets[h].totalBots        += Number(row.bot_count || 0);
+      buckets[h].totalPicks       += Number(row.total_picks || 0);
+      buckets[h].totalPrizePool   += Number(row.prize_pool || 0);
+      buckets[h].totalWinners     += Number(row.winner_count || 0);
+      buckets[h].humanWinners     += Number(row.human_winner_count || 0);
+      buckets[h].humanWinAmount   += Number(row.human_win_amount || 0);
 
-app.get('/admin/analytics/referrals', async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ ok: false });
-  try {
-    const refsRes = await pool.query(`SELECT u.username AS referred_uid, u.display_name AS referred_name, u.referred_by AS referrer_uid, COALESCE(u.referral_earnings, 0) AS referred_ref_earnings, COALESCE(u.created_at, 0) AS referred_created_at, r.display_name AS referrer_name, COALESCE(r.referral_earnings, 0) AS referrer_earnings FROM users u LEFT JOIN users r ON r.username = u.referred_by WHERE u.referred_by IS NOT NULL AND u.referred_by <> ''`);
-    const referrers = new Map();
-    for (const row of refsRes.rows) {
-      const rid = row.referrer_uid; if (!rid) continue;
-      if (!referrers.has(rid)) referrers.set(rid, { uid: rid, name: row.referrer_name || rid, referralEarnings: Number(row.referrer_earnings || 0), referred: [] });
-      referrers.get(rid).referred.push({ uid: row.referred_uid, name: row.referred_name || row.referred_uid, earnings: Number(row.referred_ref_earnings || 0), createdAt: Number(row.referred_created_at || 0) });
+      if (Array.isArray(row.human_player_ids)) {
+        for (const uid of row.human_player_ids) {
+          const s = String(uid);
+          buckets[h].playerSet.add(s);
+          rangePlayerSet.add(s);
+        }
+      }
     }
-    const list = [...referrers.values()].map(r => ({ ...r, referralCount: r.referred.length, referralEarnings: r.referralEarnings || r.referred.reduce((s, x) => s + x.earnings, 0) }));
-    list.sort((a, b) => b.referralCount - a.referralCount);
-    const totals = { referrers: list.length, referredUsers: list.reduce((s, r) => s + r.referralCount, 0), totalEarnings: list.reduce((s, r) => s + r.referralEarnings, 0), avgPerReferrer: list.length ? list.reduce((s, r) => s + r.referralCount, 0) / list.length : 0, topReferrer: list[0] || null, topEarner: [...list].sort((a, b) => b.referralEarnings - a.referralEarnings)[0] || null };
-    res.json({ ok: true, totals, referrers: list });
-  } catch (e) { console.error('[ANALYTICS/referrals]', e); res.status(500).json({ ok: false, error: e.message }); }
+
+    const hourly = buckets.map(b => {
+      const players = b.playerSet.size;
+      const avg     = b.rounds ? players / b.rounds : 0;
+      return {
+        hour: b.hour,
+        rounds: b.rounds,
+        uniquePlayers: players,
+        average: avg,
+        // legacy fields kept so nothing else breaks
+        games: b.rounds,
+        avgHumans: b.rounds ? b.totalHumans / b.rounds : 0,
+        totalHumans: b.totalHumans,
+        totalHumanPicks: b.totalHumanPicks,
+        totalBots: b.totalBots,
+        totalPicks: b.totalPicks,
+        avgPrizePool: b.rounds ? b.totalPrizePool / b.rounds : 0,
+        totalWinners: b.totalWinners,
+        humanWinners: b.humanWinners,
+        humanWinAmount: b.humanWinAmount,
+      };
+    });
+
+    const hoursWithData     = hourly.filter(h => h.rounds > 0).length;
+    const totalRounds       = hourly.reduce((s, h) => s + h.rounds, 0);
+    const totalPlayerHours  = hourly.reduce((s, h) => s + h.uniquePlayers, 0);
+    const peakHourlyAvg     = hourly.reduce((m, h) => Math.max(m, h.average), 0);
+    const peakPlayersInHour = hourly.reduce((m, h) => Math.max(m, h.uniquePlayers), 0);
+    const overallAvg        = totalRounds ? totalPlayerHours / totalRounds : 0;
+    const avgRoundsPerHour  = hoursWithData ? totalRounds / hoursWithData : 0;
+    const avgPlayersPerHour = hoursWithData ? totalPlayerHours / hoursWithData : 0;
+
+    // legacy totals (still used by older clients)
+    const totalHumans     = hourly.reduce((s, h) => s + h.totalHumans, 0);
+    const totalHumanPicks = hourly.reduce((s, h) => s + h.totalHumanPicks, 0);
+    const totalBots       = hourly.reduce((s, h) => s + h.totalBots, 0);
+    const totalWinners    = hourly.reduce((s, h) => s + h.totalWinners, 0);
+    const humanWinners    = hourly.reduce((s, h) => s + h.humanWinners, 0);
+    const humanWinAmount  = hourly.reduce((s, h) => s + h.humanWinAmount, 0);
+
+    res.json({
+      ok: true, from, to, room,
+      summary: {
+        // new
+        overallAvgPlayersPerGame: overallAvg,
+        peakHourlyAvg,
+        roundsRecorded: totalRounds,
+        hoursWithData,
+        totalPlayerHours,
+        distinctPlayersInRange: rangePlayerSet.size,
+        peakPlayersInHour,
+        avgRoundsPerHour,
+        avgPlayersPerHour,
+        // legacy (kept so nothing 500s elsewhere)
+        dailyAvgHumansPerGame: hoursWithData
+          ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData : 0,
+        gamesRecorded: totalRounds,
+        totalHumanParticipations: totalHumans,
+        totalHumanPicks,
+        totalBots,
+        totalWinners,
+        humanWinners,
+        humanWinAmount,
+      },
+      hourly,
+    });
+  } catch (e) { console.error('[ANALYTICS/games]', e); res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/diagnostics', async (req, res) => {
