@@ -208,7 +208,7 @@ function setupTelegramBot() {
   });
   
   bot.onText(/\/support/, (msg) => {
-    const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzosupport_center">@winzosupport_center</a>`;
+    const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`;
     
     safeBotSend(msg.chat.id, supportMsg, { 
         parse_mode: 'HTML',
