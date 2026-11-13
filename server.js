@@ -68,8 +68,8 @@ const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 4;
-const BOT_MAX = 6;
+const BOT_MIN = 2;
+const BOT_MAX = 3;
 
 const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
@@ -196,32 +196,40 @@ function setupTelegramBot() {
   });
   
   bot.onText(/\/play/, (msg) => {
+      botUserStates.delete(msg.chat.id);
       safeBotSend(msg.chat.id, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
   });
   
   bot.onText(/\/register/, (msg) => {
+      botUserStates.delete(msg.chat.id);
       safeBotSend(msg.chat.id, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
   });
   
   bot.onText(/\/withdraw/, (msg) => {
-      safeBotSend(msg.chat.id, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
+      const chatId = msg.chat.id;
+      botUserStates.set(chatId, { state: 'WAITING_FOR_WITHDRAW_AMOUNT' });
+      safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉትን የብር መጠን ይላኩ");
   });
   
   bot.onText(/\/transfer/, (msg) => {
+      botUserStates.delete(msg.chat.id);
       safeBotSend(msg.chat.id, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
   });
   
   bot.onText(/\/invite/, (msg) => {
+      botUserStates.delete(msg.chat.id);
       const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
       safeBotSend(msg.chat.id, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
   });
   
   bot.onText(/\/instruction/, (msg) => {
+      botUserStates.delete(msg.chat.id);
       const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
       safeBotSend(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
   
   bot.onText(/\/support/, (msg) => {
+    botUserStates.delete(msg.chat.id);
     const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`;
     
     safeBotSend(msg.chat.id, supportMsg, { 
@@ -230,6 +238,7 @@ function setupTelegramBot() {
     });
   });
   bot.onText(/\/balance/, async (msg) => {
+      botUserStates.delete(msg.chat.id);
       const uid = `tg_${msg.from.id}`; 
       try {
           const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
@@ -258,9 +267,10 @@ function setupTelegramBot() {
           const text = msg.text ? msg.text.trim() : '';
 
           // Handle Custom Keyboard Buttons
-          if (text === 'Play 🎮') return safeBotSend(chatId, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play"));
-          if (text === 'Register 📝') return safeBotSend(chatId, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register"));
+          if (text === 'Play 🎮') { botUserStates.delete(chatId); return safeBotSend(chatId, "Ready to play? Launch the app below:", getMiniAppButton("Play Now 🎲", "play")); }
+          if (text === 'Register 📝') { botUserStates.delete(chatId); return safeBotSend(chatId, "Please launch the Mini App to register and verify your account.", getMiniAppButton("Register Now", "register")); }
           if (text === 'Check Balance 💵') {
+              botUserStates.delete(chatId);
               const uid = `tg_${msg.from.id}`; 
               try {
                   const res = await pool.query('SELECT main_wallet, play_wallet FROM users WHERE username = $1', [uid]);
@@ -279,27 +289,36 @@ function setupTelegramBot() {
               return safeBotSend(chatId, "ከ 1 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
           }
           if (text === 'Contact Support ☎️') {
+              botUserStates.delete(chatId);
               const supportMsg = `Need help? Contact our support team: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`;
               return safeBotSend(chatId, supportMsg, { parse_mode: 'HTML', disable_web_page_preview: true });
           }
           if (text === 'Instruction 📖') {
+              botUserStates.delete(chatId);
               const instructionText = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
               return safeBotSend(chatId, instructionText, { parse_mode: 'Markdown' });
           }
-          if (text === 'Transfer 🎁') return safeBotSend(chatId, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer"));
-          if (text === 'Withdraw 🤑') return safeBotSend(chatId, "Withdrawals are processed via the Mini App.", getMiniAppButton("Withdraw 🏦", "withdraw"));
+          if (text === 'Transfer 🎁') { botUserStates.delete(chatId); return safeBotSend(chatId, "Transfer funds between Main and Play wallets in the app.", getMiniAppButton("Transfer 🔄", "transfer")); }
+          if (text === 'Withdraw 🤑') {
+              botUserStates.set(chatId, { state: 'WAITING_FOR_WITHDRAW_AMOUNT' });
+              return safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉትን የብር መጠን ይላኩ");
+          }
           if (text === 'Invite 🔗') {
+              botUserStates.delete(chatId);
               const refLink = `https://t.me/WinzoBettingBot?startapp=ref_tg_${msg.from.id}`;
               return safeBotSend(chatId, `🎁 *Invite friends and earn 5%!*\n\nShare this link:\n\`${refLink}\`\n\nOr open the app to see the full referral menu:`, { parse_mode: 'Markdown', ...getMiniAppButton("Open Referral Menu", "invite") });
           }
           if (text === 'Convert Bonus 💱') {
+              botUserStates.delete(chatId);
               return safeBotSend(chatId, "Please use the Mini App to convert your bonus.");
           }
 
           const state = botUserStates.get(chatId);
-          
           if (!state || !msg.text || msg.text.startsWith('/')) return;
 
+          const uid = `tg_${msg.from.id}`;
+
+          // ================== DEPOSIT STATES ==================
           if (state.state === 'WAITING_FOR_AMOUNT') {
               const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
               
@@ -330,8 +349,6 @@ function setupTelegramBot() {
 
               botUserStates.delete(chatId);
 
-              const uid = `tg_${msg.from.id}`;
-
               const txRes = await transactionRequest(uid, {
                   txType: 'deposit',
                   amount: state.amount,
@@ -347,11 +364,65 @@ function setupTelegramBot() {
               const ts = now();
               const textHash = crypto.createHash('sha256').update('user_paste|' + smsText).digest('hex');
               await pool.query('INSERT INTO incoming_sms (id, sender, text, timestamp, processed, text_hash) VALUES ($1,$2,$3,$4,false,$5)', [smsId, 'user_paste', smsText, ts, textHash]);
-              
-              // Redundant messages removed
           }
+
+          // ================== WITHDRAW STATES ==================
+          if (state.state === 'WAITING_FOR_WITHDRAW_AMOUNT') {
+              const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
+              
+              if (isNaN(amount) || amount <= 0) {
+                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን ያስገቡ።");
+              }
+
+              const w = await walletFor(uid);
+              const available = w.main - w.pending;
+
+              if (amount > available) {
+                  return safeBotSend(chatId, "በቂ ሂሳብ የሎትም");
+              }
+
+              if (available - amount < 15) {
+                  return safeBotSend(chatId, "Main Wallet ላይ በትንሹ 15 ብር ቀሪ ሊኖርዎት ይገባል");
+              }
+
+              state.amount = amount;
+              state.state = 'WAITING_FOR_WITHDRAW_PHONE';
+              botUserStates.set(chatId, state);
+              
+              return safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉበትን የቴልብር ደንበኛ ቁጥር ያስገቡ");
+          }
+
+          if (state.state === 'WAITING_FOR_WITHDRAW_PHONE') {
+              state.phoneNumber = text; // Basic capture
+              state.state = 'WAITING_FOR_WITHDRAW_NAME';
+              botUserStates.set(chatId, state);
+
+              return safeBotSend(chatId, "እባክዎ በቴሌብር የተመዘገበውን ባለቤት ስም ይላኩ።");
+          }
+
+          if (state.state === 'WAITING_FOR_WITHDRAW_NAME') {
+              const fullName = text;
+              
+              botUserStates.delete(chatId);
+
+              const txRes = await transactionRequest(uid, {
+                  txType: 'withdraw',
+                  amount: state.amount,
+                  phoneNumber: state.phoneNumber,
+                  fullName: fullName,
+                  clientRequestId: 'bot_wd_' + Date.now()
+              });
+
+              if (!txRes.ok) {
+                  // Errors from backend (like double submission) will be handled by the backend notification
+                  return; 
+              }
+
+              return safeBotSend(chatId, "ትእዛዙ ተልኳል!  የዊንዞ ቤተሰብ ስለሆኑ እናመሰግናለን!");
+          }
+
       } catch (err) {
-          console.error('[BOT DEPOSIT ERROR]', err);
+          console.error('[BOT STATE ERROR]', err);
           safeBotSend(msg.chat.id, "⚠️ እባክዎ እንደገና ይሞክሩ።");
       }
   });
