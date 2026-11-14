@@ -208,7 +208,7 @@ function setupTelegramBot() {
   bot.onText(/\/withdraw/, (msg) => {
       const chatId = msg.chat.id;
       botUserStates.set(chatId, { state: 'WAITING_FOR_WITHDRAW_AMOUNT' });
-      safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉትን የብር መጠን ይላኩ");
+      safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉትን የብር መጠን ይግለፁ");
   });
   
   bot.onText(/\/transfer/, (msg) => {
@@ -258,7 +258,7 @@ function setupTelegramBot() {
   bot.onText(/\/deposit/, (msg) => {
       const chatId = msg.chat.id;
       botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
-      safeBotSend(chatId, "ከ 1 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
+      safeBotSend(chatId, "የሚያስገቡትን የብር መጠን 👇 ይግለፁ");
   });
 
   bot.on('message', async (msg) => {
@@ -323,14 +323,14 @@ function setupTelegramBot() {
               const amount = parseFloat(text.replace(/[^0-9.]/g, ''));
               
               if (isNaN(amount) || amount < 1) {
-                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን (ከ 1 ብር በላይ) ያስገቡ።");
+                  return safeBotSend(chatId, "⚠️ እባክዎ ትክክለኛ የብር መጠን ያስገቡ።");
               }
               
               state.amount = amount;
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `💵 በቴሌብር ገቢ ለማድረግ: \n1ኛ - ከታች ባለው ቁጥር  ያስገቡ ።\n ----- <code>0923002900</code>----\n ----- Minyihun Mamo ------ \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉ\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር 👇 (paste) ያድርጉትና ይላኩ።`;
+              const instructions = `💵 ገንዘብ ገቢ ለማድረግ: \n1ኛ - (በቴሌብር) ከታች ባለው ቁጥር  ያስገቡ ።\n --👉<code>0923002900</code>👈 (👤 Minyihun Mamo)  \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉና...\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር (paste) ያድርጉትና ይላኩ። 👇👇`;
               
               return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
           }
@@ -389,7 +389,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_WITHDRAW_PHONE';
               botUserStates.set(chatId, state);
               
-              return safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉበትን የቴልብር ደንበኛ ቁጥር ያስገቡ");
+              return safeBotSend(chatId, "እባክዎ ወጪ የሚያደርጉበትን (የቴሌብር ደንበኛ) ስልክ ቁጥር ይግለፁ");
           }
 
           if (state.state === 'WAITING_FOR_WITHDRAW_PHONE') {
@@ -397,7 +397,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_WITHDRAW_NAME';
               botUserStates.set(chatId, state);
 
-              return safeBotSend(chatId, "እባክዎ በቴሌብር የተመዘገበውን ባለቤት ስም ይላኩ።");
+              return safeBotSend(chatId, "እባክዎ የቴሌብር አካውንቱ (Account) ባለቤት (User Name) ስም ይግለፁ።");
           }
 
           if (state.state === 'WAITING_FOR_WITHDRAW_NAME') {
