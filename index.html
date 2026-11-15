@@ -1062,17 +1062,70 @@
         if (action) pendingMenuAction = action;
     }
 
-    function getDeviceFingerprint() {
+    // One browser/device fingerprint implementation is used by every WS auth.
+    // The server accepts a compact raw value (8..512 chars), then hashes it
+    // before storing it. Do not send raw browser details to the server.
+    async function getDeviceFingerprint() {
+        let stableFallback = '';
         try {
-            let fp = localStorage.getItem('winzo_device_fp');
-            if (!fp) {
-                fp = 'fp_' + ((window.crypto && crypto.randomUUID)
+            stableFallback = localStorage.getItem('winzo_device_fp') || '';
+            if (!stableFallback) {
+                stableFallback = 'fp_' + ((window.crypto && crypto.randomUUID)
                     ? crypto.randomUUID()
                     : (Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12)));
-                localStorage.setItem('winzo_device_fp', fp);
+                localStorage.setItem('winzo_device_fp', stableFallback);
             }
-            return fp;
-        } catch (_) { return null; }
+        } catch (_) {
+            // Storage may be unavailable in private/restricted browser contexts.
+        }
+
+        try {
+            const parts = [
+                navigator.userAgent || '',
+                navigator.language || '',
+                Array.isArray(navigator.languages) ? navigator.languages.join(',') : '',
+                (screen.width || 0) + 'x' + (screen.height || 0),
+                screen.colorDepth || 0,
+                Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                new Date().getTimezoneOffset(),
+                navigator.hardwareConcurrency || 0,
+                navigator.deviceMemory || 0,
+                navigator.platform || ''
+            ];
+
+            // Canvas rendering adds a browser/GPU-dependent signal when supported.
+            try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.textBaseline = 'top';
+                    ctx.font = '14px Arial';
+                    ctx.fillStyle = '#13579b';
+                    ctx.fillText('Winzo', 2, 2);
+                    parts.push(canvas.toDataURL().slice(-80));
+                }
+            } catch (_) {}
+
+            const raw = parts.join('|');
+            if (window.crypto && window.crypto.subtle && window.TextEncoder) {
+                const bytes = new TextEncoder().encode(raw);
+                const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+                const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+                return 'fp2_' + hex;
+            }
+
+            // Compact deterministic fallback for browsers without Web Crypto.
+            let h1 = 0x811c9dc5, h2 = 0x9e3779b9;
+            for (let i = 0; i < raw.length; i++) {
+                const c = raw.charCodeAt(i);
+                h1 = Math.imul(h1 ^ c, 0x01000193);
+                h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b);
+            }
+            return 'fp2_' + (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+        } catch (_) {
+            // Keep authentication compatible if fingerprint APIs are blocked.
+            return stableFallback || null;
+        }
     }
 
     function getStoredSessionToken() {
@@ -3012,6 +3065,7 @@
             this.devUsername = String(devUsername || this.devUsername || currentUser || '').trim();
             this.authMode = authMode || this.authMode || 'login';
             if (!this.initData && isTelegram) this.initData = await waitForTelegramInitData(5000);
+            const deviceFingerprint = await getDeviceFingerprint();
             if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch (e) {} }
             this.connecting = true;
             try { this.ws = new WebSocket(SERVER_WS_URL); }
@@ -3033,7 +3087,7 @@
                     initData: this.initData,
                     ref: this.refCode,
                     authMode: this.authMode,
-                    deviceFingerprint: getDeviceFingerprint()
+                    deviceFingerprint: deviceFingerprint
                 };
                 if (DEV_MODE && !this.initData && this.devUsername) authMsg.devUsername = this.devUsername;
                 this.rawSend(authMsg);
