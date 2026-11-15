@@ -68,8 +68,8 @@ const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 1;
-const BOT_MAX = 2;
+const BOT_MIN = 2;
+const BOT_MAX = 3;
 
 const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
@@ -286,7 +286,7 @@ function setupTelegramBot() {
           }
           if (text === 'Deposit 💵') {
               botUserStates.set(chatId, { state: 'WAITING_FOR_AMOUNT' });
-              return safeBotSend(chatId, "ከ 1 ብር ጀምሮ የሚያስገቡትን የብር መጠን 👇 ይፃፉና ይላኩ");
+              return safeBotSend(chatId, "የሚያስገቡትን የብር መጠን ይግለፁ 👇");
           }
           if (text === 'Contact Support ☎️') {
               botUserStates.delete(chatId);
@@ -330,7 +330,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `💵 ገንዘብ ገቢ ለማድረግ: \n1ኛ - (በቴሌብር) ከታች ባለው ቁጥር  ያስገቡ ።\n --👉<code>0923002900</code>👈 (👤 Minyihun Mamo)  \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉና...\n3ኛ - ኮፒ (copy) ያደረጉትን የፅሁፍ መልእክት ከስር (paste) ያድርጉትና ይላኩ። 👇👇`;
+              const instructions = `💵 ገንዘብ ገቢ ለማድረግ ቴሌብር ይጠቀሙ 💵: \n1ኛ - ከታች ባለው ቁጥር  ያስገቡ ።\n 👉<code>0923002900</code>👈  👤 Minyihun Mamo   \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉና ከስር 👇  ፔሰት (paste) አድርገው ወደኛ ይላኩ። `;
               
               return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
           }
