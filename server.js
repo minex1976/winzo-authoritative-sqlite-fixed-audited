@@ -54,6 +54,14 @@ if (!process.env.IP_HASH_SALT) {
   console.warn('WARNING: IP_HASH_SALT not set. Multi-account detection will not work across restarts.');
 }
 
+// ─── ENHANCED: stable salt for cross-day correlation (uses the same value
+// for every request, so ip_history rows survive the daily rotation of
+// users.last_ip_hash).
+const IP_HISTORY_SALT = process.env.IP_HISTORY_SALT || IP_HASH_SALT;
+if (!process.env.IP_HISTORY_SALT) {
+  console.warn('WARNING: IP_HISTORY_SALT not set. History correlation falls back to IP_HASH_SALT.');
+}
+
 const NODE_ENV = process.env.NODE_ENV || 'production';
 const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
 
@@ -91,8 +99,13 @@ const WS_MAX_CONNECTIONS_PER_IP = Math.max(2, Number(process.env.WS_MAX_CONNECTI
 const WS_CONNECTION_RATE_WINDOW_MS = 60_000;
 const WS_CONNECTION_RATE_MAX = Math.max(5, Number(process.env.WS_CONNECTION_RATE_MAX || 20));
 
-const MULTI_ACCOUNT_IP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_IP_THRESHOLD || 5);
-const MULTI_ACCOUNT_FP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_FP_THRESHOLD || 3);
+// ─── ENHANCED: tighter multi-account thresholds + history window + scanner ──
+const MULTI_ACCOUNT_IP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_IP_THRESHOLD || 3);
+const MULTI_ACCOUNT_FP_THRESHOLD = Number(process.env.MULTI_ACCOUNT_FP_THRESHOLD || 2);
+const MULTI_ACCOUNT_HISTORY_DAYS = Number(process.env.MULTI_ACCOUNT_HISTORY_DAYS || 7);
+const SCANNER_INTERVAL_MS = Number(process.env.SCANNER_INTERVAL_MS || 15 * 60 * 1000);
+const FINGERPRINT_MAX_LEN = 128;
+const FINGERPRINT_MIN_LEN = 8;
 
 const ADMIN_IDLE_MS = Number(process.env.ADMIN_IDLE_MS || 30 * 60 * 1000);
 
@@ -505,6 +518,29 @@ async function initDb() {
       );
     `);
 
+    // ─── ENHANCED: multi-account signal history tables ──────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ip_history (
+        id VARCHAR(128) PRIMARY KEY,
+        username VARCHAR(64) NOT NULL,
+        ip_hash VARCHAR(128) NOT NULL,
+        seen_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ip_history_hash ON ip_history (ip_hash, seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ip_history_user ON ip_history (username, seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ip_history_time ON ip_history (seen_at DESC);
+
+      CREATE TABLE IF NOT EXISTS device_fp_history (
+        id VARCHAR(128) PRIMARY KEY,
+        username VARCHAR(64) NOT NULL,
+        fingerprint VARCHAR(128) NOT NULL,
+        seen_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fp_history_fp ON device_fp_history (fingerprint, seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_fp_history_user ON device_fp_history (username, seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_fp_history_time ON device_fp_history (seen_at DESC);
+    `);
+
     await client.query(`ALTER TABLE request_trace ADD COLUMN IF NOT EXISTS trace_row_id BIGSERIAL;`);
     await client.query(`
       DO $$
@@ -532,6 +568,7 @@ async function initDb() {
       ALTER TABLE users         ADD COLUMN IF NOT EXISTS referral_earnings NUMERIC DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_bonus_expires_at BIGINT DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS fraud_flagged_at BIGINT DEFAULT 0;
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismiss_policy VARCHAR(16) DEFAULT 'user';
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_by VARCHAR(64);
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS broadcast_id VARCHAR(128);
@@ -623,7 +660,7 @@ async function initDb() {
 
 // ============================================================================
 // UTILITY HELPERS
-// ============================================================================
+// ===========================================
 function toFiniteNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -653,6 +690,25 @@ function hashWithRotatingSalt(value, dayOffset = 0) {
   const salt = `${IP_HASH_SALT}|${d}`;
   return hashText(`${salt}|${String(value || '')}`);
 }
+
+// ─── ENHANCED: stable IP hash for cross-day correlation ─────────────────────
+function hashIpStable(value) {
+  return hashText(`${IP_HISTORY_SALT}|stable|${String(value || '')}`);
+}
+
+// ─── ENHANCED: normalize + hash a client-supplied device fingerprint ────────
+// Returns null for garbage (too short, too long, control chars). Otherwise a
+// deterministic 128-char hex hash safe for DB storage. IMPORTANT: only pass the
+// RAW client value here — do NOT re-sanitize the returned hash.
+function sanitizeFingerprint(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (s.length < FINGERPRINT_MIN_LEN) return null;
+  if (s.length > 4 * FINGERPRINT_MAX_LEN) return null;
+  if (/[\x00-\x1f\x7f\s]/.test(s)) return null;
+  return hashText(`fp|${s}`).slice(0, FINGERPRINT_MAX_LEN);
+}
+
 function websocketClientIp(ws) {
   if (process.env.TRUST_PROXY_HEADERS === 'true') {
     const forwarded = String(ws?._req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
@@ -786,46 +842,134 @@ function validateInitData(initData, maxAge = 86400) {
 }
 
 // ============================================================================
-// MULTI-ACCOUNT DETECTION
+// MULTI-ACCOUNT DETECTION  (ENHANCED — records history + detects clusters)
 // ============================================================================
-async function detectMultiAccount(username, ipHash = null, fingerprint = null) {
-  const signals = [];
+async function recordAndDetectSignals(username, opts = {}) {
+  const ip = opts.ip ? normalizedClientIp(opts.ip) : null;
+  const fingerprint = opts.fingerprint ? sanitizeFingerprint(opts.fingerprint) : null;
+  const t = now();
+
+  // 1) Append to history (dedupe within 60s to avoid spam rows)
   try {
-    if (ipHash) {
-      const r = await pool.query(
-        'SELECT COUNT(*)::int AS c FROM users WHERE last_ip_hash = $1 AND username <> $2',
-        [ipHash, username]
+    if (ip) {
+      const ipHash = hashIpStable(ip);
+      const existing = await pool.query(
+        'SELECT id FROM ip_history WHERE username = $1 AND ip_hash = $2 AND seen_at > $3 LIMIT 1',
+        [username, ipHash, t - 60_000]
       );
-      if (r.rows[0].c >= MULTI_ACCOUNT_IP_THRESHOLD) signals.push({ kind: 'ip-cluster', count: r.rows[0].c });
+      if (!existing.rows.length) {
+        await pool.query(
+          'INSERT INTO ip_history (id, username, ip_hash, seen_at) VALUES ($1,$2,$3,$4)',
+          [crypto.randomUUID(), username, ipHash, t]
+        );
+      }
     }
     if (fingerprint) {
-      const r = await pool.query(
-        'SELECT COUNT(*)::int AS c FROM users WHERE device_fingerprint = $1 AND username <> $2',
-        [fingerprint, username]
+      const existing = await pool.query(
+        'SELECT id FROM device_fp_history WHERE username = $1 AND fingerprint = $2 AND seen_at > $3 LIMIT 1',
+        [username, fingerprint, t - 60_000]
       );
-      if (r.rows[0].c >= MULTI_ACCOUNT_FP_THRESHOLD) signals.push({ kind: 'fingerprint-cluster', count: r.rows[0].c });
+      if (!existing.rows.length) {
+        await pool.query(
+          'INSERT INTO device_fp_history (id, username, fingerprint, seen_at) VALUES ($1,$2,$3,$4)',
+          [crypto.randomUUID(), username, fingerprint, t]
+        );
+      }
     }
-    if (!signals.length) return { suspicious: false };
-    await pool.query(
-      `UPDATE users SET fraud_status = 'flagged', block_signals = $1, updated_at = $2
-        WHERE username = $3 AND (fraud_status IS NULL OR fraud_status <> 'frozen')`,
-      [JSON.stringify({ signals, detectedAt: now() }), now(), username]
-    );
-    console.warn(`[MULTI-ACCOUNT] flagged ${username}:`, JSON.stringify(signals));
-    return { suspicious: true, signals };
-  } catch (e) {
-    console.error('[MULTI-ACCOUNT] error:', e.message);
-    return { suspicious: false };
+  } catch (e) { console.error('[SIGNAL] history insert failed:', e.message); }
+
+  // 2) Detect clusters over the history window
+  const signals = [];
+  const since = t - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
+
+  if (ip) {
+    try {
+      const ipHash = hashIpStable(ip);
+      const r = await pool.query(
+        `SELECT COUNT(DISTINCT username)::int AS c
+           FROM ip_history
+          WHERE ip_hash = $1 AND seen_at > $2 AND username <> $3`,
+        [ipHash, since, username]
+      );
+      if (r.rows[0].c >= MULTI_ACCOUNT_IP_THRESHOLD) {
+        signals.push({
+          kind: 'ip-cluster', count: r.rows[0].c,
+          windowDays: MULTI_ACCOUNT_HISTORY_DAYS, threshold: MULTI_ACCOUNT_IP_THRESHOLD,
+          lastSeen: t,
+        });
+      }
+    } catch (e) { console.error('[SIGNAL] ip-cluster query failed:', e.message); }
   }
+
+  if (fingerprint) {
+    try {
+      const r = await pool.query(
+        `SELECT COUNT(DISTINCT username)::int AS c
+           FROM device_fp_history
+          WHERE fingerprint = $1 AND seen_at > $2 AND username <> $3`,
+        [fingerprint, since, username]
+      );
+      if (r.rows[0].c >= MULTI_ACCOUNT_FP_THRESHOLD) {
+        signals.push({
+          kind: 'fingerprint-cluster', count: r.rows[0].c,
+          windowDays: MULTI_ACCOUNT_HISTORY_DAYS, threshold: MULTI_ACCOUNT_FP_THRESHOLD,
+          lastSeen: t,
+        });
+      }
+    } catch (e) { console.error('[SIGNAL] fp-cluster query failed:', e.message); }
+  }
+
+  // 3) Persist fraud state (merge with prior; never overwrite 'frozen')
+  if (signals.length) {
+    try {
+      const prior = await pool.query('SELECT fraud_status, block_signals FROM users WHERE username = $1', [username]);
+      if (!prior.rows.length) return { suspicious: signals.length > 0, signals };
+      const priorSignals = (() => {
+        try { return JSON.parse(prior.rows[0]?.block_signals || '{}')?.signals || []; }
+        catch { return []; }
+      })();
+      const merged = [...priorSignals];
+      for (const s of signals) {
+        const idx = merged.findIndex(x => x.kind === s.kind);
+        if (idx >= 0) merged[idx] = s; else merged.push(s);
+      }
+      const currentStatus = String(prior.rows[0].fraud_status || '').toLowerCase();
+      const newStatus = currentStatus === 'frozen' ? 'frozen' : 'flagged';
+      await pool.query(
+        `UPDATE users
+            SET fraud_status = $1,
+                block_signals = $2,
+                fraud_flagged_at = CASE WHEN fraud_status = 'flagged' THEN fraud_flagged_at ELSE $3 END,
+                updated_at = $3
+          WHERE username = $4`,
+        [newStatus, JSON.stringify({ signals: merged, detectedAt: t }), t, username]
+      );
+      console.warn(`[MULTI-ACCOUNT] flagged ${username}:`, JSON.stringify(signals));
+    } catch (e) { console.error('[SIGNAL] persist failed:', e.message); }
+  }
+
+  return { suspicious: signals.length > 0, signals };
+}
+
+// Backward-compatible alias — if called with a pre-hashed IP, that IP is
+// ignored for history lookup (history uses the stable hash). Prefer
+// recordAndDetectSignals() from new call sites.
+async function detectMultiAccount(username, ipOrHash = null, fingerprint = null) {
+  const looksHashed = ipOrHash && /^[a-f0-9]{64}$/i.test(String(ipOrHash));
+  return recordAndDetectSignals(username, {
+    ip: looksHashed ? null : (ipOrHash || null),
+    fingerprint: fingerprint || null,
+  });
 }
 
 // ============================================================================
-// USER MANAGEMENT
+// USER MANAGEMENT  (ENHANCED: signal recording on IP/FP change)
 // ============================================================================
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
   if (!clean) return null;
   const client = await pool.connect();
+  let signalPayload = null;
   try {
     const res = await client.query('SELECT * FROM users WHERE username = $1', [clean]);
     if (res.rows.length > 0) {
@@ -836,17 +980,25 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       if (extra.last_ip && current.last_ip_hash !== hashWithRotatingSalt(normalizedClientIp(extra.last_ip))) {
         patch.last_ip_hash = hashWithRotatingSalt(normalizedClientIp(extra.last_ip));
       }
-      if (extra.device_fingerprint && current.device_fingerprint !== String(extra.device_fingerprint).slice(0, 128)) {
-        patch.device_fingerprint = String(extra.device_fingerprint).slice(0, 128);
+      if (extra.device_fingerprint) {
+        const sanitized = sanitizeFingerprint(extra.device_fingerprint);
+        if (sanitized && current.device_fingerprint !== sanitized) patch.device_fingerprint = sanitized;
       }
       if (Object.keys(patch).length) {
         const setClauses = Object.keys(patch).map((key, i) => `${key} = $${i + 2}`).join(', ');
         const values = [clean, ...Object.values(patch)];
         await client.query(`UPDATE users SET ${setClauses}, updated_at = $${values.length + 1} WHERE username = $1`, [...values, now()]);
       }
+      if (extra.last_ip || extra.device_fingerprint) {
+        signalPayload = {
+          ip: extra.last_ip || null,
+          fingerprint: extra.device_fingerprint || null,
+        };
+      }
       return { ...current, ...patch };
     }
     const t = now();
+    const sanitizedFp = extra.device_fingerprint ? sanitizeFingerprint(extra.device_fingerprint) : null;
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
       telegram_username: extra.telegram_username || null, main_wallet: 0,
@@ -857,23 +1009,37 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       withdrawal_hold_until: 0, withdrawal_hold_reason: null,
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
-      device_fingerprint: extra.device_fingerprint ? String(extra.device_fingerprint).slice(0, 128) : null,
+      device_fingerprint: sanitizedFp,
       created_at: t, updated_at: t
     };
     await client.query(`
       INSERT INTO users (username, display_name, telegram_id, telegram_username, main_wallet, play_wallet, signup_bonus_remaining, signup_bonus_original, signup_bonus_expires_at, withdrawal_hold_until, withdrawal_hold_reason, pending_withdrawal, referral_earnings, wallet_updated_at, referred_by, last_ip_hash, device_fingerprint, created_at, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
     `, Object.values(newUser));
+    if (extra.last_ip || extra.device_fingerprint) {
+      signalPayload = {
+        ip: extra.last_ip || null,
+        fingerprint: extra.device_fingerprint || null,
+      };
+    }
     return newUser;
-  } finally { client.release(); }
+  } finally {
+    client.release();
+    // Async — never blocks user creation
+    if (signalPayload && (signalPayload.ip || signalPayload.fingerprint)) {
+      recordAndDetectSignals(clean, signalPayload).catch(e => console.error('[SIGNAL] post-ensure failed:', e.message));
+    }
+  }
 }
 
-async function resolveTelegramUser(user, referredBy = null) {
+async function resolveTelegramUser(user, referredBy = null, ctx = {}) {
   if (!user?.id) return null;
   const telegramId = Number(user.id);
   const telegramUsername = safeUser(user.username || '');
   const displayName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || telegramUsername || `tg_${telegramId}`;
   const canonicalUid = `tg_${telegramId}`;
+  const ip = ctx.ip || null;
+  const fingerprint = ctx.fingerprint || null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -884,7 +1050,14 @@ async function resolveTelegramUser(user, referredBy = null) {
       if (mappedUser.rows.length > 0 && (!mappedUser.rows[0].telegram_id || Number(mappedUser.rows[0].telegram_id) === telegramId)) {
         await client.query('UPDATE telegram_users SET username = $1, telegram_username = $2, updated_at = $3 WHERE telegram_id = $4', [mappedUser.rows[0].username, telegramUsername, now(), telegramId]);
         await client.query('COMMIT');
-        return { uid: mappedUid, user: (await ensureUser(mappedUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null })) };
+        return {
+          uid: mappedUid,
+          user: await ensureUser(mappedUid, referredBy, false, {
+            telegram_id: telegramId, display_name: displayName,
+            telegram_username: telegramUsername || null,
+            last_ip: ip, device_fingerprint: fingerprint,
+          })
+        };
       }
     }
     let found = await client.query('SELECT * FROM users WHERE username = $1 OR telegram_id = $2 LIMIT 1', [canonicalUid, telegramId]);
@@ -898,7 +1071,11 @@ async function resolveTelegramUser(user, referredBy = null) {
       }
     }
     await client.query('COMMIT');
-    const created = await ensureUser(finalUid, referredBy, false, { telegram_id: telegramId, display_name: displayName, telegram_username: telegramUsername || null });
+    const created = await ensureUser(finalUid, referredBy, false, {
+      telegram_id: telegramId, display_name: displayName,
+      telegram_username: telegramUsername || null,
+      last_ip: ip, device_fingerprint: fingerprint,
+    });
     await pool.query('INSERT INTO telegram_users (telegram_id, uid, username, telegram_username, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (telegram_id) DO UPDATE SET uid=EXCLUDED.uid, username=EXCLUDED.username, updated_at=EXCLUDED.updated_at',
       [telegramId, finalUid, created.username, telegramUsername, now()]);
     return { uid: finalUid, user: created, telegramId, telegramUsername };
@@ -971,7 +1148,7 @@ async function recordWalletCredit(client, username, amount, type, meta = {}) {
 }
 
 // ============================================================================
-// TRANSACTIONS
+// TRANSACTIONS  (ENHANCED: fresh-signal detection + flagged enforcement)
 // ============================================================================
 async function transactionRequest(uid, data) {
   const traceId = String(data.__traceId || newTraceId());
@@ -991,6 +1168,15 @@ async function transactionRequest(uid, data) {
     await trace(traceId, uid, 'tx.validate', 'fail', { type, amount, reason: 'bad-amount' });
     return { ok: false, reason: 'bad-amount', traceId };
   }
+
+  // ─── ENHANCED: re-run detection with fresh WS signals ──────────────────
+  try {
+    const freshIp = data.__ip || null;
+    const freshFp = data.__fingerprint || null;
+    if (freshIp || freshFp) {
+      await recordAndDetectSignals(uid, { ip: freshIp, fingerprint: freshFp });
+    }
+  } catch (e) { console.error('[TX-DETECT]', e.message); }
 
   if (type === 'deposit') {
     if (amount < MIN_DEPOSIT_AMOUNT || amount > MAX_DEPOSIT_AMOUNT) {
@@ -1018,6 +1204,24 @@ async function transactionRequest(uid, data) {
     const user = userRes.rows[0];
     if (user.blocked) throw new Error('account-blocked');
     if (String(user.fraud_status || '').toLowerCase() === 'frozen') throw new Error('account-frozen');
+
+    // ─── ENHANCED: block withdrawals from flagged accounts ─────────────────
+    if (type === 'withdraw' && String(user.fraud_status || '').toLowerCase() === 'flagged') {
+      await trace(traceId, uid, 'tx.flagged', 'fail', { type, amount, reason: 'account-flagged' });
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      try {
+        await addNotification(uid, {
+          type: 'fraud_flag',
+          message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support.'
+        });
+      } catch (_) {}
+      try {
+        await sendBotDepositStatus(uid,
+          `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: @winzo_help_center`);
+      } catch (_) {}
+      return { ok: false, reason: 'account-flagged', traceId };
+    }
+
     await trace(traceId, uid, 'tx.user-locked', 'ok', { type, amount });
 
     if (type === 'deposit') {
@@ -1240,7 +1444,7 @@ async function autoApproveMatchingDeposits(smsId, smsRecord, parentTraceId = nul
   const smsAt = Number(smsRecord.timestamp || now());
   if (!Number.isFinite(smsAt) || (now() - smsAt) > SMS_MAX_AGE_MS) { await trace(traceId, null, 'auto.age', 'fail', { reason: 'stale-sms', reference: payment.reference }); return { ok: false, reason: 'stale-sms', traceId }; }
   if (!(payment.amount > 0)) { await trace(traceId, null, 'auto.amount', 'fail', { reason: 'no-amount', reference: payment.reference }); return { ok: false, reason: 'no-amount', traceId }; }
-  if (payment.amount < MIN_DEPOSIT_AMOUNT || payment.amount > MAX_DEPOSIT_AMOUNT) { await trace(traceId, null, 'auto.amount', 'fail', { reason: 'amount-out-of-range', reference: payment.reference, amount: payment.amount }); return { ok: false, reason: 'amount-out-of-range', traceId }; }
+if (payment.amount < MIN_DEPOSIT_AMOUNT || payment.amount > MAX_DEPOSIT_AMOUNT) { await trace(traceId, null, 'auto.amount', 'fail', { reason: 'amount-out-of-range', reference: payment.reference, amount: payment.amount }); return { ok: false, reason: 'amount-out-of-range', traceId }; }
   const used = await pool.query('SELECT tx_id FROM used_references WHERE reference = $1', [payment.reference]);
   if (used.rows.length > 0) {
     await logAutoActivity('skipped', smsId, payment.reference, payment.amount, used.rows[0].tx_id, 'reference-reused');
@@ -2473,8 +2677,6 @@ setInterval(() => {
         }
     } catch (e) { console.error('[LADDER-BOT-ENGINE]', e.message); }
 }, 15000);
-
-// ============================================================================
 // WEBSOCKET SETUP
 // ============================================================================
 const conns = new Map();
@@ -2576,7 +2778,14 @@ async function handle(ws, m) {
         return;
       }
     }
-    const resolved = await resolveTelegramUser(telegramUser, m.authMode === 'signup' ? (m.ref || null) : null);
+
+    // ─── ENHANCED: capture IP + fingerprint, pass through to identity flow ─
+    const authFp = sanitizeFingerprint(m.deviceFingerprint) || null;
+    const resolved = await resolveTelegramUser(
+      telegramUser,
+      m.authMode === 'signup' ? (m.ref || null) : null,
+      { ip: websocketClientIp(ws) || null, fingerprint: authFp }
+    );
     if (!resolved?.uid) return send(ws, { type: 'error', message: 'auth-failed', reason: 'identity-failed' });
 
     const uid = resolved.uid;
@@ -2598,8 +2807,11 @@ async function handle(ws, m) {
       await pool.query(`UPDATE users SET phone_number = (SELECT phone_number FROM telegram_contacts WHERE telegram_id = $1), updated_at = $2 WHERE username = $3`, [Number(telegramUser.id), now(), uid]);
     }
 
-    const ipHash = clientIp ? hashWithRotatingSalt(clientIp) : null;
-    detectMultiAccount(uid, ipHash, m.deviceFingerprint || null).catch(e => console.error('[MULTI-ACCOUNT]', e.message));
+    // ─── ENHANCED: cache ip/fp on the ws for transaction-request re-detection ─
+    // Signal recording + detection already ran inside ensureUser() (async).
+    // No need to call detectMultiAccount() again here.
+    ws._ip = clientIp || null;
+    ws._fingerprint = authFp;
 
     clearTimeout(ws.authTimer);
     ws.authenticatedAt = now(); ws.uid = uid; ws.authed = true;
@@ -2972,7 +3184,13 @@ async function handle(ws, m) {
       return;
     }
     let r;
-    try { r = await transactionRequest(ws.uid, { ...m, __traceId: traceId }); }
+    // ─── ENHANCED: forward cached ip/fp so transactionRequest re-detects ───
+    try { r = await transactionRequest(ws.uid, {
+      ...m,
+      __traceId: traceId,
+      __ip: ws._ip || websocketClientIp(ws),
+      __fingerprint: ws._fingerprint || null,
+    }); }
     catch (e) {
       console.error('[WS-TX] uncaught:', e.message);
       await trace(traceId, ws.uid, 'ws.uncaught', 'fail', { type: m.txType, reason: e.message });
@@ -3094,7 +3312,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
     return res.status(200).json({ ok: false, error: e.message, traceId });
   }
 });
-
 app.post('/api/telegram/webhook', async (req, res) => {
   if (!TELEGRAM_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'telegram-webhook-secret-not-configured' });
   const supplied = req.get('x-telegram-bot-api-secret-token') || '';
@@ -3262,6 +3479,7 @@ app.post('/admin/delete-user', async(req,res)=>{
     await c.query('DELETE FROM telegram_users WHERE uid=$1',[uid]);
     await c.query('DELETE FROM transaction_requests WHERE uid=$1',[uid]); await c.query('DELETE FROM deposit_attempts WHERE username=$1',[uid]); await c.query('DELETE FROM request_trace WHERE uid=$1',[uid]); await c.query('DELETE FROM used_references WHERE username=$1',[uid]); await c.query('DELETE FROM game_winners WHERE username=$1',[uid]);
     await c.query('DELETE FROM bingo_results WHERE username=$1',[uid]); await c.query('DELETE FROM bingo_entries WHERE username=$1',[uid]); await c.query('DELETE FROM bingo_wallet_transactions WHERE username=$1',[uid]);
+    await c.query('DELETE FROM ip_history WHERE username=$1',[uid]); await c.query('DELETE FROM device_fp_history WHERE username=$1',[uid]);
     await c.query('DELETE FROM users WHERE username=$1',[uid]); await c.query('COMMIT');
     const sockets=conns.get(uid); if(sockets){for(const ws of sockets){try{ws.close(4003,'account-removed');}catch{}}conns.delete(uid);} res.json({ok:true});
   }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(500).json({ok:false,error:e.message});}finally{c.release();}
@@ -3291,6 +3509,98 @@ app.post('/admin/scan-suspicious', async(req,res)=>{
   if(!isAdmin(req))return res.status(403).json({ok:false});
   try { const r=await runSuspiciousAccountScan(); const f=await pool.query("SELECT username,display_name,block_signals,updated_at FROM users WHERE fraud_status='flagged' ORDER BY updated_at DESC"); const flaggedUsers=f.rows.map(x=>{let p=x.block_signals||{};if(typeof p==='string'){try{p=JSON.parse(p);}catch{p={};}}return {uid:x.username,name:x.display_name,signals:Array.isArray(p?.signals)?p.signals:[],detectedAt:Number(p?.detectedAt||x.updated_at||0)};});res.json({ok:true,...r,flaggedUsers}); }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENHANCED: three new admin endpoints for the security UI
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/admin/security-details', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const uid = String(req.query.uid || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'uid required' });
+  try {
+    const u = await pool.query('SELECT * FROM users WHERE username = $1', [uid]);
+    if (!u.rows.length) return res.status(404).json({ ok: false, error: 'not-found' });
+    const user = u.rows[0];
+    let parsed = { signals: [] };
+    try { parsed = JSON.parse(user.block_signals || '{}'); } catch {}
+    const signals = (parsed.signals || []).map(s => ({ ...s }));
+    const since = now() - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
+
+    for (const sig of signals) {
+      if (sig.kind === 'ip-cluster') {
+        const rows = await pool.query(
+          `SELECT h2.username, MAX(h2.seen_at) AS shared_at
+             FROM ip_history h1
+             JOIN ip_history h2 ON h1.ip_hash = h2.ip_hash
+            WHERE h1.username = $1 AND h2.username <> $1
+              AND h1.seen_at > $2 AND h2.seen_at > $2
+            GROUP BY h2.username LIMIT 100`,
+          [uid, since]
+        );
+        sig.relatedAccounts = rows.rows.map(r => ({
+          uid: r.username, name: r.username, sharedAt: Number(r.shared_at), relation: 'same-ip',
+        }));
+      } else if (sig.kind === 'fingerprint-cluster') {
+        const rows = await pool.query(
+          `SELECT h2.username, MAX(h2.seen_at) AS shared_at
+             FROM device_fp_history h1
+             JOIN device_fp_history h2 ON h1.fingerprint = h2.fingerprint
+            WHERE h1.username = $1 AND h2.username <> $1
+              AND h1.seen_at > $2 AND h2.seen_at > $2
+            GROUP BY h2.username LIMIT 100`,
+          [uid, since]
+        );
+        sig.relatedAccounts = rows.rows.map(r => ({
+          uid: r.username, name: r.username, sharedAt: Number(r.shared_at), relation: 'same-fingerprint',
+        }));
+      }
+    }
+
+    res.json({
+      ok: true,
+      user: {
+        uid: user.username, name: user.display_name,
+        fraud_status: user.fraud_status || null,
+        blocked: !!user.blocked,
+        fraud_flagged_at: Number(user.fraud_flagged_at || 0),
+        detectedAt: Number(parsed.detectedAt || 0),
+      },
+      signals,
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/admin/freeze-user', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const uid = String(req.body?.userId || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'userId required' });
+  const freeze = !!req.body?.freeze;
+  try {
+    await pool.query(
+      `UPDATE users SET fraud_status = $1, blocked = $2, blocked_at = $3, block_reason = $4, updated_at = $5 WHERE username = $6`,
+      [freeze ? 'frozen' : null, freeze, freeze ? now() : null, freeze ? 'Frozen by admin' : null, now(), uid]
+    );
+    if (freeze) {
+      const sockets = conns.get(uid);
+      if (sockets) for (const ws of sockets) try { ws.close(4003, 'account-frozen'); } catch {}
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/admin/clear-signals', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const uid = String(req.body?.userId || '').trim();
+  if (!uid) return res.status(400).json({ ok: false, error: 'userId required' });
+  try {
+    await pool.query(
+      `UPDATE users SET fraud_status = NULL, block_signals = NULL, fraud_flagged_at = 0, updated_at = $1 WHERE username = $2`,
+      [now(), uid]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// ═══════════════════════════════════════════════════════════════════════════
 
 app.get('/admin/user-details', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ ok: false });
@@ -3628,13 +3938,96 @@ async function expireAllSignupBonuses(){
   for(const row of r.rows){try{await expireSignupBonus(row.username);await sendWallet(row.username);}catch(e){console.error('[BONUS-EXPIRY]',row.username,e.message);}}
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ENHANCED: runSuspiciousAccountScan now queries history tables directly
+// ═══════════════════════════════════════════════════════════════════════════
 async function runSuspiciousAccountScan(){
-  const flagged=await pool.query(`SELECT username,last_ip_hash,device_fingerprint,fraud_status FROM users WHERE blocked=false AND COALESCE(fraud_status,'') NOT IN ('flagged','frozen') AND (last_ip_hash IS NOT NULL OR device_fingerprint IS NOT NULL)`);
-  let count=0; const findings=[];
-  for(const u of flagged.rows){const result=await detectMultiAccount(u.username,u.last_ip_hash,u.device_fingerprint);if(result.suspicious){count++;findings.push({uid:u.username,signals:result.signals||[]});await addNotification(u.username,{type:'notification',message:'Your account has been flagged for a routine security review. Please contact support if you believe this is an error.',status:'warning'});}}
-  const scanAt=now();
-  await pool.query('INSERT INTO security_scan_logs(id,scanned,flagged,findings,created_at) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),flagged.rowCount,count,JSON.stringify(findings),scanAt]);
-  return {scanned:flagged.rowCount,flagged:count,findings};
+  const since = now() - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
+
+  const [ipClusters, fpClusters] = await Promise.all([
+    pool.query(
+      `SELECT ip_hash, array_agg(DISTINCT username) AS users, COUNT(DISTINCT username)::int AS c
+         FROM ip_history
+        WHERE seen_at > $1
+        GROUP BY ip_hash
+        HAVING COUNT(DISTINCT username) >= $2`,
+      [since, MULTI_ACCOUNT_IP_THRESHOLD]
+    ),
+    pool.query(
+      `SELECT fingerprint, array_agg(DISTINCT username) AS users, COUNT(DISTINCT username)::int AS c
+         FROM device_fp_history
+        WHERE seen_at > $1
+        GROUP BY fingerprint
+        HAVING COUNT(DISTINCT username) >= $2`,
+      [since, MULTI_ACCOUNT_FP_THRESHOLD]
+    ),
+  ]);
+
+  const userSignals = new Map();
+  for (const row of ipClusters.rows) {
+    for (const u of row.users) {
+      if (!userSignals.has(u)) userSignals.set(u, []);
+      userSignals.get(u).push({
+        kind: 'ip-cluster', count: row.c,
+        windowDays: MULTI_ACCOUNT_HISTORY_DAYS, threshold: MULTI_ACCOUNT_IP_THRESHOLD,
+        lastSeen: now(),
+      });
+    }
+  }
+  for (const row of fpClusters.rows) {
+    for (const u of row.users) {
+      if (!userSignals.has(u)) userSignals.set(u, []);
+      userSignals.get(u).push({
+        kind: 'fingerprint-cluster', count: row.c,
+        windowDays: MULTI_ACCOUNT_HISTORY_DAYS, threshold: MULTI_ACCOUNT_FP_THRESHOLD,
+        lastSeen: now(),
+      });
+    }
+  }
+
+  const findings = [];
+  let count = 0;
+  const scanned = userSignals.size;
+
+  for (const [uid, signals] of userSignals) {
+    const r = await pool.query('SELECT fraud_status, blocked FROM users WHERE username = $1', [uid]);
+    if (!r.rows.length) continue;
+    const u = r.rows[0];
+    if (u.blocked) continue;
+    if (String(u.fraud_status || '').toLowerCase() === 'frozen') continue;
+    const alreadyFlagged = String(u.fraud_status || '').toLowerCase() === 'flagged';
+    if (!alreadyFlagged) count++;
+
+    const scanAt = now();
+    await pool.query(
+      `UPDATE users
+          SET fraud_status = 'flagged',
+              block_signals = $1,
+              fraud_flagged_at = CASE WHEN fraud_status = 'flagged' THEN fraud_flagged_at ELSE $2 END,
+              updated_at = $2
+        WHERE username = $3`,
+      [JSON.stringify({ signals, detectedAt: scanAt }), scanAt, uid]
+    );
+    findings.push({ uid, signals });
+
+    if (!alreadyFlagged) {
+      try {
+        await addNotification(uid, {
+          type: 'notification',
+          message: 'Your account has been flagged for a routine security review. Please contact support if you believe this is an error.',
+          status: 'warning',
+        });
+      } catch (_) {}
+    }
+  }
+
+  await pool.query(
+    'INSERT INTO security_scan_logs(id,scanned,flagged,findings,created_at) VALUES($1,$2,$3,$4,$5)',
+    [crypto.randomUUID(), scanned, count, JSON.stringify(findings), now()]
+  );
+
+  console.log(`[SECURITY-SCAN] scanned=${scanned} flagged=${count}`);
+  return { scanned, flagged: count, findings };
 }
 
 async function pruneOldData() {
@@ -3645,14 +4038,17 @@ async function pruneOldData() {
     const traceCutoff = nowMs - 30 * DAY;
     const activityCutoff = nowMs - 30 * DAY;
     const notifCutoff = nowMs - 90 * DAY;
-    const [a, b, c, d, e] = await Promise.all([
+    const historyCutoff = nowMs - 30 * DAY;
+    const [a, b, c, d, e, f, g] = await Promise.all([
       pool.query('DELETE FROM incoming_sms WHERE processed = true AND timestamp < $1', [smsCutoff]),
       pool.query('DELETE FROM deposit_attempts WHERE created_at < $1', [attemptsCutoff]),
       pool.query('DELETE FROM request_trace WHERE at < $1', [traceCutoff]),
       pool.query('DELETE FROM auto_activity WHERE at < $1', [activityCutoff]),
       pool.query(`DELETE FROM notifications WHERE timestamp < $1 AND type IN ('payout_marker','referral_marker')`, [notifCutoff]),
+      pool.query('DELETE FROM ip_history WHERE seen_at < $1', [historyCutoff]),
+      pool.query('DELETE FROM device_fp_history WHERE seen_at < $1', [historyCutoff]),
     ]);
-    console.log(`[PRUNE] sms=${a.rowCount} attempts=${b.rowCount} trace=${c.rowCount} activity=${d.rowCount} notif=${e.rowCount}`);
+    console.log(`[PRUNE] sms=${a.rowCount} attempts=${b.rowCount} trace=${c.rowCount} activity=${d.rowCount} notif=${e.rowCount} ip=${f.rowCount} fp=${g.rowCount}`);
   } catch (err) { console.error('[PRUNE] failed:', err.message); }
 }
 
@@ -3692,7 +4088,7 @@ server.listen(PORT, '0.0.0.0', () => {
       runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message));
       expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message));
       setInterval(()=>expireAllSignupBonuses().catch(e=>console.error('[BONUS-EXPIRY]',e.message)),60000);
-      setInterval(()=>runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message)), 6*60*60*1000);
+      setInterval(()=>runSuspiciousAccountScan().catch(e=>console.error('[SECURITY-SCAN]',e.message)), SCANNER_INTERVAL_MS);
       for (const room of Object.values(rooms)) {
         if (room.phase === 'selection' && room.endsAt <= now()) { room.endsAt = now() + SELECTION_SECONDS * 1000; room.dirty = true; }
         if (room.phase === 'selection') normalizeRoundBots(room);
