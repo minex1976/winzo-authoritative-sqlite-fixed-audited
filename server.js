@@ -1164,7 +1164,7 @@ async function notifyTransaction(username, tx) {
     await sendBotDepositStatus(username, `✅ *Withdrawal Approved!*\n\nYour withdrawal of *${tx.amount} Birr* has been approved.`);
   } else {
     message = 'Your request was rejected by admin.';
-    await sendBotDepositStatus(username, `❌ *Deposit Rejected*\n\nYour deposit request of *${tx.amount} Birr* was rejected.\nReason: ${tx.reason || 'Invalid request'}`);
+    await sendBotDepositStatus(username, `❌ *Request Rejected*\n\nYour request of *${tx.amount} Birr* was rejected.\nReason: ${tx.reason || 'Invalid request'}`);
   }
   
   await addNotification(username, {
