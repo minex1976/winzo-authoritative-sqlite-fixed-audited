@@ -236,9 +236,30 @@ function setupTelegramBot() {
   });
   
   bot.onText(/\/instruction/, (msg) => {
-      botUserStates.delete(msg.chat.id);
-      const text = "📖 *Game Instructions*\n\n1. Pick up to 5 numbers.\n2. Winnings go to your Main Wallet.\n3. Minimum withdrawal applies.\n4. Play responsibly!";
-      safeBotSend(msg.chat.id, text, { parse_mode: 'Markdown' });
+    botUserStates.delete(msg.chat.id);
+      
+    const text = `🎮 *የዊንዞ መጫወቻ ደንቦች (Winzo Game Rules)*
+
+🎡 *ዊንዞ ስፒን (Winzo Spin)*
+   1. ከ1-200 ቁጥሮች ውስጥ እስከ 5 ቁጥሮችን ይምረጡ።
+   2. ሰዓቱ ሲያበቃ ኮምፒውተሩ 1 አሸናፊ ቁጥር በዘፈቀደ ይመርጣል።
+   3. የመረጡት ቁጥር ከአሸናፊው ጋር ከተመሳሰለ ያሸንፋሉ!
+
+🎱 *ዊንዞ ቢንጎ (Winzo Bingo)*
+   1. በቦርድ ላይ ካሉት ካርዶች (1-400) ውስጥ እስከ 2 ካርዶችን ይምረጡ።
+   2. ቀይ የሆኑት በሌሎች ተጫዋቾች የተያዙ ናቸው።
+   3. ኮምፒውተሩ ከ1-75 ያሉ ቁጥሮችን ሲጠራ በካርድዎ ላይ ያሉትን ቁጥሮች ያመልክቱ። 
+   🏆 *ለማሸነፍ:* ወደ ጎን/ታች መስመር፣ አግዳሚ መስመር (Diagonal) ወይም 4 ኮርነሮችን ማሟላት ይኖርብዎታል።
+
+🪜 *ዊንዞ ላደር (Winzo Ladder)*
+   1. የውርርድ (Betting) መጠን (15/30) መርጠው ክፍል ይክፈቱ ወይም ይቀላቀሉ።
+   2. ዳይስ (Dice) የሚለውን በመጫን ወደ ፊት ይጓዙ፤ Snake ላይ ካረፉ ወደኋላ ይመለሳሉ ፤ Ladder (መንሰላል) ላይ ካረፉ ወደ ላይ ይወጣሉ።
+   3. Attack የሚለውን በተን (ቁልፍ) በመጫን እና ለዚህ ሲባል ተጨማሪ 10 ብር በመክፈል በተጋጣሚዎ ላይ "ምናባዊ Snake" ማስቀመጥ ተጋጣሚዎን ወደ ታች መጎተት ይችላሉ።
+   🏆 *ለማሸነፍ:* ከተጋጣሚዎ ቀድመው 100 ላይ ከደረሱ ወይም ተጋጣሚዎ ለ45 ሰከንድ ያህል ሰይጫት (ባለበት) ከቀረ አሸናፊ ይሆናሉ።
+   
+💡 *ማሳሰቢያ:* ሁሉም ጨዋታዎች በPlay Wallet የሚጫወቱ ሲሆን፣ የሽልማት ገንዘብ በቀጥታ ወደ Main Wallet ይገባል።`;
+
+    safeBotSend(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
   
   bot.onText(/\/support/, (msg) => {
