@@ -689,6 +689,7 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_time ON round_snapshots (ended_at DESC);
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_round ON round_snapshots (room_id, round);
       CREATE INDEX IF NOT EXISTS idx_round_snapshots_room_time ON round_snapshots (room_id, ended_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users (telegram_id) WHERE telegram_id IS NOT NULL;
     `);
     console.log('✅ Database Schema Verified.');
   } catch (e) {
@@ -697,7 +698,6 @@ async function initDb() {
     client.release();
   }
 }
-
 // ============================================================================
 // UTILITY HELPERS
 // ===========================================
@@ -1154,24 +1154,56 @@ async function addNotification(username, data) {
   if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify(wsPayload));
 }
 
+// ─── FIX 1: differentiate rejection/approval by transaction type ────────────
 async function notifyTransaction(username, tx) {
+  const isDeposit  = tx.type === 'deposit';
+  const isWithdraw = tx.type === 'withdraw';
+  const label      = isDeposit ? 'Deposit' : isWithdraw ? 'Withdrawal' : 'Request';
+  const labelLower = label.toLowerCase();
+
   let message;
-  if (tx.type === 'deposit' && tx.status === 'approved') {
-    message = 'ትዕዛዙ ተፈፅሟል። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
-    await sendBotDepositStatus(username, `✅ *Deposit Approved!*\n\nYour deposit of *${tx.amount} Birr* has been approved.\n\n💰 Main Wallet: *${(await walletFor(username)).main} Birr*\n🎮 Play Wallet: *${(await walletFor(username)).play} Birr*`);
-  } else if (tx.status === 'approved') {
-    message = `${tx.type === 'withdraw' ? 'Withdrawal' : 'Deposit'} approved.`;
-    await sendBotDepositStatus(username, `✅ *Withdrawal Approved!*\n\nYour withdrawal of *${tx.amount} Birr* has been approved.`);
+  if (tx.status === 'approved') {
+    if (isDeposit) {
+      message = 'ትዕዛዙ ተፈፅሟል። የዊንዞ ቤተሰብ በመሆንዎ እናመሰግናለን። መልካም ጨዋታ!';
+      const w = await walletFor(username);
+      await sendBotDepositStatus(
+        username,
+        `✅ *Deposit Approved!*\n\nYour deposit of *${tx.amount} Birr* has been approved.\n\n💰 Main Wallet: *${w.main} Birr*\n🎮 Play Wallet: *${w.play} Birr*`
+      );
+    } else if (isWithdraw) {
+      message = 'Withdrawal approved.';
+      await sendBotDepositStatus(
+        username,
+        `✅ *Withdrawal Approved!*\n\nYour withdrawal of *${tx.amount} Birr* has been approved.`
+      );
+    } else {
+      message = 'Request approved.';
+      await sendBotDepositStatus(
+        username,
+        `✅ *${label} Approved!*\n\nYour ${labelLower} of *${tx.amount} Birr* has been approved.`
+      );
+    }
   } else {
-    message = 'Your request was rejected by admin.';
-    await sendBotDepositStatus(username, `❌ *Request Rejected*\n\nYour request of *${tx.amount} Birr* was rejected.\nReason: ${tx.reason || 'Invalid request'}`);
+    const reason = tx.reason || 'Invalid request';
+    message = `${label} rejected by admin.`;
+    await sendBotDepositStatus(
+      username,
+      `❌ *${label} Rejected*\n\nYour ${labelLower} request of *${tx.amount} Birr* was rejected.\nReason: ${reason}`
+    );
   }
-  
+
   await addNotification(username, {
-    type: 'transaction_result', status: tx.status, txType: tx.type, txId: tx.id, reason: tx.reason || '', message
+    type: 'transaction_result',
+    status: tx.status,
+    txType: tx.type,
+    txId: tx.id,
+    reason: tx.reason || '',
+    message,
   });
+
   const set = conns.get(username);
-  if (set) for (const ws of set) if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '' }));
+  if (set) for (const ws of set) if (ws.readyState === 1)
+    ws.send(JSON.stringify({ type: 'transaction-status', id: tx.id, status: tx.status, txType: tx.type, reason: tx.reason || '' }));
 }
 
 async function recordWalletCredit(client, username, amount, type, meta = {}) {
@@ -1245,21 +1277,40 @@ async function transactionRequest(uid, data) {
     if (user.blocked) throw new Error('account-blocked');
     if (String(user.fraud_status || '').toLowerCase() === 'frozen') throw new Error('account-frozen');
 
-    // ─── ENHANCED: block withdrawals from flagged accounts ─────────────────
+    // ─── FIX 2: flagged accounts pause withdrawals ONLY for fingerprint clusters
+    // IP-cluster flags (shared network / NAT) do NOT block withdrawals.
+    // Fingerprint-cluster flags (shared device) DO block withdrawals (unchanged).
     if (type === 'withdraw' && String(user.fraud_status || '').toLowerCase() === 'flagged') {
-      await trace(traceId, uid, 'tx.flagged', 'fail', { type, amount, reason: 'account-flagged' });
-      try { await client.query('ROLLBACK'); } catch (_) {}
+      let flaggedSignals = [];
       try {
-        await addNotification(uid, {
-          type: 'fraud_flag',
-          message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support.'
-        });
-      } catch (_) {}
-      try {
-        await sendBotDepositStatus(uid,
-          `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: @winzo_help_center`);
-      } catch (_) {}
-      return { ok: false, reason: 'account-flagged', traceId };
+        const parsed = JSON.parse(user.block_signals || '{}');
+        flaggedSignals = Array.isArray(parsed.signals) ? parsed.signals : [];
+      } catch (_) { flaggedSignals = []; }
+
+      const hasFingerprintFlag = flaggedSignals.some(
+        s => s && String(s.kind) === 'fingerprint-cluster'
+      );
+
+      if (hasFingerprintFlag) {
+        await trace(traceId, uid, 'tx.flagged', 'fail', { type, amount, reason: 'account-flagged-fp' });
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        try {
+          await addNotification(uid, {
+            type: 'fraud_flag',
+            message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support.'
+          });
+        } catch (_) {}
+        try {
+          await sendBotDepositStatus(uid,
+            `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: @winzo_help_center`);
+        } catch (_) {}
+        return { ok: false, reason: 'account-flagged', traceId };
+      }
+
+      // IP-cluster-only flag → withdrawal allowed. Log for audit trail.
+      await trace(traceId, uid, 'tx.flagged-ip-only', 'warn', {
+        type, amount, reason: 'ip-cluster-withdraw-allowed'
+      });
     }
 
     await trace(traceId, uid, 'tx.user-locked', 'ok', { type, amount });
@@ -1284,7 +1335,7 @@ async function transactionRequest(uid, data) {
       const pending = Number(user.pending_withdrawal);
       
       if (main - pending < amount) throw new Error('insufficient-main');
-      if (main - pending - amount < 15) throw new Error("በ 'Main Wallet' ላይ በትንሹ 15 ብር ቀሪ ሊያኖሩ ይገባል! እባክዎ በድጋሜ ይዘዙ");
+      if (main - pending - amount < 15) throw new Error("በ 'Main Wallet' ላይ በትንሹ 15 ብር ቀሪ ሊያኖሩ ይገባል! እባክዎ በድጋሚ ይዘዙ");
       
       await client.query('UPDATE users SET pending_withdrawal = $1, updated_at = $2 WHERE username = $3', [pending + amount, now(), uid]);
       await trace(traceId, uid, 'tx.withdraw-hold', 'ok', { type, amount });
@@ -1398,7 +1449,6 @@ async function adminDecision(id, decision, reason = '') {
     return { ok: false, reason: e.message };
   } finally { client.release(); }
 }
-
 // ============================================================================
 // AUTO-DEPOSIT STRICT MODE
 // ============================================================================
@@ -1950,7 +2000,6 @@ setInterval(async () => {
     });
   }
 }, 500);
-
 // ============================================================================
 /* WINZO BINGO */
 // ============================================================================
@@ -1990,9 +2039,12 @@ function bingoWithRoundLock(round, fn) {
 function clearBingoBots(round){for(const t of (round.botTimers||[]))clearTimeout(t);round.botTimers=[];}
 function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}return pool;}
 
+// ─── FIX C4: prefer human card as guaranteed winner ────────────────────────
 function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
-  const entries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
-  if (!entries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
+  const allEntries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
+  if (!allEntries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
+  const humans = allEntries.filter(e => !String(e.uid).startsWith('__bot_'));
+  const entries = humans.length ? humans : allEntries;
 
   const entryFingerprint = crypto.createHash('sha256').update(entries.map(e => e.id).join(',')).digest('hex');
   const effectiveSeed = crypto.createHmac('sha256', Buffer.from(round.serverSeed, 'hex'))
@@ -2265,17 +2317,21 @@ async function bingoUnselect(ws,number){
   return bingoWithRoundLock(round,()=>bingoUnselectUnlocked(ws,number));
 }
 
+// ─── FIX C3: only split prize among human winners; bots get 0 ──────────────
 async function bingoFinish(round,winners){
   if(!round||round.phase!=='playing')return;
   round.phase='results';round.completedAt=Date.now();
   const eligible=[...new Map(winners.map(w=>[w.id,w])).values()];
-  const prizeEach=eligible.length?Math.floor((round.prizePool*0.8*100)/eligible.length)/100:0;
+  const humanEligible = eligible.filter(w => !String(w.uid).startsWith('__bot_'));
+  const prizeEach = humanEligible.length
+    ? Math.floor((round.prizePool * 0.8 * 100) / humanEligible.length) / 100
+    : 0;
   const db=await pool.connect();
   try{
     await db.query('BEGIN');
     for(const w of eligible){
-      const prize=prizeEach;
-      if(prize>0 && !String(w.uid).startsWith('__bot_')){
+      const prize = String(w.uid).startsWith('__bot_') ? 0 : prizeEach;
+      if(prize>0){
         const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',[crypto.randomUUID(),round.id,w.uid,'prize',prize,'bingo-prize:'+round.id+':'+w.id,Date.now()]);
         if(ledger.rowCount){const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);if(!upd.rowCount)throw new Error('Winner wallet update failed');}
         await recordWalletCredit(db, w.uid, prize, 'bingo_win', { reason: `Bingo ${round.id} card ${w.cardNumber}`, reference: `bingo-prize:${round.id}:${w.id}` });
@@ -2301,7 +2357,7 @@ async function bingoFinish(round,winners){
       });
     }
   }
-  for(const uid of new Set(eligible.filter(w=>!String(w.uid).startsWith('__bot_')).map(w=>w.uid))){
+  for(const uid of new Set(eligible.filter(w=>!String(w.uid).startsWith('__bot_')&&w.prize>0).map(w=>w.uid))){
     await sendWallet(uid);
   }
   await persistBingoRound(round);bingoBroadcast(round.stake);clearBingoBots(round);
@@ -2532,6 +2588,8 @@ async function executeLadderRoll(room, uid) {
 
     setTimeout(() => {
         try {
+            // ─── FIX C5: abort if room was terminalized during the 5s animation
+            if (room.phase !== 'moving') return;
             if (!room.players[uid]) return;
             if (p.pos >= LADDER_TARGET) {
                 awardLadderWin(room, uid);
@@ -2581,6 +2639,7 @@ async function handleLadderLeave(ws, isDisconnect = false) {
                 if (joinerWs) { joinerWs._ladderRoomId = null; try { send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); } catch (e) {} }
                 if (room._waitTimeout) clearTimeout(room._waitTimeout);
                 ladderRooms.delete(room.id);
+                broadcastLadderLobby();   // FIX S5
             } else if (room.joinerUid === ws.uid) {
                 delete room.players[room.joinerUid];
                 room.joinerUid = null;
@@ -2717,6 +2776,8 @@ setInterval(() => {
         }
     } catch (e) { console.error('[LADDER-BOT-ENGINE]', e.message); }
 }, 15000);
+
+// ============================================================================
 // WEBSOCKET SETUP
 // ============================================================================
 const conns = new Map();
@@ -2732,6 +2793,17 @@ function allowWsConnection(ip) {
   recent.push(t); wsIpAttempts.set(key, recent); wsIpConnections.set(key, active + 1);
   return true;
 }
+
+// ─── FIX S1: prune stale rate-limit buckets every 15 min ──────────────────
+setInterval(() => {
+  const cutoff = now() - WS_CONNECTION_RATE_WINDOW_MS;
+  for (const [k, v] of wsIpAttempts) {
+    const trimmed = v.filter(t => t > cutoff);
+    if (trimmed.length) wsIpAttempts.set(k, trimmed);
+    else wsIpAttempts.delete(k);
+  }
+}, 15 * 60 * 1000);
+
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
 function send(ws, obj) { try { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (e) {} }
 
@@ -2784,6 +2856,9 @@ async function handle(ws, m) {
   if (m.type === 'ping') return send(ws, { type: 'pong', t: now() });
 
   if (m.type === 'auth') {
+    // ─── FIX C2: reject a second auth on the same socket ──────────────────
+    if (ws.authed) return send(ws, { type: 'error', message: 'already-authed' });
+
     const verification = validateInitData(m.initData || '');
     if (!verification.ok) {
       send(ws, { type: 'error', message: 'auth-failed', reason: verification.reason || 'unknown' });
@@ -2905,13 +2980,20 @@ async function handle(ws, m) {
     return bingoSendState(ws);
   }
   if (m.type === 'bingo-state') {
+    // ─── FIX C1: register for live broadcasts ─────────────────────────────
+    bingoMembers.add(ws);
     const requestedStake = m.stake !== undefined ? m.stake : (m.room === 'room_30' ? 30 : m.room === 'room_15' ? 15 : undefined);
     if (requestedStake !== undefined) ws._bingoStake=bingoStake(requestedStake);
     if(!bingoRounds.has(bingoStake(ws._bingoStake))) await bingoNewRound(bingoStake(ws._bingoStake));
     return bingoSendState(ws);
   }
   if (m.type === 'bingo-leave') { bingoMembers.delete(ws); ws._bingoStake = undefined; return; }
-  if (m.type === 'bingo-select') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoSelect(ws,m.numbers); }
+  if (m.type === 'bingo-select') {
+    // ─── FIX C1: register for live broadcasts ─────────────────────────────
+    bingoMembers.add(ws);
+    if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake);
+    return bingoSelect(ws,m.numbers);
+  }
   if (m.type === 'bingo-unselect') { if (m.stake !== undefined) ws._bingoStake=bingoStake(m.stake); return bingoUnselect(ws,m.number); }
   if (m.type === 'bingo-history') {
     if (!checkTransferRate(`bingo-history:${ws.uid}`)) return send(ws, { type: 'error', message: 'rate-limited' });
@@ -3199,14 +3281,22 @@ async function handle(ws, m) {
     return;
   }
 
+  // ─── FIX C6: transactional transfer with audit trail ────────────────────
   if (m.type === 'transfer') {
     if (!checkTransferRate(ws.uid)) return send(ws, { type: 'error', message: 'rate-limited' });
     const amount = Number(m.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return send(ws, { type: 'error', message: 'bad-amount' });
+    const c = await pool.connect();
     try {
-      await pool.query('UPDATE users SET main_wallet = main_wallet - $1, play_wallet = play_wallet + $1, updated_at = $2 WHERE username = $3 AND main_wallet >= $1', [amount, now(), ws.uid]);
+      await c.query('BEGIN');
+      const u = await c.query('SELECT main_wallet FROM users WHERE username=$1 FOR UPDATE', [ws.uid]);
+      if (!u.rows.length || Number(u.rows[0].main_wallet) < amount) { await c.query('ROLLBACK'); return send(ws, { type: 'error', message: 'insufficient-main' }); }
+      await c.query('UPDATE users SET main_wallet=main_wallet-$1, play_wallet=play_wallet+$1, wallet_updated_at=$2, updated_at=$2 WHERE username=$3', [amount, now(), ws.uid]);
+      await recordWalletCredit(c, ws.uid, amount, 'transfer_main_to_play', { reason: 'ws-transfer' });
+      await c.query('COMMIT');
       await sendWallet(ws.uid);
-    } catch (e) { send(ws, { type: 'error', message: 'transfer-failed' }); }
+    } catch (e) { await c.query('ROLLBACK').catch(()=>{}); send(ws, { type: 'error', message: 'transfer-failed' }); }
+    finally { c.release(); }
     return;
   }
 
@@ -3273,25 +3363,38 @@ setInterval(() => {
     try { ws.ping(); } catch {}
   }
 }, 60000);
-
 // ============================================================================
 // EXPRESS API
 // ============================================================================
 const app = express();
 
+// ─── FIX S3: paths that may be called from any origin (auth already via body)
+const CORS_ANY_ORIGIN_PATHS = new Set(['/api/telegram-contact/status']);
+
 app.use((req, res, next) => {
   const origin = String(req.headers.origin || '').trim();
-  if (origin && WS_ALLOWED_ORIGINS.has(origin)) {
+  const isAnyOrigin = CORS_ANY_ORIGIN_PATHS.has(req.path);
+
+  if (isAnyOrigin) {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  } else if (origin && WS_ALLOWED_ORIGINS.has(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret, x-telegram-bot-api-secret-token');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   }
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret, x-telegram-bot-api-secret-token');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+
   res.header('Access-Control-Max-Age', '86400');
   res.header('X-Content-Type-Options', 'nosniff');
   res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (req.method === 'OPTIONS') return origin && !WS_ALLOWED_ORIGINS.has(origin) ? res.sendStatus(403) : res.sendStatus(204);
+
+  if (req.method === 'OPTIONS') {
+    if (isAnyOrigin) return res.sendStatus(204);
+    return origin && !WS_ALLOWED_ORIGINS.has(origin) ? res.sendStatus(403) : res.sendStatus(204);
+  }
   next();
 });
 app.use(express.json({ limit: '3mb' }));
@@ -3311,6 +3414,26 @@ if (BOT_TOKEN) {
   });
 }
 
+// ─── FIX S2: rate limit the SMS webhook (only after secret check) ──────────
+const smsWebhookRate = new Map();
+const SMS_WEBHOOK_RATE_WINDOW_MS = 60_000;
+const SMS_WEBHOOK_RATE_MAX = Math.max(5, Number(process.env.SMS_WEBHOOK_RATE_MAX || 30));
+function checkSmsWebhookRate(ip) {
+  const key = normalizedClientIp(ip || 'unknown');
+  const t = now();
+  const arr = (smsWebhookRate.get(key) || []).filter(x => x > t - SMS_WEBHOOK_RATE_WINDOW_MS);
+  if (arr.length >= SMS_WEBHOOK_RATE_MAX) return false;
+  arr.push(t); smsWebhookRate.set(key, arr);
+  return true;
+}
+setInterval(() => {
+  const cutoff = now() - SMS_WEBHOOK_RATE_WINDOW_MS;
+  for (const [k, v] of smsWebhookRate) {
+    const t = v.filter(x => x > cutoff);
+    if (t.length) smsWebhookRate.set(k, t); else smsWebhookRate.delete(k);
+  }
+}, 10 * 60 * 1000);
+
 app.post('/api/sms/incoming', express.json(), async (req, res) => {
   if (!SMS_WEBHOOK_SECRET) {
     console.warn('[SECURITY] SMS webhook called but SMS_WEBHOOK_SECRET is not configured.');
@@ -3320,6 +3443,14 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
   if (!providedSecret || !constantTimeEqual(providedSecret, SMS_WEBHOOK_SECRET)) {
     console.warn('[SECURITY] Unauthorized SMS attempt.');
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+
+  const clientIp = (process.env.TRUST_PROXY_HEADERS === 'true'
+    ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    : '') || req.socket.remoteAddress || 'unknown';
+  if (!checkSmsWebhookRate(clientIp)) {
+    console.warn(`[SMS] Rate-limited from ${clientIp}`);
+    return res.status(429).json({ ok: false, error: 'rate-limited' });
   }
 
   const traceId = newTraceId();
@@ -3397,9 +3528,8 @@ app.post('/api/telegram/webhook', async (req, res) => {
   }
 });
 
+// ─── FIX S3: route-level CORS headers handled by global middleware now ─────
 app.post('/api/telegram-contact/status', async (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
   const verification = validateInitData(String(req.body?.initData || ''), 86400);
   if (!verification.ok) return res.status(401).json({ ok: false, error: 'telegram-auth-invalid' });
   try {
@@ -3510,6 +3640,7 @@ app.get('/admin/finance-summary', async (req,res)=>{
       today:daily.find(x=>x.date===todayKey)||{date:todayKey,deposits:0,withdrawals:0,serviceFee:0},daily});
   }catch(e){console.error('[FINANCE-SUMMARY]',e);res.status(500).json({ok:false,error:e.message});}
 });
+
 app.post('/admin/delete-user', async(req,res)=>{
   if(!isAdmin(req)) return res.status(403).json({ok:false});
   const uid=String(req.body?.userId||'').trim(); if(!uid)return res.status(400).json({ok:false,error:'userId required'});
@@ -3781,9 +3912,10 @@ app.get('/admin/trace', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ─── FIX C7: Addis timezone (UTC+03:00) for both date parsing and bucketing
 function dayRangeToMs(fromDate, toDate) {
-  const startMs = Date.parse(fromDate + 'T00:00:00Z');
-  const endMs = Date.parse(toDate + 'T00:00:00Z') + 24 * 60 * 60 * 1000;
+  const startMs = Date.parse(fromDate + 'T00:00:00+03:00');
+  const endMs = Date.parse(toDate + 'T00:00:00+03:00') + 24 * 60 * 60 * 1000;
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) return null;
   return { startMs, endMs };
 }
@@ -3813,8 +3945,10 @@ app.get('/admin/analytics/games', async (req, res) => {
     }));
     const rangePlayerSet = new Set();
 
+    // ─── FIX C7: bucket by Addis local hour (UTC+03:00) ──────────────────
+    const ADDIS_OFFSET_MS = 3 * 60 * 60 * 1000;
     for (const row of snapRes.rows) {
-      const h = new Date(Number(row.ended_at)).getUTCHours();
+      const h = new Date(Number(row.ended_at) + ADDIS_OFFSET_MS).getUTCHours();
       buckets[h].rounds += 1;
       buckets[h].totalHumans      += Number(row.human_count || 0);
       buckets[h].totalHumanPicks  += Number(row.human_picks || 0);
@@ -3842,7 +3976,6 @@ app.get('/admin/analytics/games', async (req, res) => {
         rounds: b.rounds,
         uniquePlayers: players,
         average: avg,
-        // legacy fields kept so nothing else breaks
         games: b.rounds,
         avgHumans: b.rounds ? b.totalHumans / b.rounds : 0,
         totalHumans: b.totalHumans,
@@ -3865,7 +3998,6 @@ app.get('/admin/analytics/games', async (req, res) => {
     const avgRoundsPerHour  = hoursWithData ? totalRounds / hoursWithData : 0;
     const avgPlayersPerHour = hoursWithData ? totalPlayerHours / hoursWithData : 0;
 
-    // legacy totals (still used by older clients)
     const totalHumans     = hourly.reduce((s, h) => s + h.totalHumans, 0);
     const totalHumanPicks = hourly.reduce((s, h) => s + h.totalHumanPicks, 0);
     const totalBots       = hourly.reduce((s, h) => s + h.totalBots, 0);
@@ -3874,9 +4006,8 @@ app.get('/admin/analytics/games', async (req, res) => {
     const humanWinAmount  = hourly.reduce((s, h) => s + h.humanWinAmount, 0);
 
     res.json({
-      ok: true, from, to, room,
+      ok: true, from, to, room, timezone: 'Africa/Addis_Ababa',
       summary: {
-        // new
         overallAvgPlayersPerGame: overallAvg,
         peakHourlyAvg,
         roundsRecorded: totalRounds,
@@ -3886,7 +4017,6 @@ app.get('/admin/analytics/games', async (req, res) => {
         peakPlayersInHour,
         avgRoundsPerHour,
         avgPlayersPerHour,
-        // legacy (kept so nothing 500s elsewhere)
         dailyAvgHumansPerGame: hoursWithData
           ? hourly.reduce((s, h) => s + h.avgHumans, 0) / hoursWithData : 0,
         gamesRecorded: totalRounds,
@@ -3979,7 +4109,7 @@ async function expireAllSignupBonuses(){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENHANCED: runSuspiciousAccountScan now queries history tables directly
+// ENHANCED: runSuspiciousAccountScan queries history tables directly
 // ═══════════════════════════════════════════════════════════════════════════
 async function runSuspiciousAccountScan(){
   const since = now() - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
@@ -4142,12 +4272,21 @@ server.listen(PORT, '0.0.0.0', () => {
   })();
 });
 
+// ─── FIX S4: await pool.end() + wss.close() on shutdown ────────────────────
 async function gracefulShutdown(signal) {
   console.log(`[SHUTDOWN] ${signal}`);
   for (const room of Object.values(rooms)) { clearBotTimers(room); }
   for (const ws of wss.clients) { try { ws.close(1001, 'server shutting down'); } catch {} }
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  try { wss.close(); } catch (_) {}
+  server.close(async () => {
+    try { await pool.end(); } catch (_) {}
+    console.log('[SHUTDOWN] Database pool closed. Exiting.');
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 8000).unref();
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+
+
