@@ -1010,6 +1010,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   if (!clean) return null;
   const client = await pool.connect();
   let signalPayload = null;
+  let bonusBlockedByFingerprint = false;
   try {
     const res = await client.query('SELECT * FROM users WHERE username = $1', [clean]);
     if (res.rows.length > 0) {
@@ -1039,13 +1040,41 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
     }
     const t = now();
     const sanitizedFp = extra.device_fingerprint ? sanitizeFingerprint(extra.device_fingerprint) : null;
+
+    // ─── FIX: fingerprint-only signup bonus block ──────────────────────────
+    // If this device fingerprint was used by ANY prior account within the
+    // history window, withhold the signup bonus. IP alone does NOT block the
+    // bonus (Ethiopian mobile networks heavily NAT users, so shared IPs are
+    // common and not a reliable signal of multi-account abuse).
+    // Fail-open: if the check errors, still grant the bonus so a transient
+    // DB error never silently blocks a legitimate new user.
+    if (!bot && sanitizedFp) {
+      try {
+        const since = t - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
+        const prior = await client.query(
+          `SELECT COUNT(DISTINCT username)::int AS c
+             FROM device_fp_history
+            WHERE fingerprint = $1 AND seen_at > $2`,
+          [sanitizedFp, since]
+        );
+        if (prior.rows[0].c >= 1) {
+          bonusBlockedByFingerprint = true;
+          console.warn(`[SIGNUP-BONUS] withheld for ${clean}: fingerprint reused by ${prior.rows[0].c} prior account(s)`);
+        }
+      } catch (e) {
+        console.error('[SIGNUP-BONUS-CHECK]', e.message);
+      }
+    }
+
+    const grantBonus = !bot && !bonusBlockedByFingerprint;
+
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
       telegram_username: extra.telegram_username || null, main_wallet: 0,
-      play_wallet: bot ? BOT_START_WALLET : SIGNUP_BONUS,
-      signup_bonus_remaining: bot ? 0 : SIGNUP_BONUS,
-      signup_bonus_original: bot ? 0 : SIGNUP_BONUS,
-      signup_bonus_expires_at: bot ? 0 : t + 5 * 60 * 1000,
+      play_wallet: bot ? BOT_START_WALLET : (grantBonus ? SIGNUP_BONUS : 0),
+      signup_bonus_remaining: grantBonus ? SIGNUP_BONUS : 0,
+      signup_bonus_original: grantBonus ? SIGNUP_BONUS : 0,
+      signup_bonus_expires_at: grantBonus ? t + 5 * 60 * 1000 : 0,
       withdrawal_hold_until: 0, withdrawal_hold_reason: null,
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
@@ -1062,6 +1091,27 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
         fingerprint: extra.device_fingerprint || null,
       };
     }
+
+    // ─── Notify user that the signup bonus was withheld ────────────────────
+    // Delivered immediately via Telegram DM, AND persisted as an in-app
+    // notification that the frontend surfaces via /user/notifications.
+    if (bonusBlockedByFingerprint) {
+      const bonusBlockedMsg =
+        'በዚህ ስልክ ላይ፣ ከዚህ ቀደም ሌላ የዊንዞ አካውንት በተከፈተበት ወቅት 15 ብር ቦነስ እንዲያገኝ ተደርጓል። በዚህም ምክንያት፣ እርሶ በድጋሚ ቦነስ 15 ሊያገኙ አይችሉም። ገንዘብ ገቢ በማድረግ ግን መጫወት ይችላሉ።';
+      try { await sendBotDepositStatus(clean, bonusBlockedMsg); }
+      catch (e) { console.error('[SIGNUP-BONUS-BOT]', e.message); }
+      try {
+        await addNotification(clean, {
+          type: 'notification',
+          message: bonusBlockedMsg,
+          status: 'warning',
+        });
+      } catch (e) { console.error('[SIGNUP-BONUS-NOTIFY]', e.message); }
+    }
+
+    // In-memory flag (never persisted) so callers like handle() can react
+    // immediately — e.g. push a live WS toast right after auth.
+    newUser.signupBonusBlocked = bonusBlockedByFingerprint;
     return newUser;
   } finally {
     client.release();
@@ -3363,6 +3413,7 @@ setInterval(() => {
     try { ws.ping(); } catch {}
   }
 }, 60000);
+
 // ============================================================================
 // EXPRESS API
 // ============================================================================
@@ -4287,6 +4338,3 @@ async function gracefulShutdown(signal) {
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-
-
