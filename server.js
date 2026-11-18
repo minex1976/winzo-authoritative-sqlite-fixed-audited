@@ -76,8 +76,8 @@ const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
 const BOT_START_WALLET = 1_000_000;
-const BOT_MIN = 3;
-const BOT_MAX = 4;
+const BOT_MIN = 2;
+const BOT_MAX = 3;
 
 const AUTO_DEPOSIT_AMOUNT_TOLERANCE = 0.01;
 const MIN_REFERENCE_LENGTH = 6;
@@ -332,21 +332,21 @@ function setupTelegramBot() {
               const instructionText = `🎮 *የዊንዞ መጫወቻ ደንቦች (Winzo Game Rules)*
 
 🎡 *ዊንዞ ስፒን (Winzo Spin)*
-   1. ከ1-200 ካሉት ቁጥሮች ውስጥ እስከ 5 ቁጥሮችን መያዝ ይችላሉ።
-   2. ቁጥሮችን ለመምረጥ የተሰጠው 30 ሰከንድ ሲያልቅ፣ ስፒን (Spin) መዞር ይጀምራል።
-   3. የመረጡት ቁጥር ላይ ስፒኑ ከቆመ (ካረፈ) ጨዋታውን ያሸንፋሉ!
+   1. ከ1-200 ቁጥሮች ውስጥ እስከ 5 ቁጥሮችን ይምረጡ።
+   2. ሰዓቱ ሲያበቃ ኮምፒውተሩ 1 አሸናፊ ቁጥር በዘፈቀደ ይመርጣል።
+   3. የመረጡት ቁጥር ከአሸናፊው ጋር ከተመሳሰለ ያሸንፋሉ!
 
 🎱 *ዊንዞ ቢንጎ (Winzo Bingo)*
    1. በቦርድ ላይ ካሉት ካርዶች (1-400) ውስጥ እስከ 2 ካርዶችን ይምረጡ።
    2. ቀይ የሆኑት በሌሎች ተጫዋቾች የተያዙ ናቸው።
-   3. ኮምፒውተሩ ከ1-75 ያሉ ቁጥሮችን ሲጠራ በካርድዎ ላይ ካሉት ቁጥሮች ጋር ያመሳክሩ። 
-   4. ወደ ጎን ወይም ታች መስመር ከሰሩ ፤ አግዳሚ (Diagonal) መስመር ከሰሩ፤ አንዲሁም በማእዘን ላይ ያሉትን 4 ቁጥሮች ካገኙ አሸናፊ ይሆናሉ።
+   3. ኮምፒውተሩ ከ1-75 ያሉ ቁጥሮችን ሲጠራ በካርድዎ ላይ ያሉትን ቁጥሮች ያመልክቱ። 
+   🏆 *ለማሸነፍ:* ወደ ጎን/ታች መስመር፣ አግዳሚ መስመር (Diagonal) ወይም 4 ኮርነሮችን ማሟላት ይኖርብዎታል።
 
 🪜 *ዊንዞ ላደር (Winzo Ladder)*
-   1. የጨዋታ (Betting) መጠን (15/30) መርጠው ክፍል ይክፈቱ ወይም ይቀላቀሉ (join ያርጉ)።
-   2. ጨዋታው ሲጀምር፣ ዳይስ (Dice) የሚለውን በተን (button) በመጫን ወደ ፊት ይጓዙ፤ Snake ላይ ካረፉ ወደኋላ ይመለሳሉ ፤ Ladder (መንሰላል) ላይ ካረፉ ወደ ላይ ይወጣሉ።
-   3. Attack የሚለውን በተን (ቁልፍ) በመጫን (ማለትም፣ ተጨማሪ 10 ብር በመክፈል) በተጋጣሚዎ ላይ "Virtual Snake" በፈለጉት ቁጥር ላይ መሰናክል በማስቀመጥ ተጋጣሚዎን ወደ ታች ማውረድ ይችላሉ።
-   4. ከተጋጣሚዎ ቀድመው 100 ላይ ከደረሱ ወይም ተጋጣሚዎ ለ45 ሰከንድ ያህል ሰይጫት (ባለበት) ከቀረ ፣ ጨዋታውን በፈቃደኝነት እንዳቋረጠ ታስቦ እርሶ አሸናፊ ይሆናሉ።
+   1. የውርርድ (Betting) መጠን (15/30) መርጠው ክፍል ይክፈቱ ወይም ይቀላቀሉ።
+   2. ዳይስ (Dice) የሚለውን በመጫን ወደ ፊት ይጓዙ፤ Snake ላይ ካረፉ ወደኋላ ይመለሳሉ ፤ Ladder (መንሰላል) ላይ ካረፉ ወደ ላይ ይወጣሉ።
+   3. Attack የሚለውን በተን (ቁልፍ) በመጫን እና ለዚህ ሲባል ተጨማሪ 10 ብር በመክፈል በተጋጣሚዎ ላይ "ምናባዊ Snake" ማስቀመጥ ተጋጣሚዎን ወደ ታች መጎተት ይችላሉ።
+   🏆 *ለማሸነፍ:* ከተጋጣሚዎ ቀድመው 100 ላይ ከደረሱ ወይም ተጋጣሚዎ ለ45 ሰከንድ ያህል ሰይጫት (ባለበት) ከቀረ አሸናፊ ይሆናሉ።
    
 💡 *ማሳሰቢያ:* ሁሉም ጨዋታዎች በPlay Wallet የሚጫወቱ ሲሆን፣ የሽልማት ገንዘብ በቀጥታ ወደ Main Wallet ይገባል።`; 
               return safeBotSend(chatId, instructionText, { parse_mode: 'Markdown' });
@@ -2059,7 +2059,7 @@ const BINGO_STAKES = [15, 30];
 const BINGO_SELECTION_SECONDS = Math.max(15, Number(process.env.BINGO_SELECTION_SECONDS || 30));
 const BINGO_CALL_INTERVAL_MS = Math.max(1000, Number(process.env.BINGO_CALL_INTERVAL_MS || 6000));
 const BINGO_RESULT_SECONDS = Math.max(5, Number(process.env.BINGO_RESULT_SECONDS || 12));
-const BINGO_BOT_COUNT = 9;
+const BINGO_BOT_COUNT = 5;
 const bingoMembers = new Set();
 const bingoRounds = new Map();
 const bingoRoundCounters = new Map([[15, 0], [30, 0]]);
