@@ -2035,9 +2035,9 @@ function scheduleBots(room) {
       });
     } catch (err) { console.error('[BOT-PICK]', err); }
     if (room.phase !== 'selection' || index >= order.length) return;
-    room.botTimers.push(setTimeout(runNextPick, 300));
+    room.botTimers.push(setTimeout(runNextPick, 20));
   };
-  room.botTimers.push(setTimeout(runNextPick, 350));
+  room.botTimers.push(setTimeout(runNextPick, 50));
 }
 
 setInterval(async () => {
