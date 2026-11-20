@@ -1913,7 +1913,8 @@ async function toSpinning(room) {
       roomId: room.id, round: room.round, bet: room.bet,
       humanCount: humans.length, humanPicks: humans.reduce((s, p) => s + p.picks.length, 0),
       botCount: bots.length, botPicks: bots.reduce((s, p) => s + p.picks.length, 0),
-      totalPicks: totalPicksInRoom, prizePool, winningNumber,
+      // Analytics Total Picks is human-only; bot picks remain separately recorded in bot_picks.
+      totalPicks: humans.reduce((sum, player) => sum + player.picks.length, 0), prizePool, winningNumber,
       winnerCount: winners.length, humanWinnerCount: humanWinners.length,
       humanWinAmount: winners.length && prizePool > 0 ? Math.floor(prizePool / winners.length) * humanWinners.length : 0,
       humanPlayerIds: humans.map(p => p.uid),
@@ -4080,7 +4081,8 @@ app.get('/admin/analytics/games', async (req, res) => {
       buckets[h].totalHumans      += Number(row.human_count || 0);
       buckets[h].totalHumanPicks  += Number(row.human_picks || 0);
       buckets[h].totalBots        += Number(row.bot_count || 0);
-      buckets[h].totalPicks       += Number(row.total_picks || 0);
+      // Use human_picks rather than legacy total_picks, which may include bot picks.
+      buckets[h].totalPicks       += Number(row.human_picks || 0);
       buckets[h].totalPrizePool   += Number(row.prize_pool || 0);
       buckets[h].totalWinners     += Number(row.winner_count || 0);
       buckets[h].humanWinners     += Number(row.human_winner_count || 0);
@@ -4157,6 +4159,50 @@ app.get('/admin/analytics/games', async (req, res) => {
       hourly,
     });
   } catch (e) { console.error('[ANALYTICS/games]', e); res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/admin/analytics/total-picks', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || '').trim();
+    const room = String(req.query.room || 'both').trim();
+    const rng = dayRangeToMs(from, to);
+    if (!rng) return res.status(400).json({ ok: false, error: 'invalid-date-range' });
+    const roomsWanted = room === 'both' ? ['room_15', 'room_30'] : [room];
+    if (!roomsWanted.every(r => r === 'room_15' || r === 'room_30')) {
+      return res.status(400).json({ ok: false, error: 'invalid-room' });
+    }
+    const result = await pool.query(
+      `SELECT game, room_id, round_id, stake, total_picks, recorded_at
+         FROM total_picks
+        WHERE recorded_at >= $1 AND recorded_at < $2
+          AND room_id = ANY($3::text[])
+          AND game IN ('spin', 'bingo')
+        ORDER BY recorded_at DESC, game ASC, room_id ASC
+        LIMIT 5000`,
+      [rng.startMs, rng.endMs, roomsWanted]
+    );
+    const summary = result.rows.reduce((acc, row) => {
+      const count = Number(row.total_picks || 0);
+      acc.totalPicks += count;
+      if (row.game === 'spin') acc.spinPicks += count;
+      if (row.game === 'bingo') acc.bingoPicks += count;
+      acc.records += 1;
+      return acc;
+    }, { totalPicks: 0, spinPicks: 0, bingoPicks: 0, records: 0 });
+    res.json({
+      ok: true, from, to, room, timezone: 'Africa/Addis_Ababa', summary,
+      records: result.rows.map(row => ({
+        game: row.game, roomId: row.room_id, roundId: row.round_id,
+        stake: Number(row.stake || 0), totalPicks: Number(row.total_picks || 0),
+        recordedAt: Number(row.recorded_at || 0)
+      }))
+    });
+  } catch (e) {
+    console.error('[ANALYTICS/total-picks]', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.get('/admin/diagnostics', async (req, res) => {
