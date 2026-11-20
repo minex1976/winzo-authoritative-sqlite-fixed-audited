@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import http from 'http';
 import pg from 'pg';
 import TelegramBot from 'node-telegram-bot-api';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 
 const { Pool } = pg;
 
@@ -20,16 +21,24 @@ process.on('uncaughtException', (err) => {
 // ============================================================================
 // DATABASE
 // ============================================================================
+// Keep the production pool at 40 by default. These settings are configurable
+// for measured capacity tuning; do not raise DB_POOL_MAX without checking the
+// PostgreSQL connection limit and the AletCloud database plan.
+const DB_POOL_MAX = Math.min(100, Math.max(5, Number.parseInt(process.env.DB_POOL_MAX || '40', 10) || 40));
+const DB_IDLE_TIMEOUT_MS = Math.min(120000, Math.max(10000, Number.parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10) || 30000));
+const DB_CONNECT_TIMEOUT_MS = Math.min(30000, Math.max(1000, Number.parseInt(process.env.DB_CONNECT_TIMEOUT_MS || '5000', 10) || 5000));
 const pool = new Pool({
   host: process.env.DB_HOST || 'winzo-sql-rw.db-956.svc.cluster.local',
   port: Number(process.env.DB_PORT || 5432),
   database: process.env.DB_NAME || 'winzo_sql',
   user: process.env.DB_USER || 'admin_winzo_sql',
   password: process.env.DB_PASSWORD || '',
-  max: 40,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  max: DB_POOL_MAX,
+  idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
+  connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+  allowExitOnIdle: false,
 });
+pool.on('error', (err) => console.error('[PG-POOL-IDLE-CLIENT]', err.message));
 
 // ============================================================================
 // CONFIG
@@ -63,7 +72,8 @@ if (!process.env.IP_HISTORY_SALT) {
 }
 
 const NODE_ENV = process.env.NODE_ENV || 'production';
-const SIGNUP_BONUS = Number(process.env.SIGNUP_BONUS || 15);
+// New-user signup bonus is disabled. Legacy bonus columns/expiry handling remain
+// only to preserve and safely settle any pre-existing account balances.
 
 if (!ADMIN_KEY) console.warn('WARNING: ADMIN_KEY is not set. Admin approval will be disabled.');
 if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authentication will fail.');
@@ -556,6 +566,18 @@ async function initDb() {
           human_win_amount NUMERIC NOT NULL DEFAULT 0, human_player_ids JSONB DEFAULT '[]'::jsonb,
           started_at BIGINT NOT NULL, ended_at BIGINT NOT NULL, created_at BIGINT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS total_picks (
+          id VARCHAR(200) PRIMARY KEY,
+          game VARCHAR(16) NOT NULL,
+          room_id VARCHAR(64) NOT NULL,
+          round_id VARCHAR(160) NOT NULL,
+          stake NUMERIC NOT NULL DEFAULT 0,
+          total_picks INTEGER NOT NULL DEFAULT 0 CHECK (total_picks >= 0),
+          recorded_at BIGINT NOT NULL,
+          UNIQUE (game, room_id, round_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_total_picks_game_recorded ON total_picks(game, recorded_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_total_picks_room_round ON total_picks(room_id, round_id);
     `);
 
     // ─── ENHANCED: multi-account signal history tables ──────────────────────
@@ -1011,7 +1033,6 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
   if (!clean) return null;
   const client = await pool.connect();
   let signalPayload = null;
-  let bonusBlockedByFingerprint = false;
   try {
     const res = await client.query('SELECT * FROM users WHERE username = $1', [clean]);
     if (res.rows.length > 0) {
@@ -1032,50 +1053,20 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
         await client.query(`UPDATE users SET ${setClauses}, updated_at = $${values.length + 1} WHERE username = $1`, [...values, now()]);
       }
       if (extra.last_ip || extra.device_fingerprint) {
-        signalPayload = {
-          ip: extra.last_ip || null,
-          fingerprint: extra.device_fingerprint || null,
-        };
+        signalPayload = { ip: extra.last_ip || null, fingerprint: extra.device_fingerprint || null };
       }
       return { ...current, ...patch };
     }
     const t = now();
     const sanitizedFp = extra.device_fingerprint ? sanitizeFingerprint(extra.device_fingerprint) : null;
 
-    // ─── FIX: fingerprint-only signup bonus block ──────────────────────────
-    // If this device fingerprint was used by ANY prior account within the
-    // history window, withhold the signup bonus. IP alone does NOT block the
-    // bonus (Ethiopian mobile networks heavily NAT users, so shared IPs are
-    // common and not a reliable signal of multi-account abuse).
-    // Fail-open: if the check errors, still grant the bonus so a transient
-    // DB error never silently blocks a legitimate new user.
-    if (!bot && sanitizedFp) {
-      try {
-        const since = t - MULTI_ACCOUNT_HISTORY_DAYS * DAY;
-        const prior = await client.query(
-          `SELECT COUNT(DISTINCT username)::int AS c
-             FROM device_fp_history
-            WHERE fingerprint = $1 AND seen_at > $2`,
-          [sanitizedFp, since]
-        );
-        if (prior.rows[0].c >= 1) {
-          bonusBlockedByFingerprint = true;
-          console.warn(`[SIGNUP-BONUS] withheld for ${clean}: fingerprint reused by ${prior.rows[0].c} prior account(s)`);
-        }
-      } catch (e) {
-        console.error('[SIGNUP-BONUS-CHECK]', e.message);
-      }
-    }
-
-    const grantBonus = !bot && !bonusBlockedByFingerprint;
-
     const newUser = {
       username: clean, display_name: extra.display_name || clean, telegram_id: extra.telegram_id || null,
       telegram_username: extra.telegram_username || null, main_wallet: 0,
-      play_wallet: bot ? BOT_START_WALLET : (grantBonus ? SIGNUP_BONUS : 0),
-      signup_bonus_remaining: grantBonus ? SIGNUP_BONUS : 0,
-      signup_bonus_original: grantBonus ? SIGNUP_BONUS : 0,
-      signup_bonus_expires_at: grantBonus ? t + 5 * 60 * 1000 : 0,
+      play_wallet: bot ? BOT_START_WALLET : 0,
+      signup_bonus_remaining: 0,
+      signup_bonus_original: 0,
+      signup_bonus_expires_at: 0,
       withdrawal_hold_until: 0, withdrawal_hold_reason: null,
       pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
@@ -1093,26 +1084,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       };
     }
 
-    // ─── Notify user that the signup bonus was withheld ────────────────────
-    // Delivered immediately via Telegram DM, AND persisted as an in-app
-    // notification that the frontend surfaces via /user/notifications.
-    if (bonusBlockedByFingerprint) {
-      const bonusBlockedMsg =
-        'በዚህ ስልክ ላይ፣ ከዚህ ቀደም ሌላ የዊንዞ አካውንት በተከፈተበት ወቅት 15 ብር ቦነስ እንዲያገኝ ተደርጓል። በዚህም ምክንያት፣ እርሶ በድጋሚ ቦነስ 15 ሊያገኙ አይችሉም። ገንዘብ ገቢ በማድረግ ግን መጫወት ይችላሉ።';
-      try { await sendBotDepositStatus(clean, bonusBlockedMsg); }
-      catch (e) { console.error('[SIGNUP-BONUS-BOT]', e.message); }
-      try {
-        await addNotification(clean, {
-          type: 'notification',
-          message: bonusBlockedMsg,
-          status: 'warning',
-        });
-      } catch (e) { console.error('[SIGNUP-BONUS-NOTIFY]', e.message); }
-    }
-
-    // In-memory flag (never persisted) so callers like handle() can react
-    // immediately — e.g. push a live WS toast right after auth.
-    newUser.signupBonusBlocked = bonusBlockedByFingerprint;
+    // New accounts receive no signup bonus.
     return newUser;
   } finally {
     client.release();
@@ -1740,12 +1712,28 @@ async function recordRoundSnapshot({ roomId, round, bet, humanCount, humanPicks,
        ON CONFLICT (id) DO UPDATE SET human_count = EXCLUDED.human_count, human_picks = EXCLUDED.human_picks, bot_count = EXCLUDED.bot_count, bot_picks = EXCLUDED.bot_picks, total_picks = EXCLUDED.total_picks, prize_pool = EXCLUDED.prize_pool, winning_number = EXCLUDED.winning_number, winner_count = EXCLUDED.winner_count, human_winner_count = EXCLUDED.human_winner_count, human_win_amount = EXCLUDED.human_win_amount, human_player_ids = EXCLUDED.human_player_ids, ended_at = EXCLUDED.ended_at`,
       [id, roomId, round, bet, humanCount, humanPicks, botCount, botPicks, totalPicks, prizePool, winningNumber, winnerCount, humanWinnerCount, humanWinAmount, JSON.stringify(humanPlayerIds || []), startedAt, endedAt, now()]
     );
+    await pool.query(
+      `INSERT INTO total_picks (id, game, room_id, round_id, stake, total_picks, recorded_at)
+       VALUES ($1, 'spin', $2, $3, $4, $5, $6)
+       ON CONFLICT (game, room_id, round_id) DO UPDATE
+       SET stake = EXCLUDED.stake, total_picks = EXCLUDED.total_picks, recorded_at = EXCLUDED.recorded_at`,
+      [`spin_${roomId}_${round}`, roomId, String(round), bet, humanPicks, endedAt]
+    );
   } catch (e) { console.error('[ROUND-SNAPSHOT] failed:', e.message, { roomId, round }); }
 }
 
 // ============================================================================
 // GAME ROOM (Number game with provably-fair commit-reveal)
 // ============================================================================
+// Indexed WebSocket membership avoids scanning every connected socket for
+// each Spin room broadcast. The actual roomId property remains authoritative.
+const roomSocketMembers = new Map([['room_15', new Set()], ['room_30', new Set()]]);
+function setRoomSocketMembership(ws, roomId) {
+  const previous = ws.roomId;
+  if (previous && roomSocketMembers.has(previous)) roomSocketMembers.get(previous).delete(ws);
+  if (roomId && roomSocketMembers.has(roomId)) roomSocketMembers.get(roomId).add(ws);
+}
+
 class Room {
   constructor(id, bet, row = null) {
     this.id = id; this.bet = bet;
@@ -1808,8 +1796,16 @@ class Room {
     this.dirty = false;
   }
   broadcast() {
+    const members = roomSocketMembers.get(this.id);
+    if (!members || members.size === 0) return;
     const payload = JSON.stringify({ type: 'state', room: this.id, state: this.snapshot() });
-    for (const ws of wss.clients) if (ws.readyState === 1 && ws.authed && ws.roomId === this.id) ws.send(payload);
+    for (const ws of members) {
+      if (ws.readyState === 1 && ws.authed && ws.roomId === this.id) {
+        try { ws.send(payload); } catch (e) { /* close handler removes stale members */ }
+      } else {
+        members.delete(ws);
+      }
+    }
   }
   async push() { await this.persist(); this.broadcast(); }
 }
@@ -2094,8 +2090,9 @@ function bingoShuffle(pool){for(let i=pool.length-1;i>0;i--){const j=crypto.rand
 function bingoBuildGuaranteedPool(round, guaranteedWinnerCount = 1) {
   const allEntries = [...round.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!allEntries.length) return bingoShuffle(Array.from({ length: 75 }, (_, i) => i + 1));
-  const humans = allEntries.filter(e => !String(e.uid).startsWith('__bot_'));
-  const entries = humans.length ? humans : allEntries;
+  // Bots participate in the same winner selection as real players.
+  // The guaranteed winner is selected from every entered card, not humans only.
+  const entries = allEntries;
 
   const entryFingerprint = crypto.createHash('sha256').update(entries.map(e => e.id).join(',')).digest('hex');
   const effectiveSeed = crypto.createHmac('sha256', Buffer.from(round.serverSeed, 'hex'))
@@ -2368,28 +2365,44 @@ async function bingoUnselect(ws,number){
   return bingoWithRoundLock(round,()=>bingoUnselectUnlocked(ws,number));
 }
 
-// ─── FIX C3: only split prize among human winners; bots get 0 ──────────────
+// Bingo prize distribution: all winning cards, including bot cards, share 80% equally.
+// Real-player shares are credited to their wallets; bot shares are recorded as virtual winnings
+// in bingo_results and the round winner payload (bots do not have real user wallets).
 async function bingoFinish(round,winners){
   if(!round||round.phase!=='playing')return;
   round.phase='results';round.completedAt=Date.now();
   const eligible=[...new Map(winners.map(w=>[w.id,w])).values()];
-  const humanEligible = eligible.filter(w => !String(w.uid).startsWith('__bot_'));
-  const prizeEach = humanEligible.length
-    ? Math.floor((round.prizePool * 0.8 * 100) / humanEligible.length) / 100
+  const prizeEach = eligible.length
+    ? Math.floor((round.prizePool * 0.8 * 100) / eligible.length) / 100
     : 0;
   const db=await pool.connect();
   try{
     await db.query('BEGIN');
     for(const w of eligible){
-      const prize = String(w.uid).startsWith('__bot_') ? 0 : prizeEach;
-      if(prize>0){
+      const isBot = String(w.uid).startsWith('__bot_');
+      const prize = prizeEach;
+      if(!isBot && prize>0){
         const ledger=await db.query('INSERT INTO bingo_wallet_transactions(id,round_id,username,type,amount,idempotency_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(idempotency_key) DO NOTHING RETURNING id',[crypto.randomUUID(),round.id,w.uid,'prize',prize,'bingo-prize:'+round.id+':'+w.id,Date.now()]);
-        if(ledger.rowCount){const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);if(!upd.rowCount)throw new Error('Winner wallet update failed');}
-        await recordWalletCredit(db, w.uid, prize, 'bingo_win', { reason: `Bingo ${round.id} card ${w.cardNumber}`, reference: `bingo-prize:${round.id}:${w.id}` });
+        if(ledger.rowCount){
+          const upd=await db.query('UPDATE users SET main_wallet=main_wallet+$1,wallet_updated_at=$2 WHERE username=$3',[prize,Date.now(),w.uid]);
+          if(!upd.rowCount)throw new Error('Winner wallet update failed');
+          await recordWalletCredit(db, w.uid, prize, 'bingo_win', { reason: `Bingo ${round.id} card ${w.cardNumber}`, reference: `bingo-prize:${round.id}:${w.id}` });
+        }
       }
-      await db.query('INSERT INTO bingo_results(id,round_id,username,display_name,card_number,pattern,prize,call_number,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(round_id,username,card_number) DO NOTHING',[w.id,round.id,w.uid,w.name,w.cardNumber,w.pattern,prize,round.called.at(-1)||null,Date.now()]);
+      // Bot prize amounts are persisted here as virtual winnings; no real wallet is credited.
+      await db.query('INSERT INTO bingo_results(id,round_id,username,display_name,card_number,pattern,prize,call_number,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(round_id,username,card_number) DO UPDATE SET prize=EXCLUDED.prize,pattern=EXCLUDED.pattern,call_number=EXCLUDED.call_number',[w.id,round.id,w.uid,w.name,w.cardNumber,w.pattern,prize,round.called.at(-1)||null,Date.now()]);
       w.prize=prize;
     }
+    // Total picks counts card-number selections by real players only; bot cards are excluded.
+    await db.query(
+      `INSERT INTO total_picks (id, game, room_id, round_id, stake, total_picks, recorded_at)
+       SELECT $1, 'bingo', $2, $3, $4, COUNT(*)::int, $5
+       FROM bingo_entries
+       WHERE round_id = $3 AND LEFT(username, 6) <> '__bot_'
+       ON CONFLICT (game, room_id, round_id) DO UPDATE
+       SET stake = EXCLUDED.stake, total_picks = EXCLUDED.total_picks, recorded_at = EXCLUDED.recorded_at`,
+      [`bingo_${round.id}`, `room_${round.stake}`, round.id, round.stake, Date.now()]
+    );
     await db.query('UPDATE bingo_rounds SET phase=$1,completed_at=$2,winners=$3::jsonb WHERE id=$4',['results',Date.now(),JSON.stringify(eligible),round.id]);
     await db.query('COMMIT');
   }catch(e){await db.query('ROLLBACK').catch(()=>{});console.error('[BINGO-PRIZE]',e.message);}finally{db.release();}
@@ -2464,6 +2477,28 @@ const LADDER_TARGET = 100;
 const LADDER_SNAKES = {71: 50, 82: 62, 56: 36};
 const LADDER_LADDERS = {24: 44, 33: 68};
 const ladderRooms = new Map();
+// Keep per-match and lobby socket indexes so updates are O(match members),
+// not O(all connected users), during large multi-match sessions.
+const ladderRoomSockets = new Map();
+const ladderLobbySockets = new Set();
+function setLadderRoomSocket(ws, roomId) {
+  const previous = ws._ladderRoomId;
+  if (previous) {
+    const oldSet = ladderRoomSockets.get(previous);
+    if (oldSet) { oldSet.delete(ws); if (!oldSet.size) ladderRoomSockets.delete(previous); }
+  }
+  ws._ladderRoomId = roomId || null;
+  if (roomId) {
+    let set = ladderRoomSockets.get(roomId);
+    if (!set) { set = new Set(); ladderRoomSockets.set(roomId, set); }
+    set.add(ws);
+  }
+}
+function setLadderLobbySocket(ws, enabled) {
+  ws._ladderLobby = !!enabled;
+  if (ws._ladderLobby) ladderLobbySockets.add(ws);
+  else ladderLobbySockets.delete(ws);
+}
 
 const LADDER_INACTIVITY_WARN_MS = 45 * 1000;
 const LADDER_INACTIVITY_FORFEIT_75_MS = 2 * 60 * 1000;
@@ -2585,11 +2620,14 @@ function getLadderSnapshot(room) {
 function broadcastLadder(room) {
   try {
     const payload = JSON.stringify({ type: 'ladder-state', room: getLadderSnapshot(room) });
-    for (const ws of wss.clients) {
+    const members = ladderRoomSockets.get(room.id);
+    if (!members) return;
+    for (const ws of members) {
       if (ws.readyState === 1 && ws.authed && ws._ladderRoomId === room.id) {
         try { ws.send(payload); } catch (e) {}
-      }
+      } else members.delete(ws);
     }
+    if (!members.size) ladderRoomSockets.delete(room.id);
   } catch (e) { console.error('[LADDER-BROADCAST]', e.message); }
 }
 
@@ -2603,10 +2641,10 @@ function broadcastLadderLobby() {
         isBot: r.creatorUid.startsWith('__bot_')
       }));
     const payload = JSON.stringify({ type: 'ladder-lobby', rooms: openRooms });
-    for (const ws of wss.clients) {
+    for (const ws of ladderLobbySockets) {
       if (ws.readyState === 1 && ws.authed && ws._ladderLobby) {
         try { ws.send(payload); } catch (e) {}
-      }
+      } else ladderLobbySockets.delete(ws);
     }
   } catch (e) { console.error('[LADDER-LOBBY-BROADCAST]', e.message); }
 }
@@ -2671,14 +2709,14 @@ async function handleLadderLeave(ws, isDisconnect = false) {
         if (!roomId) return;
         const room = ladderRooms.get(roomId);
         if (!room) {
-            ws._ladderRoomId = null;
+            setLadderRoomSocket(ws, null);
             if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
             return;
         }
 
         if (room.pendingJoiners.has(ws.uid)) {
             room.pendingJoiners.delete(ws.uid);
-            ws._ladderRoomId = null;
+            setLadderRoomSocket(ws, null);
             if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'cancelled' }); } catch (e) {}
             try { broadcastLadder(room); } catch (e) {}
             return;
@@ -2687,7 +2725,7 @@ async function handleLadderLeave(ws, isDisconnect = false) {
         if (room.phase === 'waiting' || room.phase === 'betting') {
             if (room.creatorUid === ws.uid) {
                 const joinerWs = Array.from(conns.get(room.joinerUid) || []).find(w => w._ladderRoomId === roomId);
-                if (joinerWs) { joinerWs._ladderRoomId = null; try { send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); } catch (e) {} }
+                if (joinerWs) { setLadderRoomSocket(joinerWs, null); try { send(joinerWs, { type: 'ladder-left', reason: 'creator-left' }); } catch (e) {} }
                 if (room._waitTimeout) clearTimeout(room._waitTimeout);
                 ladderRooms.delete(room.id);
                 broadcastLadderLobby();   // FIX S5
@@ -2702,7 +2740,7 @@ async function handleLadderLeave(ws, isDisconnect = false) {
                         if (room.phase === 'waiting') {
                             ladderRooms.delete(room.id);
                             const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
-                            if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+                            if (creatorWs) { setLadderRoomSocket(creatorWs, null); send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
                             broadcastLadderLobby();
                         }
                     } catch (e) { console.error('[LADDER-WAIT-TIMEOUT]', e.message); }
@@ -2710,14 +2748,14 @@ async function handleLadderLeave(ws, isDisconnect = false) {
                 try { broadcastLadder(room); } catch (e) {}
             }
         } else if (room.phase === 'playing' || room.phase === 'moving') {
-            ws._ladderRoomId = null;
+            setLadderRoomSocket(ws, null);
             if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
             startLadderAbandonGrace(room, ws.uid);
             try { broadcastLadderLobby(); } catch (e) {}
             return;
         }
 
-        ws._ladderRoomId = null;
+        setLadderRoomSocket(ws, null);
         if (!isDisconnect) try { send(ws, { type: 'ladder-left', reason: 'left' }); } catch (e) {}
         try { broadcastLadderLobby(); } catch (e) {}
     } catch (e) {
@@ -2731,8 +2769,8 @@ async function handleLadderRejoin(ws, roomId) {
         if (!room) return send(ws, { type: 'ladder-error', message: 'Room no longer exists' });
         if (!room.players[ws.uid]) return send(ws, { type: 'ladder-error', message: 'You are not a player in this room' });
 
-        ws._ladderRoomId = roomId;
-        ws._ladderLobby = false;
+        setLadderRoomSocket(ws, roomId);
+        setLadderLobbySocket(ws, false);
 
         if (room.abandonment && room.abandonment.leaverUid === ws.uid && room.phase === 'playing') {
             room.abandonment = null;
@@ -2856,6 +2894,35 @@ setInterval(() => {
 }, 15 * 60 * 1000);
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
+
+// Lightweight production diagnostics for capacity testing. No player data,
+// wallet values, tokens, or message contents are logged.
+const PERF_LOG_INTERVAL_MS = Math.max(15000, Number(process.env.PERF_LOG_INTERVAL_MS || 60000));
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+let previousCpuUsage = process.cpuUsage();
+setInterval(() => {
+  const currentCpu = process.cpuUsage();
+  const userMicros = currentCpu.user - previousCpuUsage.user;
+  const systemMicros = currentCpu.system - previousCpuUsage.system;
+  previousCpuUsage = currentCpu;
+  const heap = process.memoryUsage();
+  const loopP95Ms = Number((eventLoopDelay.percentile(95) / 1e6).toFixed(1));
+  const loopMaxMs = Number((eventLoopDelay.max / 1e6).toFixed(1));
+  console.log('[PERF]', JSON.stringify({
+    wsClients: wss.clients.size,
+    spinRoomClients: [...roomSocketMembers.values()].reduce((n, set) => n + set.size, 0),
+    bingoClients: bingoMembers.size,
+    ladderMatchClients: [...ladderRoomSockets.values()].reduce((n, set) => n + set.size, 0),
+    ladderLobbyClients: ladderLobbySockets.size,
+    dbPool: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount, max: DB_POOL_MAX },
+    memoryMb: { rss: Math.round(heap.rss / 1048576), heapUsed: Math.round(heap.heapUsed / 1048576) },
+    cpuMsSinceLastSample: { user: Math.round(userMicros / 1000), system: Math.round(systemMicros / 1000) },
+    eventLoopDelayMs: { p95: loopP95Ms, max: loopMaxMs }
+  }));
+  eventLoopDelay.reset();
+}, PERF_LOG_INTERVAL_MS).unref();
+
 function send(ws, obj) { try { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (e) {} }
 
 wss.on('connection', (ws, req) => {
@@ -2863,8 +2930,8 @@ wss.on('connection', (ws, req) => {
   ws.isAlive = true; ws.authenticatedAt = null;
   ws.authTimer = setTimeout(() => { if (!ws.authed) { try { ws.close(4001, 'authentication timeout'); } catch {} } }, 10000);
   ws.uid = null; ws.roomId = null; ws.authed = false; ws.isAdmin = false; ws.lastAdminActivity = 0;
-  ws._ladderLobby = false;
-  ws._ladderRoomId = null;
+  setLadderLobbySocket(ws, false);
+  setLadderRoomSocket(ws, null);
 
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', async raw => {
@@ -2881,6 +2948,8 @@ wss.on('connection', (ws, req) => {
     if (activeForIp) wsIpConnections.set(ws._ipKey, activeForIp); else wsIpConnections.delete(ws._ipKey);
     if (ws.uid) console.log(`[WS-CLOSE] uid=${ws.uid} code=${code} reason=${String(reason || '').slice(0, 80)}`);
     bingoMembers.delete(ws);
+    setRoomSocketMembership(ws, null);
+    setLadderLobbySocket(ws, false);
     if (ws._ladderRoomId) {
       try { await handleLadderLeave(ws, true); }
       catch (e) { console.error('[LADDER-CLOSE]', e.message); }
@@ -3055,12 +3124,12 @@ async function handle(ws, m) {
   }
 
   if (m.type === 'ladder-join-lobby') {
-    ws._ladderLobby = true;
+    setLadderLobbySocket(ws, true);
     broadcastLadderLobby();
     return;
   }
   if (m.type === 'ladder-leave-lobby') {
-    ws._ladderLobby = false;
+    setLadderLobbySocket(ws, false);
     return;
   }
   if (m.type === 'ladder-rejoin') {
@@ -3084,14 +3153,14 @@ async function handle(ws, m) {
         if (room.phase === 'waiting') {
           ladderRooms.delete(room.id);
           const creatorWs = Array.from(conns.get(room.creatorUid) || []).find(w => w._ladderRoomId === room.id);
-          if (creatorWs) { creatorWs._ladderRoomId = null; send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
+          if (creatorWs) { setLadderRoomSocket(creatorWs, null); send(creatorWs, { type: 'ladder-left', reason: 'timeout' }); }
           broadcastLadderLobby();
         }
       } catch (e) { console.error('[LADDER-CREATE-TIMEOUT]', e.message); }
     }, 5 * 60 * 1000);
     ladderRooms.set(roomId, room);
-    ws._ladderRoomId = roomId;
-    ws._ladderLobby = false;
+    setLadderRoomSocket(ws, roomId);
+    setLadderLobbySocket(ws, false);
     broadcastLadder(room);
     broadcastLadderLobby();
 
@@ -3113,8 +3182,8 @@ async function handle(ws, m) {
     const room = ladderRooms.get(m.roomId);
     if (!room || room.phase !== 'waiting' || room.creatorUid === ws.uid) return send(ws, { type: 'ladder-error', message: 'Room not available' });
     room.pendingJoiners.set(ws.uid, ws.displayName);
-    ws._ladderRoomId = room.id;
-    ws._ladderLobby = false;
+    setLadderRoomSocket(ws, room.id);
+    setLadderLobbySocket(ws, false);
 
     if (room.creatorUid.startsWith('__bot_')) {
         setTimeout(async () => {
@@ -3153,7 +3222,7 @@ async function handle(ws, m) {
     room.pendingJoiners.delete(m.targetUid);
     const targetWs = Array.from(conns.get(m.targetUid) || []).find(w => w._ladderRoomId === room.id);
     if (targetWs) {
-      targetWs._ladderRoomId = null;
+      setLadderRoomSocket(targetWs, null);
       send(targetWs, { type: 'ladder-rejected' });
     }
     broadcastLadder(room);
@@ -3221,7 +3290,7 @@ async function handle(ws, m) {
     if (joinerUid) {
       const targetWs = Array.from(conns.get(joinerUid) || []).find(w => w._ladderRoomId === room.id);
       if (targetWs) {
-        targetWs._ladderRoomId = null;
+        setLadderRoomSocket(targetWs, null);
         send(targetWs, { type: 'ladder-kicked' });
       }
       delete room.players[joinerUid];
@@ -3300,6 +3369,7 @@ async function handle(ws, m) {
 
   if (m.type === 'join') {
     const room = rooms[m.room]; if (!room) return send(ws, { type: 'error', message: 'bad-room' });
+    setRoomSocketMembership(ws, m.room);
     ws.roomId = m.room;
     const existing = room.players.get(ws.uid);
     if (existing && existing.picks.length && !existing.active) await refundDisconnectedPlayer(room, existing);
@@ -3313,6 +3383,7 @@ async function handle(ws, m) {
   if (m.type === 'leave') {
     const room = rooms[ws.roomId]; const p = room?.players.get(ws.uid);
     if (room && p && !p.isBot) { await refundDisconnectedPlayer(room, p); room.players.delete(ws.uid); room.dirty = true; await saveRoom(room); }
+    setRoomSocketMembership(ws, null);
     ws.roomId = null; return;
   }
 
@@ -3593,6 +3664,11 @@ app.post('/api/telegram-contact/status', async (req, res) => {
 
 app.get('/', (_, res) => res.send('Winzo Server is running. Database is PostgreSQL.'));
 app.get('/health', (_, res) => res.status(200).send('OK'));
+let databaseReady = false;
+app.get('/readyz', (_, res) => {
+  if (!databaseReady) return res.status(503).json({ ok: false, ready: false });
+  res.status(200).json({ ok: true, ready: true });
+});
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 function sessionUid(req) { return verifySessionToken(req.get('x-session-token')); }
@@ -4100,7 +4176,7 @@ app.get('/admin/diagnostics', async (req, res) => {
     );
     const smsQueue = await pool.query(`SELECT id, sender, LEFT(text, 80) AS preview, timestamp FROM incoming_sms WHERE processed = false ORDER BY timestamp ASC LIMIT 20`);
     const recentFails = await pool.query(`SELECT trace_id, uid, stage, status, reason, at FROM request_trace WHERE at > $1 AND status IN ('fail','error') ORDER BY at DESC LIMIT 30`, [now() - DAY]);
-    res.json({ ok: true, summary: { pendingTransactions: pendingTx.rows[0].c, unprocessedSms: unprocessedSms.rows[0].c, usedReferences: approvedRefs.rows[0].c, traced24h: traced24h.rows[0].c, signupBonus: SIGNUP_BONUS }, failedStagesLastHour: failedStages.rows, stuckDeposits: stuck.rows.map(r => ({ ...r, amount: Number(r.amount), timestamp: Number(r.timestamp) })), smsQueue: smsQueue.rows.map(r => ({ ...r, timestamp: Number(r.timestamp) })), recentFails: recentFails.rows.map(r => ({ ...r, at: Number(r.at) })) });
+    res.json({ ok: true, summary: { pendingTransactions: pendingTx.rows[0].c, unprocessedSms: unprocessedSms.rows[0].c, usedReferences: approvedRefs.rows[0].c, traced24h: traced24h.rows[0].c, signupBonus: 0 }, failedStagesLastHour: failedStages.rows, stuckDeposits: stuck.rows.map(r => ({ ...r, amount: Number(r.amount), timestamp: Number(r.timestamp) })), smsQueue: smsQueue.rows.map(r => ({ ...r, timestamp: Number(r.timestamp) })), recentFails: recentFails.rows.map(r => ({ ...r, at: Number(r.at) })) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -4289,7 +4365,7 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
-  console.log(`🎁 Signup bonus for new users: ${SIGNUP_BONUS} Birr`);
+  console.log('ℹ️ New-user signup bonus is disabled.');
   
   if (BOT_TOKEN) {
     setupTelegramBot();
@@ -4318,6 +4394,7 @@ server.listen(PORT, '0.0.0.0', () => {
       }
       pruneOldData().catch(e => console.error('[PRUNE] initial', e.message));
       setInterval(() => pruneOldData().catch(e => console.error('[PRUNE]', e.message)), 6 * 60 * 60 * 1000);
+      databaseReady = true;
       console.log('✅ Background initialization complete.');
     } catch (err) { console.error('⚠️ Background initialization failed (DB may be slow or unreachable):', err); }
   })();
@@ -4326,6 +4403,8 @@ server.listen(PORT, '0.0.0.0', () => {
 // ─── FIX S4: await pool.end() + wss.close() on shutdown ────────────────────
 async function gracefulShutdown(signal) {
   console.log(`[SHUTDOWN] ${signal}`);
+  databaseReady = false;
+  try { eventLoopDelay.disable(); } catch (_) {}
   for (const room of Object.values(rooms)) { clearBotTimers(room); }
   for (const ws of wss.clients) { try { ws.close(1001, 'server shutting down'); } catch {} }
   try { wss.close(); } catch (_) {}
