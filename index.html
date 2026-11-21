@@ -242,134 +242,130 @@
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
 
-        /* ===== NUMBER LOCK ANIMATION ===== */
-        .number-lock {
-          width: min(88vw, 440px);
-          aspect-ratio: 1;
-          margin: 0 auto;
-          position: relative;
-          border-radius: 50%;
-          background:
-            radial-gradient(ellipse at 35% 20%, #55585b 0%, #242628 18%, #090a0b 55%, #202225 76%, #050506 100%);
-          border: 5px solid #55585b;
-          box-shadow:
-            inset 0 3px 7px #ffffff55,
-            inset 0 -12px 20px #000,
-            0 16px 34px #000b,
-            0 0 0 3px #111;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          overflow: visible;
+        /* ===== NEW NUMBER LOCK ANIMATION (Screenshot Match) ===== */
+        .lock-container {
+            position: relative;
+            width: 280px;
+            height: 320px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            margin-top: 40px;
+            /* Blue glow matching the background */
+            filter: drop-shadow(0 0 35px rgba(0, 80, 255, 0.5));
         }
-        .number-lock::before {
-          content: "";
-          position: absolute;
-          inset: 11% 8%;
-          border-radius: 50%;
-          border: 5px solid #45484b;
-          box-shadow: inset 0 0 7px #000, 0 1px 2px #aaa8;
-          pointer-events: none;
+        .lock-shackle {
+            width: 160px;
+            height: 130px;
+            border: 22px solid #d8dadd;
+            border-bottom: none;
+            border-radius: 90px 90px 0 0;
+            background: transparent;
+            position: absolute;
+            top: -10px;
+            z-index: 1;
+            /* Metallic inset reflections */
+            box-shadow: inset 4px 4px 8px rgba(255,255,255,0.8), inset -4px -4px 12px rgba(0,0,0,0.6);
         }
-        .number-lock-shackle {
-          position: absolute;
-          width: 42%;
-          height: 31%;
-          top: -2%;
-          left: 29%;
-          border: clamp(13px, 3.8vw, 22px) solid #bfc2c5;
-          border-bottom: 0;
-          border-radius: 48% 48% 0 0;
-          background: transparent;
-          filter: drop-shadow(0 3px 2px #000);
-          z-index: 0;
+        .lock-body {
+            width: 100%;
+            height: 230px;
+            background: linear-gradient(135deg, #4a4d52 0%, #1a1c1e 50%, #0d0d0f 100%);
+            border: 4px solid #777a7d;
+            border-radius: 35px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2;
+            box-shadow: inset 0 2px 15px rgba(255,255,255,0.15), 0 15px 35px rgba(0,0,0,0.9);
         }
-        .number-lock-shackle::after {
-          content: "";
-          position: absolute;
-          inset: -10px -10px auto;
-          height: 16px;
-          border-radius: 50%;
-          background: linear-gradient(#fff, #9da1a5 55%, #55595d);
+        .lock-window {
+            width: 170px;
+            height: 180px; /* 3 cells of 60px */
+            background: #111;
+            border-radius: 12px;
+            border: 4px solid #0a0a0a;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.9);
+            overflow: hidden;
+            position: relative;
+            z-index: 3;
         }
-        .number-lock-body-inset {
-          position: absolute;
-          inset: 17% 12% 10%;
-          border-radius: 48%;
-          background: radial-gradient(ellipse at 50% 35%, #292b2d, #101112 65%, #050506);
-          box-shadow: inset 0 5px 9px #000, inset 0 -2px 4px #7775;
+        .lock-strip {
+            position: absolute;
+            width: 100%;
+            top: 0;
+            left: 0;
+            will-change: transform;
         }
-        .number-lock-display-frame {
-          position: relative;
-          z-index: 2;
-          width: 67%;
-          height: 25%;
-          min-height: 92px;
-          border-radius: 26px;
-          padding: 9px 14px;
-          background: linear-gradient(180deg, #5a5d60, #151719 18%, #08090a 50%, #34373a 100%);
-          box-shadow: 0 7px 13px #000c, inset 0 2px 4px #ffffff55, 0 0 0 2px #777a7d;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+        .lock-cell {
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: "Arial Black", Arial, sans-serif;
+            font-size: 42px;
+            font-weight: 900;
+            color: #0a1326; /* Dark navy text */
+            /* Silver metallic drum background */
+            background: linear-gradient(to bottom, #c8cccf 0%, #f8f9fa 25%, #ffffff 50%, #c8cccf 100%);
+            border-bottom: 1px solid #8a8e92;
+            text-shadow: 0 1px 0 rgba(255,255,255,0.7);
         }
-        .number-lock-window {
-          width: 100%;
-          height: 100%;
-          overflow: hidden;
-          position: relative;
-          border-radius: 8px;
-          background: linear-gradient(90deg, #85898d, #f0f1f2 12%, #c6c9cc 50%, #f3f3f4 88%, #7a7e82);
-          box-shadow: inset 0 3px 8px #0009, inset 0 -3px 7px #fff8;
+        /* Horizontal metallic separators */
+        .lock-window::before, .lock-window::after {
+            content: '';
+            position: absolute;
+            left: 0; right: 0;
+            height: 6px;
+            background: linear-gradient(to bottom, #f0f0f0, #888);
+            z-index: 4;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.6);
+            pointer-events: none;
         }
-        .number-lock-window::before,
-        .number-lock-window::after {
-          content: "";
-          position: absolute;
-          left: 0; right: 0;
-          height: 4px;
-          z-index: 4;
-          background: #55595d;
-          box-shadow: 0 1px 2px #fff8;
+        .lock-window::before { top: 60px; transform: translateY(-3px); }
+        .lock-window::after { bottom: 60px; transform: translateY(3px); }
+        
+        /* Glowing Center Highlight */
+        .lock-highlight {
+            position: absolute;
+            top: 60px;
+            left: 0; right: 0;
+            height: 60px;
+            border-top: 1px solid rgba(255, 255, 255, 0.6);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4), inset 0 0 10px rgba(0, 255, 255, 0.2);
+            z-index: 5;
+            pointer-events: none;
         }
-        .number-lock-window::before { top: 0; }
-        .number-lock-window::after { bottom: 0; }
-        .number-lock-center-band {
-          position: absolute;
-          z-index: 3;
-          left: 0; right: 0;
-          top: 50%;
-          height: 34%;
-          transform: translateY(-50%);
-          border-top: 2px solid #777b7f;
-          border-bottom: 2px solid #777b7f;
-          background: #ffffff24;
-          pointer-events: none;
+
+        /* Side Arrows */
+        .lock-arrow {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 32px;
+            height: 38px;
+            background: linear-gradient(to bottom, #ffc107, #f39c12);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.8);
+            z-index: 10;
         }
-        .number-lock-strip {
-          position: absolute;
-          width: 100%;
-          left: 0;
-          top: 0;
-          will-change: transform;
+        .lock-arrow.left { left: 10px; }
+        .lock-arrow.right { right: 10px; }
+        .lock-arrow::after {
+            content: '';
+            width: 0; height: 0;
+            border-top: 7px solid transparent;
+            border-bottom: 7px solid transparent;
         }
-        .number-lock-cell {
-          height: 54px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #090a0b;
-          font-size: clamp(26px, 6.5vw, 40px);
-          line-height: 1;
-          font-weight: 900;
-          font-family: "Arial Black", Arial, sans-serif;
-          text-shadow: 0 1px 0 #fff;
-          border-bottom: 1px solid #7f8387;
-          background: linear-gradient(90deg, #92969a, #f4f4f4 18%, #d5d7d9 50%, #f8f8f8 82%, #969a9e);
-        }
-        .number-lock-cell:nth-child(even) {
-          background: linear-gradient(90deg, #777b7f, #e6e7e8 18%, #c8cacc 50%, #ededee 82%, #85898d);
-        }
+        .lock-arrow.left::after { border-right: 11px solid #fff; margin-right: 4px; }
+        .lock-arrow.right::after { border-left: 11px solid #fff; margin-left: 4px; }
 
         .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(280px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 12px; border: 2px solid #ffcc44; border-radius: 17px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 8px 24px rgba(0,0,0,.58), 0 0 18px rgba(255,204,68,.28); font-size: .78rem; line-height: 1.45; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; transform-origin: top center; animation: moreTipPop .45s cubic-bezier(.34,1.56,.64,1) both, moreTipGlow 1.25s ease-in-out .45s infinite alternate; }
         .more-login-tip::before { content: ""; position: absolute; top: -21px; left: var(--more-tip-tail-left, 50%); width: 5px; height: 22px; border-radius: 4px; background: #35e7ff; transform: translateX(-50%); filter: drop-shadow(0 0 4px rgba(53,231,255,.75)); transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate, moreTipTailFlash 1.15s ease-in-out infinite; }
@@ -1127,14 +1123,15 @@
 
     <div id="wheelAnimOverlay" class="wheel-anim-overlay">
       <div class="wheel-anim-machine">
-        <div class="number-lock">
-          <div class="number-lock-shackle"></div>
-          <div class="number-lock-body-inset"></div>
-          <div class="number-lock-display-frame">
-            <div class="number-lock-window" id="numberLockWindow">
-              <div class="number-lock-strip" id="numberLockStrip"></div>
-              <div class="number-lock-center-band"></div>
+        <div class="lock-container">
+          <div class="lock-shackle"></div>
+          <div class="lock-body">
+            <div class="lock-arrow left"></div>
+            <div class="lock-window" id="numberLockWindow">
+              <div class="lock-strip" id="numberLockStrip"></div>
+              <div class="lock-highlight"></div>
             </div>
+            <div class="lock-arrow right"></div>
           </div>
         </div>
       </div>
@@ -2030,7 +2027,7 @@
     let wheelAnimationPlayedRounds = new Set();
     let wheelAnimationPlaying = false;
 
-    // ===== NUMBER LOCK ANIMATION =====
+    // ===== NUMBER LOCK ANIMATION (Screenshot Match) =====
     // Replaces the old wheel spin. No overlay text/title. Silent reveal.
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
@@ -2039,17 +2036,18 @@
             const windowEl = document.getElementById('numberLockWindow');
             if (!overlay || !strip || !windowEl) { resolve(); return; }
 
-            const STEP = 54;
+            const STEP = 60; // Matches .lock-cell height
             const TOTAL = 400;
             const CYCLES = 9;
             const targetNum = Number(winningNumber);
             if (!Number.isInteger(targetNum) || targetNum < 1 || targetNum > TOTAL) { resolve(); return; }
 
+            // Build repeated number cycles so the drum can scroll continuously
             const values = [];
             for (let c = 0; c < CYCLES; c++) {
                 for (let n = 1; n <= TOTAL; n++) values.push(n);
             }
-            strip.innerHTML = values.map(n => `<div class="number-lock-cell">${n}</div>`).join('');
+            strip.innerHTML = values.map(n => `<div class="lock-cell">${n}</div>`).join('');
 
             const centerOffset = () => (windowEl.clientHeight - STEP) / 2;
             const setPosition = (index, animate, duration = 0) => {
@@ -2061,6 +2059,7 @@
             const targetCycle = 7;
             const targetIndex = targetCycle * TOTAL + (targetNum - 1);
 
+            // Show overlay, reset strip to start
             overlay.classList.add('active');
             setPosition(startIndex, false);
             void strip.offsetWidth;
@@ -2071,8 +2070,7 @@
                 setPosition(targetIndex, true, duration);
                 setTimeout(() => {
                     stopWheelSpinSound();
-                    // Brief settle pause, then hide the lock so the winner card
-                    // (rendered by displayWinningNumberCard's .then()) appears alone.
+                    // Brief settle pause, then hide the lock
                     setTimeout(() => {
                         overlay.classList.remove('active');
                         resolve();
