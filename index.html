@@ -714,7 +714,6 @@
             padding: 18px; touch-action: none; user-select: none;
             -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
         }
-        .wheel-anim-overlay.active { display: flex; }
         .winzo-lock-stage {
             position: relative; width: min(88vw, 430px); aspect-ratio: 1;
             display: grid; place-items: center; isolation: isolate;
@@ -2106,33 +2105,45 @@
             const overlay = document.getElementById('wheelAnimOverlay');
             if (!overlay) { resolve(); return; }
 
-            // Use only the numbers already recorded for this round.
-            // The authoritative winning number is never recalculated here.
-            const allPicks = new Set();
+            // Use the server's taken-number set first, then player picks as a
+            // fallback. Include the single-pick format used by older snapshots.
+            const picked = new Set();
+            if (engineState.allTakenNumbers && typeof engineState.allTakenNumbers.forEach === 'function') {
+                engineState.allTakenNumbers.forEach(value => {
+                    const n = Number(value);
+                    if (Number.isInteger(n) && n >= 1 && n <= 400) picked.add(n);
+                });
+            }
             Object.values(engineState.players || {}).forEach(player => {
-                if (player && Array.isArray(player.picks)) {
-                    player.picks.forEach(value => {
-                        const n = Number(value);
-                        if (Number.isInteger(n) && n >= 1 && n <= 400) allPicks.add(n);
-                    });
-                }
+                if (!player) return;
+                const picks = getPlayerPicks(player);
+                picks.forEach(value => {
+                    const n = Number(value);
+                    if (Number.isInteger(n) && n >= 1 && n <= 400) picked.add(n);
+                });
             });
 
-            const uniqueNumbers = Array.from(allPicks);
+            const numbers = Array.from(picked);
             const winner = Number(winningNumber);
-            if (Number.isInteger(winner) && winner >= 1 && winner <= 400 && !uniqueNumbers.includes(winner)) {
-                uniqueNumbers.push(winner);
+            if (Number.isInteger(winner) && winner >= 1 && winner <= 400 && !picked.has(winner)) {
+                numbers.push(winner);
             }
-            if (!uniqueNumbers.length) { resolve(); return; }
+            if (!numbers.length) { resolve(); return; }
 
-            // Build enough complete drum rotations to provide a continuous roll.
-            const cycles = 10;
-            const values = [];
-            for (let cycle = 0; cycle < cycles; cycle++) values.push(...uniqueNumbers);
+            const winnerIndex = Math.max(0, numbers.indexOf(winner));
+            // Limit the DOM to at most 1,200 number cells. The old implementation
+            // always created 10 copies (up to 4,000 cells), delaying first paint.
+            const cycles = Math.max(3, Math.min(10, Math.floor(1200 / numbers.length)));
+            const values = new Array(cycles * numbers.length);
+            for (let i = 0; i < values.length; i++) values[i] = numbers[i % numbers.length];
+            const targetCycle = cycles - 2;
+            const targetIndex = targetCycle * numbers.length + winnerIndex;
+            const startIndex = 1;
 
-            const targetCycle = 8;
-            const targetIndex = targetCycle * uniqueNumbers.length + uniqueNumbers.indexOf(winner);
-
+            // Build the complete lock in a detached fragment so the live page
+            // performs one insertion instead of thousands of incremental updates.
+            overlay.classList.remove('active', 'preparing');
+            overlay.setAttribute('aria-hidden', 'true');
             overlay.innerHTML = `
                 <div class="winzo-lock-stage" aria-label="Number lock animation">
                     <div class="winzo-lock-shackle"></div>
@@ -2153,65 +2164,19 @@
             const windowEl = overlay.querySelector('.winzo-lock-window');
             if (!strip || !windowEl) { resolve(); return; }
 
-            // Populate every cell BEFORE the lock is made visible.
-            // Text nodes are used rather than HTML interpolation.
             const fragment = document.createDocumentFragment();
-            values.forEach(n => {
+            for (let i = 0; i < values.length; i++) {
                 const cell = document.createElement('div');
                 cell.className = 'winzo-lock-number';
-                cell.textContent = String(n);
+                cell.textContent = String(values[i]);
                 fragment.appendChild(cell);
-            });
+            }
             strip.appendChild(fragment);
-
-            // "Preparing" participates in layout but remains invisible.
-            // This lets Android WebView calculate the real cell dimensions first.
-            overlay.classList.remove('active');
-            overlay.classList.add('preparing');
-            overlay.setAttribute('aria-hidden', 'true');
-
-            let step = 60;
-            const measureDrum = () => {
-                const h = windowEl.clientHeight || 180;
-                step = Math.max(1, h / 3);
-                windowEl.style.setProperty('--lock-step', `${step}px`);
-                strip.querySelectorAll('.winzo-lock-number').forEach(cell => {
-                    cell.style.height = `${step}px`;
-                    cell.style.minHeight = `${step}px`;
-                    cell.style.flex = `0 0 ${step}px`;
-                });
-            };
-
-            const centerOffset = () => (windowEl.clientHeight - step) / 2;
-            const setPosition = (index, animate, duration = 0) => {
-                strip.style.transition = animate
-                    ? `transform ${duration}ms cubic-bezier(.12,.72,.16,1)`
-                    : 'none';
-                strip.style.transform =
-                    `translate3d(0, ${centerOffset() - index * step}px, 0)`;
-            };
-
-            measureDrum();
-
-            // Start far enough into the populated strip to guarantee that both
-            // neighbouring number buttons exist above and below the centre.
-            const startIndex = Math.min(
-                values.length - 2,
-                Math.max(1, uniqueNumbers.length + Math.floor(uniqueNumbers.length * 0.15))
-            );
-            setPosition(startIndex, false);
-
-            // Force style/layout calculation while still hidden. This prevents the
-            // first visible frame from showing an empty or partially-built drum.
-            void strip.offsetHeight;
-            void windowEl.getBoundingClientRect();
-            measureDrum();
-            setPosition(startIndex, false);
-            void strip.offsetHeight;
 
             let completed = false;
             let fallbackTimer = null;
             let startTimer = null;
+            let step = 0;
 
             const finish = () => {
                 if (completed) return;
@@ -2220,38 +2185,79 @@
                 if (startTimer) clearTimeout(startTimer);
                 stopWheelSpinSound();
                 strip.removeEventListener('transitionend', onTransitionEnd);
-                setTimeout(() => {
-                    overlay.classList.remove('active', 'preparing');
-                    overlay.setAttribute('aria-hidden', 'true');
-                    resolve();
-                }, 650);
+                overlay.classList.remove('active', 'preparing');
+                overlay.setAttribute('aria-hidden', 'true');
+                resolve();
             };
-
             const onTransitionEnd = event => {
                 if (event.target === strip && event.propertyName === 'transform') finish();
             };
             strip.addEventListener('transitionend', onTransitionEnd);
 
-            // Reveal only after all cells are measured and the initial position
-            // has been committed. Hold the fully-populated lock briefly before roll.
+            const measureAndPosition = () => {
+                const height = windowEl.clientHeight;
+                if (!height || strip.children.length !== values.length) return false;
+                step = height / 3;
+                if (!Number.isFinite(step) || step <= 0) return false;
+                windowEl.style.setProperty('--lock-step', `${step}px`);
+                // Set each cell's exact height before setting the initial offset.
+                for (let i = 0; i < strip.children.length; i++) {
+                    const cell = strip.children[i];
+                    cell.style.height = `${step}px`;
+                    cell.style.minHeight = `${step}px`;
+                }
+                strip.style.transition = 'none';
+                strip.style.transform = `translate3d(0, ${(height - step) / 2 - startIndex * step}px, 0)`;
+                void strip.offsetHeight;
+                const first = strip.children[0].getBoundingClientRect();
+                const middle = strip.children[startIndex].getBoundingClientRect();
+                const last = strip.children[strip.children.length - 1].getBoundingClientRect();
+                return first.height > 0 && middle.height > 0 && last.height > 0 &&
+                    Math.abs(middle.top + middle.height / 2 - (windowEl.getBoundingClientRect().top + height / 2)) < 2;
+            };
+
+            // Keep the overlay out of view while it participates in layout.
+            // Do not start if Android WebView has not calculated real dimensions.
+            overlay.classList.add('preparing');
+            const ready = measureAndPosition();
+            if (!ready) {
+                finish();
+                return;
+            }
+
+            // Recheck after the lock has been inserted and laid out. A failed
+            // check skips the animation rather than showing an empty scrolling drum.
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     if (completed) return;
+                    if (!measureAndPosition() || strip.children.length !== values.length) {
+                        finish();
+                        return;
+                    }
                     overlay.classList.remove('preparing');
                     overlay.classList.add('active');
                     overlay.setAttribute('aria-hidden', 'false');
 
-                    // Allow the visible, stationary three-number window to paint
-                    // before the scrolling transition begins on slower Android phones.
-                    startTimer = setTimeout(() => {
-                        if (completed) return;
-                        const duration = 11500;
-                        setPosition(targetIndex, true, duration);
-                        startWheelSpinSound(duration);
-
-                        // Fallback for WebViews that suppress transitionend.
-                        fallbackTimer = setTimeout(finish, duration + 900);
-                    }, 550);
+                    // Wait for two visible frames so the populated three-number
+                    // window is painted before the transform transition is applied.
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            if (completed) return;
+                            if (!windowEl.clientHeight || strip.children.length !== values.length) {
+                                finish();
+                                return;
+                            }
+                            const duration = 9000;
+                            const offset = (windowEl.clientHeight - step) / 2 - targetIndex * step;
+                            strip.style.transition = `transform ${duration}ms cubic-bezier(.12,.72,.16,1)`;
+                            // Force the initial transform to be committed separately
+                            // from the destination transform on mobile WebViews.
+                            void strip.offsetHeight;
+                            strip.style.transform = `translate3d(0, ${offset}px, 0)`;
+                            startWheelSpinSound(duration);
+                            fallbackTimer = setTimeout(finish, duration + 1200);
+                        });
+                    });
                 });
             });
         });
