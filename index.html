@@ -239,45 +239,11 @@
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
 
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
-        .wheel-anim-overlay.preparing {
-            display: flex;
-            visibility: hidden;
-            opacity: 0;
-        }
-        .wheel-anim-overlay.active {
-            display: flex;
-            visibility: visible;
-            opacity: 1;
-        }
+        .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
-        /* The wheel grows inside the result overlay so dense segment labels are easier to read.
-           Its top edge stays anchored beneath the pointer while the diameter increases. */
-        .wheel-container {
-            position: relative;
-            width: min(440px, 90vw, 70vh);
-            height: min(440px, 90vw, 70vh);
-            flex: 0 0 auto;
-            border-radius: 50%;
-            border: 16px solid #6a3a9a;
-            box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5);
-            overflow: hidden;
-            background: #111;
-            transition: width 1.8s cubic-bezier(0.22, 1, 0.36, 1),
-                        height 1.8s cubic-bezier(0.22, 1, 0.36, 1);
-        }
-        .wheel-anim-overlay.active .wheel-container {
-            width: min(680px, 130vw, 95vh);
-            height: min(680px, 130vw, 95vh);
-        }
-        @media (max-width: 480px) {
-            .wheel-container { border-width: 12px; }
-        }
-        @media (max-height: 520px) {
-            .wheel-anim-overlay.active .wheel-container {
-                width: min(620px, 112vw, 72vh);
-                height: min(620px, 112vw, 72vh);
-            }
-        }
+        .wheel-container { position: relative; width: 440px; height: 440px; border-radius: 50%; border: 16px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
+        @media (max-width: 480px) { .wheel-container { width: 90vw; height: 90vw; max-width: 440px; max-height: 440px; border-width: 12px; } }
+        @media (max-width: 360px) { .wheel-container { width: 94vw; height: 94vw; } }
         .wheel { width: 100%; height: 100%; transform-origin: center center; will-change: transform; }
         .wheel.spinning { transition: transform 8s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
         .wheel-pointer { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 26px solid transparent; border-right: 26px solid transparent; border-top: 38px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
@@ -703,150 +669,6 @@
         .ladder-controls .ladder-btn.primary { padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.attack { background: linear-gradient(135deg, #b55cff, #7f00ff); color: #fff; box-shadow: 0 4px 0 #4a0099; padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.skip { background: linear-gradient(135deg, #ffb347, #ff7b00); color: #1a0a2e; box-shadow: 0 4px 0 #b35400; padding: 10px 15px; font-size: 0.9rem; }
-
-        /* Winzo Spin: single-column mechanical combination-lock animation */
-        .wheel-anim-overlay {
-            position: fixed; inset: 0; z-index: 3500; display: none;
-            align-items: center; justify-content: center; overflow: hidden;
-            background:
-                radial-gradient(ellipse at 50% 42%, rgba(67,83,125,.48), transparent 52%),
-                radial-gradient(ellipse at center, #182238 0%, #090e1b 72%, #050811 100%);
-            padding: 18px; touch-action: none; user-select: none;
-            -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
-        }
-        .winzo-lock-stage {
-            position: relative; width: min(88vw, 430px); aspect-ratio: 1;
-            display: grid; place-items: center; isolation: isolate;
-            filter: drop-shadow(0 28px 38px rgba(0,0,0,.72));
-            animation: winzoLockEnter .55s cubic-bezier(.2,.85,.25,1.15) both;
-        }
-        @keyframes winzoLockEnter {
-            from { opacity: 0; transform: translateY(16px) scale(.88); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .winzo-lock-shackle {
-            position: absolute; width: 43%; height: 38%; top: 0; left: 28.5%;
-            border: clamp(15px,4.4vw,23px) solid #aeb9c8;
-            border-bottom: 0; border-radius: 48% 48% 0 0; z-index: 0;
-            background: transparent;
-            filter: drop-shadow(0 4px 3px rgba(0,0,0,.8));
-        }
-        .winzo-lock-shackle::before {
-            content: ""; position: absolute; inset: -7px -7px auto;
-            height: 13px; border-radius: 50%;
-            background: linear-gradient(#f7fbff,#8d9aab 55%,#596477);
-        }
-        .winzo-lock-shell {
-            position: absolute; inset: 22% 3% 2%; border-radius: 25% 25% 30% 30%;
-            background:
-                radial-gradient(ellipse at 30% 8%, rgba(255,255,255,.24), transparent 27%),
-                linear-gradient(115deg,#172337 0%,#718097 12%,#27354a 26%,#0a1221 55%,#43536a 78%,#101827 100%);
-            border: 5px solid #78869b;
-            box-shadow: inset 0 3px 8px rgba(255,255,255,.35),
-                inset 0 -18px 28px rgba(0,0,0,.8), 0 0 0 3px #111a29,
-                0 15px 28px rgba(0,0,0,.7);
-            display: flex; align-items: center; justify-content: center;
-        }
-        .winzo-lock-rim {
-            position: absolute; inset: 8% 5%; border-radius: 23%;
-            border: 2px solid rgba(211,225,244,.3);
-            box-shadow: inset 0 0 18px rgba(0,0,0,.75), 0 1px 2px rgba(255,255,255,.2);
-            pointer-events: none;
-        }
-        .winzo-lock-display {
-            position: relative; z-index: 2; width: 49%; height: 64%;
-            padding: clamp(5px,1.5vw,9px); border-radius: 20px;
-            background: linear-gradient(180deg,#8795a8,#202b3c 18%,#0a101c 52%,#66758a);
-            border: 2px solid #aab7c9;
-            box-shadow: 0 12px 20px rgba(0,0,0,.65),
-                inset 0 2px 4px rgba(255,255,255,.42), 0 0 24px rgba(117,174,255,.12);
-        }
-        .winzo-lock-window {
-            --lock-step: 60px;
-            position: relative; width: 100%; height: 100%; overflow: hidden;
-            border-radius: 9px;
-            background: linear-gradient(90deg,#657386,#f2f5f9 13%,#cbd4df 50%,#f7f9fc 87%,#59677a);
-            box-shadow: inset 0 5px 12px rgba(0,0,0,.72), inset 0 -5px 10px rgba(255,255,255,.7);
-            perspective: 520px; transform: translateZ(0); contain: layout paint;
-        }
-        .winzo-lock-strip {
-            position: absolute; left: 0; top: 0; width: 100%;
-            will-change: transform; transform: translate3d(0,0,0);
-            transform-style: preserve-3d; backface-visibility: hidden;
-        }
-        .winzo-lock-number {
-            height: var(--lock-step); display: flex; align-items: center; justify-content: center;
-            position: relative; overflow: hidden;
-            color: #172130; font-family: Arial, sans-serif;
-            font-size: clamp(30px,8.5vw,48px); line-height: 1; font-weight: 900;
-            letter-spacing: 1px; font-variant-numeric: tabular-nums;
-            text-shadow: 0 1px 0 rgba(255,255,255,.95), 0 -1px 1px rgba(0,0,0,.24);
-            border-top: 1px solid rgba(255,255,255,.72);
-            border-bottom: 1px solid rgba(34,47,65,.65);
-            background:
-                radial-gradient(ellipse at 50% 42%,rgba(255,255,255,.98) 0%,rgba(224,231,239,.96) 42%,rgba(147,160,177,.98) 100%),
-                linear-gradient(90deg,#657386,#f8fafc 18%,#dce3eb 50%,#fff 82%,#657386);
-            box-shadow: inset 0 5px 9px rgba(255,255,255,.55),
-                inset 0 -7px 10px rgba(21,32,49,.28),
-                inset 8px 0 12px rgba(35,49,68,.18),
-                inset -8px 0 12px rgba(35,49,68,.18);
-            backface-visibility: hidden;
-        }
-        .winzo-lock-number:nth-child(even) {
-            background:
-                radial-gradient(ellipse at 50% 42%,#f8fafc 0%,#cbd4df 48%,#8492a4 100%),
-                linear-gradient(90deg,#596779,#edf2f7 20%,#cbd4df 50%,#f4f7fa 80%,#596779);
-        }
-        .winzo-lock-highlight {
-            position: absolute; z-index: 3; pointer-events: none; left: -1px; right: -1px;
-            top: 50%; height: var(--lock-step,60px); transform: translateY(-50%);
-            background: linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.16),rgba(255,255,255,.08));
-            box-shadow: inset 0 1px 5px rgba(255,255,255,.16), inset 0 -1px 5px rgba(0,0,0,.2);
-        }
-        /* Two solid chrome rails replace the flat yellow separator lines. */
-        .winzo-lock-highlight::before, .winzo-lock-highlight::after {
-            content: ""; position: absolute; left: -1px; right: -1px; height: 7px;
-            background: linear-gradient(180deg,#f8fbff 0%,#cbd5e1 22%,#7f8da0 48%,#dce4ed 72%,#596779 100%);
-            border-top: 1px solid rgba(255,255,255,.95);
-            border-bottom: 1px solid rgba(20,31,47,.8);
-            box-shadow: 0 2px 4px rgba(0,0,0,.48), 0 0 3px rgba(220,232,246,.45);
-        }
-        .winzo-lock-highlight::before { top: 0; }
-        .winzo-lock-highlight::after { bottom: 0; }
-        .winzo-lock-window::before, .winzo-lock-window::after {
-            content: ""; position: absolute; left: 0; right: 0; height: 24%;
-            z-index: 2; pointer-events: none;
-        }
-        .winzo-lock-window::before {
-            top: 0; background: linear-gradient(180deg,rgba(18,27,42,.56),transparent);
-        }
-        .winzo-lock-window::after {
-            bottom: 0; background: linear-gradient(0deg,rgba(18,27,42,.56),transparent);
-        }
-        .winzo-lock-glass {
-            position: absolute; inset: 0; z-index: 4; pointer-events: none;
-            background: linear-gradient(115deg,rgba(255,255,255,.25),transparent 23%,transparent 72%,rgba(255,255,255,.18));
-        }
-        .winzo-lock-bottom-rim {
-            position: absolute; left: 18%; right: 18%; bottom: -2%;
-            height: 9%; border-radius: 0 0 40% 40%;
-            background: linear-gradient(180deg,#64748a,#1b2638 65%,#080e18);
-            border: 2px solid #78869b; box-shadow: 0 8px 12px rgba(0,0,0,.5);
-        }
-        @media (max-width: 480px) {
-            .winzo-lock-stage { width: min(92vw,390px); }
-            .winzo-lock-display { width: 51%; height: 63%; padding: 5px; border-radius: 15px; }
-            .winzo-lock-number { font-size: clamp(27px,8vw,40px); }
-        }
-        @media (max-width: 340px) {
-            .winzo-lock-stage { width: 94vw; }
-            .winzo-lock-display { width: 54%; height: 61%; }
-            .winzo-lock-number { font-size: 27px; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .winzo-lock-stage { animation-duration: .01ms; }
-        }
-
     </style>
 </head>
 <body>
@@ -1200,7 +1022,22 @@
         </div>
     </div>
 
-    <div id="wheelAnimOverlay" class="wheel-anim-overlay" aria-hidden="true"></div>
+    <div id="wheelAnimOverlay" class="wheel-anim-overlay">
+      <div class="wheel-anim-machine">
+        <img class="wheel-ready-art" alt=" " src="winzo_ready_wheel_lite.webp">
+        <div class="wheel-pointer"></div>
+        <div class="wheel-container">
+            <div class="wheel" id="baWheel"></div>
+            <div class="wheel-center">W</div>
+        </div>
+        <div id="wheelReadyBubble" class="wheel-ready-bubble" aria-live="polite">
+            <span id="wheelReadyLabel" class="wheel-ready-label">Get ready to win</span>
+            <span id="wheelReadyNumber" class="wheel-ready-number"></span>
+        </div>
+        <div class="wheel-stand"></div>
+        <div id="baStatus" class="wheel-anim-status">Ready.</div>
+      </div>
+    </div>
 
     <div id="bingoWinnerModal">
         <div class="card">
@@ -1788,10 +1625,10 @@
     }
     function getPlayerPicks(player) {
         if (!player) return [];
-        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400);
+        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200);
         if (player.pick !== null && player.pick !== undefined) {
             const n = Number(player.pick);
-            return Number.isInteger(n) && n >= 1 && n <= 400 ? [n] : [];
+            return Number.isInteger(n) && n >= 1 && n <= 200 ? [n] : [];
         }
         return [];
     }
@@ -1847,7 +1684,7 @@
     }
     function getMyPick() { const picks = getMyPicks(); return picks.length ? picks[0] : null; }
     function syncLocalPlayerPicks(picks, round, betDeducted) {
-        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400))].slice(0, MAX_PICKS_PER_ROUND);
+        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200))].slice(0, MAX_PICKS_PER_ROUND);
         localSelectionRound = Number(round);
         localSelectionPicks = clean;
         if (currentUser) {
@@ -2103,169 +1940,131 @@
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
             const overlay = document.getElementById('wheelAnimOverlay');
-            if (!overlay) { resolve(); return; }
+            const wheelEl = document.getElementById('baWheel');
+            const statusEl2 = document.getElementById('baStatus');
+            if (!overlay || !wheelEl || !statusEl2) { resolve(); return; }
 
-            // Use the server's taken-number set first, then player picks as a
-            // fallback. Include the single-pick format used by older snapshots.
-            const picked = new Set();
-            if (engineState.allTakenNumbers && typeof engineState.allTakenNumbers.forEach === 'function') {
-                engineState.allTakenNumbers.forEach(value => {
-                    const n = Number(value);
-                    if (Number.isInteger(n) && n >= 1 && n <= 400) picked.add(n);
-                });
-            }
-            Object.values(engineState.players || {}).forEach(player => {
-                if (!player) return;
-                const picks = getPlayerPicks(player);
-                picks.forEach(value => {
-                    const n = Number(value);
-                    if (Number.isInteger(n) && n >= 1 && n <= 400) picked.add(n);
-                });
-            });
+            const allPicks = new Set();
+            Object.values(engineState.players).forEach(p => { if (p && p.picks) p.picks.forEach(n => allPicks.add(n)); });
+            const uniqueNumbers = Array.from(allPicks);
+            if (!uniqueNumbers.includes(winningNumber)) uniqueNumbers.push(winningNumber);
 
-            const numbers = Array.from(picked);
-            const winner = Number(winningNumber);
-            if (Number.isInteger(winner) && winner >= 1 && winner <= 400 && !picked.has(winner)) {
-                numbers.push(winner);
-            }
-            if (!numbers.length) { resolve(); return; }
+            const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
+            const anglePerSegment = 360 / segmentCount;
+            const numbersForWheel = [];
+            for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
+            let winningIndex = numbersForWheel.indexOf(winningNumber);
+            if (winningIndex === -1) winningIndex = 0;
 
-            const winnerIndex = Math.max(0, numbers.indexOf(winner));
-            // Limit the DOM to at most 1,200 number cells. The old implementation
-            // always created 10 copies (up to 4,000 cells), delaying first paint.
-            const cycles = Math.max(3, Math.min(10, Math.floor(1200 / numbers.length)));
-            const values = new Array(cycles * numbers.length);
-            for (let i = 0; i < values.length; i++) values[i] = numbers[i % numbers.length];
-            const targetCycle = cycles - 2;
-            const targetIndex = targetCycle * numbers.length + winnerIndex;
-            const startIndex = 1;
+            const size = 300; const center = size / 2; const radius = center;
+            const labelRadius = radius * 0.87;
+            const labelFontSize = segmentCount > 160 ? 6.2
+                : segmentCount > 120 ? 6.8
+                : segmentCount > 80 ? 7.4
+                : segmentCount > 60 ? 8.2
+                : segmentCount > 36 ? 10
+                : 12.5;
 
-            // Build the complete lock in a detached fragment so the live page
-            // performs one insertion instead of thousands of incremental updates.
-            overlay.classList.remove('active', 'preparing');
-            overlay.setAttribute('aria-hidden', 'true');
-            overlay.innerHTML = `
-                <div class="winzo-lock-stage" aria-label="Number lock animation">
-                    <div class="winzo-lock-shackle"></div>
-                    <div class="winzo-lock-shell">
-                        <div class="winzo-lock-rim"></div>
-                        <div class="winzo-lock-display">
-                            <div class="winzo-lock-window">
-                                <div class="winzo-lock-strip" id="winzoLockStrip"></div>
-                                <div class="winzo-lock-highlight"></div>
-                                <div class="winzo-lock-glass"></div>
-                            </div>
-                        </div>
-                        <div class="winzo-lock-bottom-rim"></div>
-                    </div>
-                </div>`;
-
-            const strip = overlay.querySelector('#winzoLockStrip');
-            const windowEl = overlay.querySelector('.winzo-lock-window');
-            if (!strip || !windowEl) { resolve(); return; }
-
-            const fragment = document.createDocumentFragment();
-            for (let i = 0; i < values.length; i++) {
-                const cell = document.createElement('div');
-                cell.className = 'winzo-lock-number';
-                cell.textContent = String(values[i]);
-                fragment.appendChild(cell);
-            }
-            strip.appendChild(fragment);
-
-            let completed = false;
-            let fallbackTimer = null;
-            let startTimer = null;
-            let step = 0;
-
-            const finish = () => {
-                if (completed) return;
-                completed = true;
-                if (fallbackTimer) clearTimeout(fallbackTimer);
-                if (startTimer) clearTimeout(startTimer);
-                stopWheelSpinSound();
-                strip.removeEventListener('transitionend', onTransitionEnd);
-                overlay.classList.remove('active', 'preparing');
-                overlay.setAttribute('aria-hidden', 'true');
-                resolve();
-            };
-            const onTransitionEnd = event => {
-                if (event.target === strip && event.propertyName === 'transform') finish();
-            };
-            strip.addEventListener('transitionend', onTransitionEnd);
-
-            const measureAndPosition = () => {
-                const height = windowEl.clientHeight;
-                if (!height || strip.children.length !== values.length) return false;
-                step = height / 3;
-                if (!Number.isFinite(step) || step <= 0) return false;
-                windowEl.style.setProperty('--lock-step', `${step}px`);
-                // Set each cell's exact height before setting the initial offset.
-                for (let i = 0; i < strip.children.length; i++) {
-                    const cell = strip.children[i];
-                    cell.style.height = `${step}px`;
-                    cell.style.minHeight = `${step}px`;
+            let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
+            for (let i = 0; i < segmentCount; i++) {
+                const startAngle = i * anglePerSegment;
+                const endAngle = (i + 1) * anglePerSegment;
+                const midAngle = startAngle + anglePerSegment / 2;
+                const startRad = (startAngle - 90) * Math.PI / 180;
+                const endRad = (endAngle - 90) * Math.PI / 180;
+                const midRad = (midAngle - 90) * Math.PI / 180;
+                const x1 = center + radius * Math.cos(startRad);
+                const y1 = center + radius * Math.sin(startRad);
+                const x2 = center + radius * Math.cos(endRad);
+                const y2 = center + radius * Math.sin(endRad);
+                const textX = center + labelRadius * Math.cos(midRad);
+                const textY = center + labelRadius * Math.sin(midRad);
+                const color = i % 2 === 0 ? '#e62020' : '#ffffff';
+                const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
+                svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
+                const numText = numbersForWheel[i];
+                if (numText !== '') {
+                    svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${labelFontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${midAngle}, ${textX}, ${textY})">${numText}</text>`;
                 }
-                strip.style.transition = 'none';
-                strip.style.transform = `translate3d(0, ${(height - step) / 2 - startIndex * step}px, 0)`;
-                void strip.offsetHeight;
-                const first = strip.children[0].getBoundingClientRect();
-                const middle = strip.children[startIndex].getBoundingClientRect();
-                const last = strip.children[strip.children.length - 1].getBoundingClientRect();
-                return first.height > 0 && middle.height > 0 && last.height > 0 &&
-                    Math.abs(middle.top + middle.height / 2 - (windowEl.getBoundingClientRect().top + height / 2)) < 2;
-            };
-
-            // Keep the overlay out of view while it participates in layout.
-            // Do not start if Android WebView has not calculated real dimensions.
-            overlay.classList.add('preparing');
-            const ready = measureAndPosition();
-            if (!ready) {
-                finish();
-                return;
             }
+            svg += `</svg>`;
+            wheelEl.innerHTML = svg;
 
-            // Recheck after the lock has been inserted and laid out. A failed
-            // check skips the animation rather than showing an empty scrolling drum.
-            requestAnimationFrame(() => {
+            wheelEl.classList.remove('spinning');
+            wheelEl.style.transform = 'rotate(0deg)';
+            void wheelEl.offsetWidth;
+
+            const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
+            const spins = 5;
+            const targetRotation = (spins * 360) - targetSegmentCenter;
+
+            statusEl2.textContent = 'Get ready to win!';
+            overlay.classList.add('active');
+            const readyAudio = document.getElementById('getReadyToWinAudio');
+            const readyBubble = document.getElementById('wheelReadyBubble');
+            const readyLabel = document.getElementById('wheelReadyLabel');
+            const readyNumber = document.getElementById('wheelReadyNumber');
+            let readyCountdownTimers = [];
+            let spinStarted = false;
+            const showReadyBubble = () => {
+                if (!readyBubble || !readyLabel || !readyNumber) return;
+                readyLabel.textContent = 'Get ready to win';
+                readyNumber.textContent = '';
+                readyBubble.classList.add('active');
+                const wheelMachine = document.querySelector('.wheel-anim-machine');
+                if (wheelMachine) wheelMachine.classList.add('ready-art-active');
+                const syncCountdownToAudio = () => {
+                    if (!readyAudio || !Number.isFinite(readyAudio.duration) || readyAudio.duration <= 0) return;
+                    const remaining = readyAudio.duration - readyAudio.currentTime;
+                    const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
+                    if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
+                };
+                if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
+                else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
+            };
+            const hideReadyBubble = () => {
+                readyCountdownTimers.forEach(clearTimeout);
+                readyCountdownTimers = [];
+                if (readyBubble) readyBubble.classList.remove('active');
+                const wheelMachine = document.querySelector('.wheel-anim-machine');
+                if (wheelMachine) wheelMachine.classList.remove('ready-art-active');
+            };
+            showReadyBubble();
+            const beginSpin = () => {
+                if (spinStarted) return;
+                spinStarted = true;
+                if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
+                hideReadyBubble();
+                statusEl2.textContent = 'Spinning the wheel...';
                 requestAnimationFrame(() => {
-                    if (completed) return;
-                    if (!measureAndPosition() || strip.children.length !== values.length) {
-                        finish();
-                        return;
-                    }
-                    overlay.classList.remove('preparing');
-                    overlay.classList.add('active');
-                    overlay.setAttribute('aria-hidden', 'false');
-
-                    // Wait for two visible frames so the populated three-number
-                    // window is painted before the transform transition is applied.
                     requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            if (completed) return;
-                            if (!windowEl.clientHeight || strip.children.length !== values.length) {
-                                finish();
-                                return;
-                            }
-                            const duration = 9000;
-                            const offset = (windowEl.clientHeight - step) / 2 - targetIndex * step;
-                            strip.style.transition = `transform ${duration}ms cubic-bezier(.12,.72,.16,1)`;
-                            // Force the initial transform to be committed separately
-                            // from the destination transform on mobile WebViews.
-                            void strip.offsetHeight;
-                            strip.style.transform = `translate3d(0, ${offset}px, 0)`;
-                            startWheelSpinSound(duration);
-                            fallbackTimer = setTimeout(finish, duration + 1200);
-                        });
+                        wheelEl.classList.add('spinning');
+                        startWheelSpinSound(8000);
+                        wheelEl.style.transform = `rotate(${targetRotation}deg)`;
                     });
                 });
-            });
+                setTimeout(() => {
+                    stopWheelSpinSound();
+                    statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
+                    setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
+                }, 8000);
+            };
+            if (readyAudio) {
+                try {
+                    readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
+                    readyAudio.onended = beginSpin;
+                    readyAudio.onerror = () => { beginSpin(); };
+                    setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
+                    const readyPlayback = readyAudio.play();
+                    if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
+                } catch (err) { beginSpin(); }
+            } else beginSpin();
         });
     }
 
     function displayWinningNumberCard(round, number, winners, winAmount) {
         const r = Number(round), n = Number(number);
-        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 400) return;
+        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 200) return;
         if (!Array.isArray(winners)) return;
 
         if (wheelAnimationPlaying) {
@@ -2278,11 +2077,7 @@
         }
 
         const animKey = currentRoom + '_' + r;
-        // Duplicate result snapshots must not reveal the winners card while the
-        // lock is still scrolling. Once this round's animation has finished, later
-        // snapshots may safely refresh/show the already-completed result.
-        if (wheelAnimationPlaying) return;
-        if (wheelAnimationPlayedRounds.has(animKey)) {
+        if (wheelAnimationPlayedRounds.has(animKey) || wheelAnimationPlaying) {
             renderWinningCardBody(n, winAmount, winners);
             if (winnersModal) winnersModal.classList.add('active');
             showWinnerCelebration(r, winners);
@@ -2307,20 +2102,7 @@
             if (winners.filter(Boolean).length) { playEmbeddedWinnerAnnouncement(r); }
             else playNoWinnerEffectOnce(r);
             if (!isResultsCountdownRunning) startResultsCountdown();
-        }).catch(err => {
-            console.warn('[WINZO LOCK] Animation failed; releasing results safely:', err);
-            wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
-            const lockOverlay = document.getElementById('wheelAnimOverlay');
-            if (lockOverlay) { lockOverlay.classList.remove('active'); lockOverlay.setAttribute('aria-hidden', 'true'); }
-            if (engineState.gamePhase === 'results' && Number(engineState.roundNumber) === r) {
-                renderWinningCardBody(n, winAmount, winners);
-                if (winnersModal) winnersModal.classList.add('active');
-                showWinnerCelebration(r, winners);
-                if (winners.filter(Boolean).length) playEmbeddedWinnerAnnouncement(r);
-                else playNoWinnerEffectOnce(r);
-                if (!isResultsCountdownRunning) startResultsCountdown();
-            }
-        });
+        }).catch(() => { wheelAnimationPlaying = false; window._wheelAnimStartedAt = null; });
     }
 
     function resetWinningNumberCard() {
@@ -2359,7 +2141,7 @@
         }
         if (!isFinite(round) || round <= 0) return;
         if (displayedCardRound === round) return;
-        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 400) {
+        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 200) {
             displayedCardRound = round;
             displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
             clearCardFetchRetry();
@@ -3120,9 +2902,9 @@
                 return;
             }
             let buttons = numPicker.querySelectorAll('.num-btn[data-num]');
-            if (buttons.length !== 400) {
+            if (buttons.length !== 200) {
                 let html = '';
-                for (let i = 1; i <= 400; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
+                for (let i = 1; i <= 200; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
                 numPicker.innerHTML = html;
                 buttons = numPicker.querySelectorAll('.num-btn[data-num]');
             }
@@ -3197,7 +2979,7 @@
             const btn = e.target.closest('.num-btn[data-num]');
             if (!btn || btn.disabled || btn.classList.contains('loading')) return;
             const num = Number(btn.dataset.num);
-            if (!Number.isInteger(num) || num < 1 || num > 400) return;
+            if (!Number.isInteger(num) || num < 1 || num > 200) return;
             if (pendingPickOps.has(num)) return;
             const opRound = Number(engineState.roundNumber);
             if (gamePausedBySticky || !isNetworkConnected) { updateStatus('⏸ Game is temporarily unavailable.'); return; }
@@ -3461,7 +3243,7 @@
         if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
         if (data.lastResult && Number(data.lastResult.round) === round && Number(data.lastResult.winningNumber) > 0) {
             lastResultData = data.lastResult;
-        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 400) {
+        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 200) {
             lastResultData = {
                 round,
                 winningNumber: Number(data.winningNumber),
@@ -3477,7 +3259,7 @@
         engineState.winners = Array.isArray(data.winners) ? data.winners : [];
         engineState.prizePool = Number(data.prizePool) || 0;
         engineState.allTakenNumbers = new Set(
-            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 400)
+            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 200)
         );
         if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
         updateTotalBetDisplay();
