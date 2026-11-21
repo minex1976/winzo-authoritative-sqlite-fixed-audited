@@ -694,6 +694,110 @@
         .ladder-controls .ladder-btn.primary { padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.attack { background: linear-gradient(135deg, #b55cff, #7f00ff); color: #fff; box-shadow: 0 4px 0 #4a0099; padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.skip { background: linear-gradient(135deg, #ffb347, #ff7b00); color: #1a0a2e; box-shadow: 0 4px 0 #b35400; padding: 10px 15px; font-size: 0.9rem; }
+
+        /* Winzo Spin: single-column mechanical combination-lock animation */
+        .wheel-anim-overlay {
+            position: fixed; inset: 0; z-index: 3500; display: none;
+            align-items: center; justify-content: center; overflow: hidden;
+            background:
+                radial-gradient(ellipse at 50% 42%, rgba(67,83,125,.48), transparent 52%),
+                radial-gradient(ellipse at center, #182238 0%, #090e1b 72%, #050811 100%);
+            padding: 18px; touch-action: none; user-select: none;
+            -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+        }
+        .wheel-anim-overlay.active { display: flex; }
+        .winzo-lock-stage {
+            position: relative; width: min(88vw, 430px); aspect-ratio: 1;
+            display: grid; place-items: center; isolation: isolate;
+            filter: drop-shadow(0 28px 38px rgba(0,0,0,.72));
+            animation: winzoLockEnter .55s cubic-bezier(.2,.85,.25,1.15) both;
+        }
+        @keyframes winzoLockEnter {
+            from { opacity: 0; transform: translateY(16px) scale(.88); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .winzo-lock-shackle {
+            position: absolute; width: 43%; height: 38%; top: 0; left: 28.5%;
+            border: clamp(15px,4.4vw,23px) solid #aeb9c8;
+            border-bottom: 0; border-radius: 48% 48% 0 0; z-index: 0;
+            background: transparent;
+            filter: drop-shadow(0 4px 3px rgba(0,0,0,.8));
+        }
+        .winzo-lock-shackle::before {
+            content: ""; position: absolute; inset: -7px -7px auto;
+            height: 13px; border-radius: 50%;
+            background: linear-gradient(#f7fbff,#8d9aab 55%,#596477);
+        }
+        .winzo-lock-shell {
+            position: absolute; inset: 22% 3% 2%; border-radius: 25% 25% 30% 30%;
+            background:
+                radial-gradient(ellipse at 30% 8%, rgba(255,255,255,.24), transparent 27%),
+                linear-gradient(115deg,#172337 0%,#718097 12%,#27354a 26%,#0a1221 55%,#43536a 78%,#101827 100%);
+            border: 5px solid #78869b;
+            box-shadow: inset 0 3px 8px rgba(255,255,255,.35),
+                inset 0 -18px 28px rgba(0,0,0,.8), 0 0 0 3px #111a29,
+                0 15px 28px rgba(0,0,0,.7);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .winzo-lock-rim {
+            position: absolute; inset: 8% 5%; border-radius: 23%;
+            border: 2px solid rgba(211,225,244,.3);
+            box-shadow: inset 0 0 18px rgba(0,0,0,.75), 0 1px 2px rgba(255,255,255,.2);
+            pointer-events: none;
+        }
+        .winzo-lock-display {
+            position: relative; z-index: 2; width: 78%; height: 27%;
+            padding: 10px; border-radius: 20px;
+            background: linear-gradient(180deg,#8795a8,#202b3c 18%,#0a101c 52%,#66758a);
+            border: 2px solid #aab7c9;
+            box-shadow: 0 12px 20px rgba(0,0,0,.65),
+                inset 0 2px 4px rgba(255,255,255,.42), 0 0 24px rgba(117,174,255,.12);
+        }
+        .winzo-lock-window {
+            position: relative; width: 100%; height: 100%; overflow: hidden;
+            border-radius: 9px; background: linear-gradient(90deg,#7c8999,#f2f5f9 13%,#cbd4df 50%,#f7f9fc 87%,#778598);
+            box-shadow: inset 0 4px 10px rgba(0,0,0,.65), inset 0 -3px 6px rgba(255,255,255,.7);
+        }
+        .winzo-lock-strip {
+            position: absolute; left: 0; top: 0; width: 100%;
+            will-change: transform; transform: translate3d(0,0,0);
+        }
+        .winzo-lock-number {
+            height: 68px; display: flex; align-items: center; justify-content: center;
+            color: #101722; font-family: "Arial Black",Arial,sans-serif;
+            font-size: clamp(36px,10vw,58px); line-height: 1; font-weight: 900;
+            letter-spacing: 1px; text-shadow: 0 1px 0 #fff,0 2px 2px rgba(0,0,0,.18);
+            border-bottom: 1px solid rgba(42,55,73,.3);
+            background: linear-gradient(90deg,#a5b0be,#f8fafc 18%,#dce3eb 50%,#fff 82%,#9aa7b7);
+        }
+        .winzo-lock-number:nth-child(even) {
+            background: linear-gradient(90deg,#8795a7,#e8edf3 18%,#cbd4df 50%,#f4f7fa 82%,#8492a4);
+        }
+        .winzo-lock-highlight {
+            position: absolute; z-index: 3; pointer-events: none; left: 0; right: 0;
+            top: 50%; height: 68px; transform: translateY(-50%);
+            border-top: 3px solid #f6c75c; border-bottom: 3px solid #f6c75c;
+            background: linear-gradient(90deg,rgba(255,255,255,.18),rgba(255,255,255,.42),rgba(255,255,255,.18));
+            box-shadow: 0 0 12px rgba(255,199,75,.55), inset 0 0 10px rgba(255,255,255,.25);
+        }
+        .winzo-lock-glass {
+            position: absolute; inset: 0; z-index: 4; pointer-events: none;
+            background: linear-gradient(115deg,rgba(255,255,255,.25),transparent 23%,transparent 72%,rgba(255,255,255,.18));
+        }
+        .winzo-lock-bottom-rim {
+            position: absolute; left: 18%; right: 18%; bottom: -2%;
+            height: 9%; border-radius: 0 0 40% 40%;
+            background: linear-gradient(180deg,#64748a,#1b2638 65%,#080e18);
+            border: 2px solid #78869b; box-shadow: 0 8px 12px rgba(0,0,0,.5);
+        }
+        @media (max-width: 380px) {
+            .winzo-lock-stage { width: min(92vw,390px); }
+            .winzo-lock-display { padding: 7px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .winzo-lock-stage { animation-duration: .01ms; }
+        }
+
     </style>
 </head>
 <body>
@@ -1047,22 +1151,7 @@
         </div>
     </div>
 
-    <div id="wheelAnimOverlay" class="wheel-anim-overlay">
-      <div class="wheel-anim-machine">
-        <img class="wheel-ready-art" alt=" " src="winzo_ready_wheel_lite.webp">
-        <div class="wheel-pointer"></div>
-        <div class="wheel-container">
-            <div class="wheel" id="baWheel"></div>
-            <div class="wheel-center">W</div>
-        </div>
-        <div id="wheelReadyBubble" class="wheel-ready-bubble" aria-live="polite">
-            <span id="wheelReadyLabel" class="wheel-ready-label">Get ready to win</span>
-            <span id="wheelReadyNumber" class="wheel-ready-number"></span>
-        </div>
-        <div class="wheel-stand"></div>
-        <div id="baStatus" class="wheel-anim-status">Ready.</div>
-      </div>
-    </div>
+    <div id="wheelAnimOverlay" class="wheel-anim-overlay" aria-hidden="true"></div>
 
     <div id="bingoWinnerModal">
         <div class="card">
@@ -1650,10 +1739,10 @@
     }
     function getPlayerPicks(player) {
         if (!player) return [];
-        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200);
+        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400);
         if (player.pick !== null && player.pick !== undefined) {
             const n = Number(player.pick);
-            return Number.isInteger(n) && n >= 1 && n <= 200 ? [n] : [];
+            return Number.isInteger(n) && n >= 1 && n <= 400 ? [n] : [];
         }
         return [];
     }
@@ -1709,7 +1798,7 @@
     }
     function getMyPick() { const picks = getMyPicks(); return picks.length ? picks[0] : null; }
     function syncLocalPlayerPicks(picks, round, betDeducted) {
-        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200))].slice(0, MAX_PICKS_PER_ROUND);
+        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400))].slice(0, MAX_PICKS_PER_ROUND);
         localSelectionRound = Number(round);
         localSelectionPicks = clean;
         if (currentUser) {
@@ -1965,131 +2054,107 @@
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
             const overlay = document.getElementById('wheelAnimOverlay');
-            const wheelEl = document.getElementById('baWheel');
-            const statusEl2 = document.getElementById('baStatus');
-            if (!overlay || !wheelEl || !statusEl2) { resolve(); return; }
+            if (!overlay) { resolve(); return; }
 
+            // Use the exact picks already recorded for this round. The authoritative
+            // winning number is never recalculated by the animation.
             const allPicks = new Set();
-            Object.values(engineState.players).forEach(p => { if (p && p.picks) p.picks.forEach(n => allPicks.add(n)); });
-            const uniqueNumbers = Array.from(allPicks);
-            if (!uniqueNumbers.includes(winningNumber)) uniqueNumbers.push(winningNumber);
-
-            const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
-            const anglePerSegment = 360 / segmentCount;
-            const numbersForWheel = [];
-            for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
-            let winningIndex = numbersForWheel.indexOf(winningNumber);
-            if (winningIndex === -1) winningIndex = 0;
-
-            const size = 300; const center = size / 2; const radius = center;
-            const labelRadius = radius * 0.87;
-            const labelFontSize = segmentCount > 160 ? 6.2
-                : segmentCount > 120 ? 6.8
-                : segmentCount > 80 ? 7.4
-                : segmentCount > 60 ? 8.2
-                : segmentCount > 36 ? 10
-                : 12.5;
-
-            let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
-            for (let i = 0; i < segmentCount; i++) {
-                const startAngle = i * anglePerSegment;
-                const endAngle = (i + 1) * anglePerSegment;
-                const midAngle = startAngle + anglePerSegment / 2;
-                const startRad = (startAngle - 90) * Math.PI / 180;
-                const endRad = (endAngle - 90) * Math.PI / 180;
-                const midRad = (midAngle - 90) * Math.PI / 180;
-                const x1 = center + radius * Math.cos(startRad);
-                const y1 = center + radius * Math.sin(startRad);
-                const x2 = center + radius * Math.cos(endRad);
-                const y2 = center + radius * Math.sin(endRad);
-                const textX = center + labelRadius * Math.cos(midRad);
-                const textY = center + labelRadius * Math.sin(midRad);
-                const color = i % 2 === 0 ? '#e62020' : '#ffffff';
-                const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
-                svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
-                const numText = numbersForWheel[i];
-                if (numText !== '') {
-                    svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${labelFontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${midAngle}, ${textX}, ${textY})">${numText}</text>`;
-                }
-            }
-            svg += `</svg>`;
-            wheelEl.innerHTML = svg;
-
-            wheelEl.classList.remove('spinning');
-            wheelEl.style.transform = 'rotate(0deg)';
-            void wheelEl.offsetWidth;
-
-            const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
-            const spins = 5;
-            const targetRotation = (spins * 360) - targetSegmentCenter;
-
-            statusEl2.textContent = 'Get ready to win!';
-            overlay.classList.add('active');
-            const readyAudio = document.getElementById('getReadyToWinAudio');
-            const readyBubble = document.getElementById('wheelReadyBubble');
-            const readyLabel = document.getElementById('wheelReadyLabel');
-            const readyNumber = document.getElementById('wheelReadyNumber');
-            let readyCountdownTimers = [];
-            let spinStarted = false;
-            const showReadyBubble = () => {
-                if (!readyBubble || !readyLabel || !readyNumber) return;
-                readyLabel.textContent = 'Get ready to win';
-                readyNumber.textContent = '';
-                readyBubble.classList.add('active');
-                const wheelMachine = document.querySelector('.wheel-anim-machine');
-                if (wheelMachine) wheelMachine.classList.add('ready-art-active');
-                const syncCountdownToAudio = () => {
-                    if (!readyAudio || !Number.isFinite(readyAudio.duration) || readyAudio.duration <= 0) return;
-                    const remaining = readyAudio.duration - readyAudio.currentTime;
-                    const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
-                    if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
-                };
-                if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
-                else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
-            };
-            const hideReadyBubble = () => {
-                readyCountdownTimers.forEach(clearTimeout);
-                readyCountdownTimers = [];
-                if (readyBubble) readyBubble.classList.remove('active');
-                const wheelMachine = document.querySelector('.wheel-anim-machine');
-                if (wheelMachine) wheelMachine.classList.remove('ready-art-active');
-            };
-            showReadyBubble();
-            const beginSpin = () => {
-                if (spinStarted) return;
-                spinStarted = true;
-                if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
-                hideReadyBubble();
-                statusEl2.textContent = 'Spinning the wheel...';
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        wheelEl.classList.add('spinning');
-                        startWheelSpinSound(8000);
-                        wheelEl.style.transform = `rotate(${targetRotation}deg)`;
+            Object.values(engineState.players || {}).forEach(player => {
+                if (player && Array.isArray(player.picks)) {
+                    player.picks.forEach(value => {
+                        const n = Number(value);
+                        if (Number.isInteger(n) && n >= 1 && n <= 400) allPicks.add(n);
                     });
-                });
+                }
+            });
+            const uniqueNumbers = Array.from(allPicks);
+            const winner = Number(winningNumber);
+            if (Number.isInteger(winner) && winner >= 1 && winner <= 400 && !uniqueNumbers.includes(winner)) {
+                uniqueNumbers.push(winner);
+            }
+            if (!uniqueNumbers.length) { resolve(); return; }
+
+            // One-column mechanical number drum. Repeating the round's taken numbers
+            // creates continuous lock-drum travel without introducing untaken values.
+            const cycles = 9;
+            const values = [];
+            for (let cycle = 0; cycle < cycles; cycle++) values.push(...uniqueNumbers);
+            const targetCycle = 7;
+            const targetIndex = targetCycle * uniqueNumbers.length + uniqueNumbers.indexOf(winner);
+            const step = 68;
+
+            overlay.innerHTML = `
+                <div class="winzo-lock-stage" aria-label="Number lock animation">
+                    <div class="winzo-lock-shackle"></div>
+                    <div class="winzo-lock-shell">
+                        <div class="winzo-lock-rim"></div>
+                        <div class="winzo-lock-display">
+                            <div class="winzo-lock-window">
+                                <div class="winzo-lock-strip" id="winzoLockStrip"></div>
+                                <div class="winzo-lock-highlight"></div>
+                                <div class="winzo-lock-glass"></div>
+                            </div>
+                        </div>
+                        <div class="winzo-lock-bottom-rim"></div>
+                    </div>
+                </div>`;
+
+            const strip = overlay.querySelector('#winzoLockStrip');
+            const windowEl = overlay.querySelector('.winzo-lock-window');
+            if (!strip || !windowEl) { resolve(); return; }
+
+            strip.innerHTML = values.map(n => `<div class="winzo-lock-number">${n}</div>`).join('');
+            overlay.classList.add('active');
+            overlay.setAttribute('aria-hidden', 'false');
+
+            let completed = false;
+            let fallbackTimer = null;
+            const finish = () => {
+                if (completed) return;
+                completed = true;
+                if (fallbackTimer) clearTimeout(fallbackTimer);
+                stopWheelSpinSound();
+                strip.removeEventListener('transitionend', onTransitionEnd);
+                // Briefly hold the final number in the center before revealing results.
                 setTimeout(() => {
-                    stopWheelSpinSound();
-                    statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
-                    setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
-                }, 8000);
+                    overlay.classList.remove('active');
+                    overlay.setAttribute('aria-hidden', 'true');
+                    resolve();
+                }, 650);
             };
-            if (readyAudio) {
-                try {
-                    readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
-                    readyAudio.onended = beginSpin;
-                    readyAudio.onerror = () => { beginSpin(); };
-                    setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
-                    const readyPlayback = readyAudio.play();
-                    if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
-                } catch (err) { beginSpin(); }
-            } else beginSpin();
+            const onTransitionEnd = event => {
+                if (event.target === strip && event.propertyName === 'transform') finish();
+            };
+            strip.addEventListener('transitionend', onTransitionEnd);
+
+            const centerOffset = () => (windowEl.clientHeight - step) / 2;
+            const position = (index, animate, duration = 0) => {
+                strip.style.transition = animate
+                    ? `transform ${duration}ms cubic-bezier(.08,.68,.12,1)`
+                    : 'none';
+                strip.style.transform = `translate3d(0, ${centerOffset() - index * step}px, 0)`;
+            };
+
+            // Position at the start of the drum, then begin automatically after layout.
+            const startIndex = Math.max(0, uniqueNumbers.length * 1 + Math.floor(uniqueNumbers.length * 0.15));
+            position(startIndex, false);
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    if (completed) return;
+                    const duration = 8200;
+                    position(targetIndex, true, duration);
+                    startWheelSpinSound(duration);
+                    // A fallback guarantees the round cannot get stuck if a browser
+                    // suppresses transitionend (background tab, resize, or WebView).
+                    fallbackTimer = setTimeout(finish, duration + 500);
+                });
+            });
         });
     }
 
     function displayWinningNumberCard(round, number, winners, winAmount) {
         const r = Number(round), n = Number(number);
-        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 200) return;
+        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 400) return;
         if (!Array.isArray(winners)) return;
 
         if (wheelAnimationPlaying) {
@@ -2102,7 +2167,11 @@
         }
 
         const animKey = currentRoom + '_' + r;
-        if (wheelAnimationPlayedRounds.has(animKey) || wheelAnimationPlaying) {
+        // Duplicate result snapshots must not reveal the winners card while the
+        // lock is still scrolling. Once this round's animation has finished, later
+        // snapshots may safely refresh/show the already-completed result.
+        if (wheelAnimationPlaying) return;
+        if (wheelAnimationPlayedRounds.has(animKey)) {
             renderWinningCardBody(n, winAmount, winners);
             if (winnersModal) winnersModal.classList.add('active');
             showWinnerCelebration(r, winners);
@@ -2127,7 +2196,20 @@
             if (winners.filter(Boolean).length) { playEmbeddedWinnerAnnouncement(r); }
             else playNoWinnerEffectOnce(r);
             if (!isResultsCountdownRunning) startResultsCountdown();
-        }).catch(() => { wheelAnimationPlaying = false; window._wheelAnimStartedAt = null; });
+        }).catch(err => {
+            console.warn('[WINZO LOCK] Animation failed; releasing results safely:', err);
+            wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
+            const lockOverlay = document.getElementById('wheelAnimOverlay');
+            if (lockOverlay) { lockOverlay.classList.remove('active'); lockOverlay.setAttribute('aria-hidden', 'true'); }
+            if (engineState.gamePhase === 'results' && Number(engineState.roundNumber) === r) {
+                renderWinningCardBody(n, winAmount, winners);
+                if (winnersModal) winnersModal.classList.add('active');
+                showWinnerCelebration(r, winners);
+                if (winners.filter(Boolean).length) playEmbeddedWinnerAnnouncement(r);
+                else playNoWinnerEffectOnce(r);
+                if (!isResultsCountdownRunning) startResultsCountdown();
+            }
+        });
     }
 
     function resetWinningNumberCard() {
@@ -2166,7 +2248,7 @@
         }
         if (!isFinite(round) || round <= 0) return;
         if (displayedCardRound === round) return;
-        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 200) {
+        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 400) {
             displayedCardRound = round;
             displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
             clearCardFetchRetry();
@@ -2927,9 +3009,9 @@
                 return;
             }
             let buttons = numPicker.querySelectorAll('.num-btn[data-num]');
-            if (buttons.length !== 200) {
+            if (buttons.length !== 400) {
                 let html = '';
-                for (let i = 1; i <= 200; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
+                for (let i = 1; i <= 400; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
                 numPicker.innerHTML = html;
                 buttons = numPicker.querySelectorAll('.num-btn[data-num]');
             }
@@ -3004,7 +3086,7 @@
             const btn = e.target.closest('.num-btn[data-num]');
             if (!btn || btn.disabled || btn.classList.contains('loading')) return;
             const num = Number(btn.dataset.num);
-            if (!Number.isInteger(num) || num < 1 || num > 200) return;
+            if (!Number.isInteger(num) || num < 1 || num > 400) return;
             if (pendingPickOps.has(num)) return;
             const opRound = Number(engineState.roundNumber);
             if (gamePausedBySticky || !isNetworkConnected) { updateStatus('⏸ Game is temporarily unavailable.'); return; }
@@ -3268,7 +3350,7 @@
         if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
         if (data.lastResult && Number(data.lastResult.round) === round && Number(data.lastResult.winningNumber) > 0) {
             lastResultData = data.lastResult;
-        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 200) {
+        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 400) {
             lastResultData = {
                 round,
                 winningNumber: Number(data.winningNumber),
@@ -3284,7 +3366,7 @@
         engineState.winners = Array.isArray(data.winners) ? data.winners : [];
         engineState.prizePool = Number(data.prizePool) || 0;
         engineState.allTakenNumbers = new Set(
-            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 200)
+            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 400)
         );
         if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
         updateTotalBetDisplay();
