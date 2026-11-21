@@ -746,39 +746,54 @@
             pointer-events: none;
         }
         .winzo-lock-display {
-            position: relative; z-index: 2; width: 78%; height: 27%;
-            padding: 10px; border-radius: 20px;
+            position: relative; z-index: 2; width: 49%; height: 64%;
+            padding: clamp(5px,1.5vw,9px); border-radius: 20px;
             background: linear-gradient(180deg,#8795a8,#202b3c 18%,#0a101c 52%,#66758a);
             border: 2px solid #aab7c9;
             box-shadow: 0 12px 20px rgba(0,0,0,.65),
                 inset 0 2px 4px rgba(255,255,255,.42), 0 0 24px rgba(117,174,255,.12);
         }
         .winzo-lock-window {
+            --lock-step: 60px;
             position: relative; width: 100%; height: 100%; overflow: hidden;
-            border-radius: 9px; background: linear-gradient(90deg,#7c8999,#f2f5f9 13%,#cbd4df 50%,#f7f9fc 87%,#778598);
-            box-shadow: inset 0 4px 10px rgba(0,0,0,.65), inset 0 -3px 6px rgba(255,255,255,.7);
+            border-radius: 9px;
+            background: linear-gradient(90deg,#657386,#f2f5f9 13%,#cbd4df 50%,#f7f9fc 87%,#59677a);
+            box-shadow: inset 0 5px 12px rgba(0,0,0,.72), inset 0 -5px 10px rgba(255,255,255,.7);
+            perspective: 520px; transform: translateZ(0); contain: layout paint;
         }
         .winzo-lock-strip {
             position: absolute; left: 0; top: 0; width: 100%;
             will-change: transform; transform: translate3d(0,0,0);
+            transform-style: preserve-3d; backface-visibility: hidden;
         }
         .winzo-lock-number {
-            height: 68px; display: flex; align-items: center; justify-content: center;
-            color: #101722; font-family: "Arial Black",Arial,sans-serif;
-            font-size: clamp(36px,10vw,58px); line-height: 1; font-weight: 900;
-            letter-spacing: 1px; text-shadow: 0 1px 0 #fff,0 2px 2px rgba(0,0,0,.18);
+            height: var(--lock-step); display: flex; align-items: center; justify-content: center;
+            color: #101722; font-family: Arial, sans-serif;
+            font-size: clamp(30px,8.5vw,48px); line-height: 1; font-weight: 900;
+            letter-spacing: 1px; text-shadow: 0 1px 0 #fff,0 2px 2px rgba(0,0,0,.2);
             border-bottom: 1px solid rgba(42,55,73,.3);
             background: linear-gradient(90deg,#a5b0be,#f8fafc 18%,#dce3eb 50%,#fff 82%,#9aa7b7);
+            backface-visibility: hidden;
         }
         .winzo-lock-number:nth-child(even) {
             background: linear-gradient(90deg,#8795a7,#e8edf3 18%,#cbd4df 50%,#f4f7fa 82%,#8492a4);
         }
         .winzo-lock-highlight {
             position: absolute; z-index: 3; pointer-events: none; left: 0; right: 0;
-            top: 50%; height: 68px; transform: translateY(-50%);
+            top: 50%; height: var(--lock-step,60px); transform: translateY(-50%);
             border-top: 3px solid #f6c75c; border-bottom: 3px solid #f6c75c;
-            background: linear-gradient(90deg,rgba(255,255,255,.18),rgba(255,255,255,.42),rgba(255,255,255,.18));
-            box-shadow: 0 0 12px rgba(255,199,75,.55), inset 0 0 10px rgba(255,255,255,.25);
+            background: linear-gradient(90deg,rgba(255,255,255,.12),rgba(255,255,255,.38),rgba(255,255,255,.12));
+            box-shadow: 0 0 12px rgba(255,199,75,.48), inset 0 0 10px rgba(255,255,255,.25);
+        }
+        .winzo-lock-window::before, .winzo-lock-window::after {
+            content: ""; position: absolute; left: 0; right: 0; height: 24%;
+            z-index: 2; pointer-events: none;
+        }
+        .winzo-lock-window::before {
+            top: 0; background: linear-gradient(180deg,rgba(18,27,42,.56),transparent);
+        }
+        .winzo-lock-window::after {
+            bottom: 0; background: linear-gradient(0deg,rgba(18,27,42,.56),transparent);
         }
         .winzo-lock-glass {
             position: absolute; inset: 0; z-index: 4; pointer-events: none;
@@ -790,9 +805,15 @@
             background: linear-gradient(180deg,#64748a,#1b2638 65%,#080e18);
             border: 2px solid #78869b; box-shadow: 0 8px 12px rgba(0,0,0,.5);
         }
-        @media (max-width: 380px) {
+        @media (max-width: 480px) {
             .winzo-lock-stage { width: min(92vw,390px); }
-            .winzo-lock-display { padding: 7px; }
+            .winzo-lock-display { width: 51%; height: 63%; padding: 5px; border-radius: 15px; }
+            .winzo-lock-number { font-size: clamp(27px,8vw,40px); }
+        }
+        @media (max-width: 340px) {
+            .winzo-lock-stage { width: 94vw; }
+            .winzo-lock-display { width: 54%; height: 61%; }
+            .winzo-lock-number { font-size: 27px; }
         }
         @media (prefers-reduced-motion: reduce) {
             .winzo-lock-stage { animation-duration: .01ms; }
@@ -2081,7 +2102,9 @@
             for (let cycle = 0; cycle < cycles; cycle++) values.push(...uniqueNumbers);
             const targetCycle = 7;
             const targetIndex = targetCycle * uniqueNumbers.length + uniqueNumbers.indexOf(winner);
-            const step = 68;
+            // Three visible drum positions: previous, selected, and next.
+            // Derive the cell height from the rendered WebView viewport for Android compatibility.
+            let step = 60;
 
             overlay.innerHTML = `
                 <div class="winzo-lock-stage" aria-label="Number lock animation">
@@ -2106,6 +2129,15 @@
             strip.innerHTML = values.map(n => `<div class="winzo-lock-number">${n}</div>`).join('');
             overlay.classList.add('active');
             overlay.setAttribute('aria-hidden', 'false');
+
+            // Fit exactly three number cells into the visible window on small and large Android screens.
+            const measureDrum = () => {
+                const h = windowEl.clientHeight || 180;
+                step = h / 3;
+                windowEl.style.setProperty('--lock-step', `${step}px`);
+                strip.querySelectorAll('.winzo-lock-number').forEach(cell => { cell.style.height = `${step}px`; });
+            };
+            measureDrum();
 
             let completed = false;
             let fallbackTimer = null;
