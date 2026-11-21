@@ -1853,7 +1853,7 @@ async function refundWager(uid, amount) {
 async function pickIntent(room, uid, num) {
   return room.mutex.run(async () => {
     if (room.phase !== 'selection') return { ok: false, reason: 'not-selection' };
-    if (!(num >= 1 && num <= 200)) return { ok: false, reason: 'range' };
+    if (!(num >= 1 && num <= 400)) return { ok: false, reason: 'range' };
     let p = room.players.get(uid);
     if (!p) { p = { uid, picks: [], isBot: false, active: true, displayName: uid }; room.players.set(uid, p); }
     p.active = true;
@@ -2023,10 +2023,10 @@ function scheduleBots(room) {
         if (p.picks.length >= MAX_PICKS) return;
         let num = null;
         for (let attempt = 0; attempt < 12; attempt++) {
-          const candidate = 1 + crypto.randomInt(200);
+          const candidate = 1 + crypto.randomInt(400);
           if (!room.taken.has(candidate) && !p.picks.includes(candidate)) { num = candidate; break; }
         }
-        if (num == null) { for (let candidate = 1; candidate <= 200; candidate++) if (!room.taken.has(candidate)) { num = candidate; break; } }
+        if (num == null) { for (let candidate = 1; candidate <= 400; candidate++) if (!room.taken.has(candidate)) { num = candidate; break; } }
         if (num == null) return;
         room.taken.set(num, uid); p.picks.push(num); room.dirty = true; room.broadcast();
       });
