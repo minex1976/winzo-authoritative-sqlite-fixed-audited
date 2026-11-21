@@ -241,29 +241,135 @@
         .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
-        .wheel-container { position: relative; width: 440px; height: 440px; border-radius: 50%; border: 16px solid #6a3a9a; box-shadow: 0 0 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; background: #111; }
-        @media (max-width: 480px) { .wheel-container { width: 90vw; height: 90vw; max-width: 440px; max-height: 440px; border-width: 12px; } }
-        @media (max-width: 360px) { .wheel-container { width: 94vw; height: 94vw; } }
-        .wheel { width: 100%; height: 100%; transform-origin: center center; will-change: transform; }
-        .wheel.spinning { transition: transform 8s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
-        .wheel-pointer { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 26px solid transparent; border-right: 26px solid transparent; border-top: 38px solid #ffcc44; z-index: 10; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.5)); }
-        .wheel-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80px; height: 80px; background: #6a3a9a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 2.6rem; font-weight: 900; border: 5px solid #f0e6ff; box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5; }
-        .wheel-stand { width: 100px; height: 140px; background: #4a2a7a; border-radius: 10px 10px 0 0; margin-top: -10px; }
-        .wheel-anim-status { text-align: center; color: #c6d4e3; font-size: 14px; font-weight: 600; min-height: 22px; }
-        .wheel-ready-bubble { position: absolute; z-index: 20; left: 50%; top: 42%; transform: translate(-50%, -50%); width: max-content; max-width: 90vw; padding: 8px 16px; text-align: center; color: #fff; background: rgba(8, 12, 25, .12); border: 2px solid rgba(90, 225, 255, .9); border-radius: 18px; text-shadow: 0 2px 8px #000, 0 0 14px rgba(75,220,255,.95); box-shadow: 0 0 18px rgba(75,220,255,.4); pointer-events: none; display: none; }
-        .wheel-ready-bubble.active { display: block; animation: readyBubblePulse .55s ease-in-out infinite alternate; }
-        .wheel-ready-art { display:none; position:absolute; z-index:40; left:50%; top:46%; transform:translate(-50%,-50%); width:min(560px, 98vw); height:auto; max-height:78vh; object-fit:contain; pointer-events:none; filter:drop-shadow(0 8px 18px rgba(0,0,0,.28)); }
-        .wheel-anim-machine.ready-art-active .wheel-ready-art { display:block; z-index:40; }
-        .wheel-anim-machine.ready-art-active .wheel-pointer,
-        .wheel-anim-machine.ready-art-active .wheel-container,
-        .wheel-anim-machine.ready-art-active .wheel-stand { visibility:visible; top:66%; z-index:30; }
-        .wheel-anim-machine.ready-art-active .wheel-ready-bubble { display:block !important; visibility:visible !important; position:absolute; left:50%; top:67% !important; transform:translate(-50%,-50%); z-index:60 !important; min-width:100px; padding:2px 18px; background:rgba(0,0,0,.16); border:0; box-shadow:none; animation:none; color:#fff; }
-        @media (max-width:420px) { .wheel-ready-art { width:96vw; top:44%; max-height:70vh; } }
-        .wheel-ready-label { display: block; font-size: clamp(15px, 4vw, 22px); font-weight: 900; letter-spacing: .4px; }
-        .wheel-ready-number { display:block; font-size:clamp(88px, 22vw, 132px); font-weight:1000; line-height:.95; color:#b6ff43; -webkit-text-stroke:2px #174c0b; text-shadow:0 5px 0 #174c0b, 0 0 18px rgba(190,255,80,.95), 0 0 34px rgba(190,255,80,.55); }
-        .wheel-ready-number:empty { display: none; }
-        .wheel-anim-machine.ready-art-active .wheel-ready-number:not(:empty) { display:block !important; position:relative; z-index:61; visibility:visible !important; opacity:1 !important; }
-        @keyframes readyBubblePulse { from { filter: drop-shadow(0 0 2px rgba(75,220,255,.3)); } to { filter: drop-shadow(0 0 10px rgba(75,220,255,.85)); } }
+
+        /* ===== NUMBER LOCK ANIMATION ===== */
+        .number-lock {
+          width: min(88vw, 440px);
+          aspect-ratio: 1;
+          margin: 0 auto;
+          position: relative;
+          border-radius: 50%;
+          background:
+            radial-gradient(ellipse at 35% 20%, #55585b 0%, #242628 18%, #090a0b 55%, #202225 76%, #050506 100%);
+          border: 5px solid #55585b;
+          box-shadow:
+            inset 0 3px 7px #ffffff55,
+            inset 0 -12px 20px #000,
+            0 16px 34px #000b,
+            0 0 0 3px #111;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          overflow: visible;
+        }
+        .number-lock::before {
+          content: "";
+          position: absolute;
+          inset: 11% 8%;
+          border-radius: 50%;
+          border: 5px solid #45484b;
+          box-shadow: inset 0 0 7px #000, 0 1px 2px #aaa8;
+          pointer-events: none;
+        }
+        .number-lock-shackle {
+          position: absolute;
+          width: 42%;
+          height: 31%;
+          top: -2%;
+          left: 29%;
+          border: clamp(13px, 3.8vw, 22px) solid #bfc2c5;
+          border-bottom: 0;
+          border-radius: 48% 48% 0 0;
+          background: transparent;
+          filter: drop-shadow(0 3px 2px #000);
+          z-index: 0;
+        }
+        .number-lock-shackle::after {
+          content: "";
+          position: absolute;
+          inset: -10px -10px auto;
+          height: 16px;
+          border-radius: 50%;
+          background: linear-gradient(#fff, #9da1a5 55%, #55595d);
+        }
+        .number-lock-body-inset {
+          position: absolute;
+          inset: 17% 12% 10%;
+          border-radius: 48%;
+          background: radial-gradient(ellipse at 50% 35%, #292b2d, #101112 65%, #050506);
+          box-shadow: inset 0 5px 9px #000, inset 0 -2px 4px #7775;
+        }
+        .number-lock-display-frame {
+          position: relative;
+          z-index: 2;
+          width: 67%;
+          height: 25%;
+          min-height: 92px;
+          border-radius: 26px;
+          padding: 9px 14px;
+          background: linear-gradient(180deg, #5a5d60, #151719 18%, #08090a 50%, #34373a 100%);
+          box-shadow: 0 7px 13px #000c, inset 0 2px 4px #ffffff55, 0 0 0 2px #777a7d;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .number-lock-window {
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          position: relative;
+          border-radius: 8px;
+          background: linear-gradient(90deg, #85898d, #f0f1f2 12%, #c6c9cc 50%, #f3f3f4 88%, #7a7e82);
+          box-shadow: inset 0 3px 8px #0009, inset 0 -3px 7px #fff8;
+        }
+        .number-lock-window::before,
+        .number-lock-window::after {
+          content: "";
+          position: absolute;
+          left: 0; right: 0;
+          height: 4px;
+          z-index: 4;
+          background: #55595d;
+          box-shadow: 0 1px 2px #fff8;
+        }
+        .number-lock-window::before { top: 0; }
+        .number-lock-window::after { bottom: 0; }
+        .number-lock-center-band {
+          position: absolute;
+          z-index: 3;
+          left: 0; right: 0;
+          top: 50%;
+          height: 34%;
+          transform: translateY(-50%);
+          border-top: 2px solid #777b7f;
+          border-bottom: 2px solid #777b7f;
+          background: #ffffff24;
+          pointer-events: none;
+        }
+        .number-lock-strip {
+          position: absolute;
+          width: 100%;
+          left: 0;
+          top: 0;
+          will-change: transform;
+        }
+        .number-lock-cell {
+          height: 54px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #090a0b;
+          font-size: clamp(26px, 6.5vw, 40px);
+          line-height: 1;
+          font-weight: 900;
+          font-family: "Arial Black", Arial, sans-serif;
+          text-shadow: 0 1px 0 #fff;
+          border-bottom: 1px solid #7f8387;
+          background: linear-gradient(90deg, #92969a, #f4f4f4 18%, #d5d7d9 50%, #f8f8f8 82%, #969a9e);
+        }
+        .number-lock-cell:nth-child(even) {
+          background: linear-gradient(90deg, #777b7f, #e6e7e8 18%, #c8cacc 50%, #ededee 82%, #85898d);
+        }
 
         .more-login-tip { position: fixed; display: none; z-index: 100020 !important; width: min(280px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 12px; border: 2px solid #ffcc44; border-radius: 17px; color: #fff4d2; background: linear-gradient(145deg, #44206b, #172849); box-shadow: 0 8px 24px rgba(0,0,0,.58), 0 0 18px rgba(255,204,68,.28); font-size: .78rem; line-height: 1.45; font-weight: 700; white-space: pre-line; text-align: center; pointer-events: none; transform-origin: top center; animation: moreTipPop .45s cubic-bezier(.34,1.56,.64,1) both, moreTipGlow 1.25s ease-in-out .45s infinite alternate; }
         .more-login-tip::before { content: ""; position: absolute; top: -21px; left: var(--more-tip-tail-left, 50%); width: 5px; height: 22px; border-radius: 4px; background: #35e7ff; transform: translateX(-50%); filter: drop-shadow(0 0 4px rgba(53,231,255,.75)); transform-origin: 50% 100%; animation: moreTipTailDance .58s ease-in-out infinite alternate, moreTipTailFlash 1.15s ease-in-out infinite; }
@@ -323,7 +429,7 @@
         #winzoUserEventModal .wue-ok:hover { filter: brightness(1.12); }
         #winzoUserEventModal .wue-ok:active { transform: scale(.96); }
         #winzoUserEventModal .wue-ok:focus { outline: 2px solid #f0abfc; outline-offset: 3px; }
-    
+
         .game-chooser-screen{display:flex;flex-direction:column;justify-content:flex-start;gap:clamp(10px,2vh,18px);padding:clamp(12px,3vh,26px) 10px 16px;flex:1;min-height:0;color:#f5edff;overflow-y:auto;}
         .chooser-topbar{display:flex;align-items:center;justify-content:center;gap:8px;position:relative;z-index:120;min-height:0;flex-shrink:0}
         .chooser-topbar .chooser-logo{flex:1;text-align:center;margin-bottom:0;padding-left:0}
@@ -335,7 +441,7 @@
         .ladder-choice{background:linear-gradient(120deg,#173d59,#30204e);border:1px solid rgba(255,204,68,.5);position:relative;overflow:hidden}.ladder-choice .choice-copy small{color:#ffdf86}.coming-soon-pill{font-size:.58rem;letter-spacing:.7px;font-weight:900;color:#211331;background:linear-gradient(120deg,#ffe58a,#ffb52e);border-radius:20px;padding:4px 7px;white-space:nowrap}.ladder-choice .choice-arrow{font-size:1.5rem}
         .ladder-ad-overlay{position:fixed;inset:0;z-index:2147483605;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(5,7,22,.88);backdrop-filter:blur(7px)}.ladder-ad-overlay.active{display:flex;animation:ladderAdFade .18s ease-out}.ladder-ad-card{width:min(360px,100%);padding:28px 20px;border-radius:26px;text-align:center;border:2px solid #ffcf58;background:linear-gradient(145deg,#43206c,#152747);box-shadow:0 0 36px rgba(255,204,68,.25);animation:ladderAdPop .35s cubic-bezier(.34,1.56,.64,1)}.ladder-ad-icon{font-size:3rem;margin-bottom:8px}.ladder-ad-title{font-size:1.35rem;font-weight:900;color:#ffcf58;letter-spacing:1px;margin-bottom:10px}.ladder-ad-message{font-size:1.05rem;line-height:1.5;color:#fff;margin-bottom:18px;font-weight:800}.ladder-ad-close{border:0;border-radius:24px;padding:10px 30px;background:linear-gradient(120deg,#ffdf6b,#f5a623);color:#261638;font-weight:900;font-size:.9rem}@keyframes ladderAdFade{from{opacity:0}to{opacity:1}}@keyframes ladderAdPop{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:scale(1)}}
         @media(max-height:650px){.game-chooser-screen{gap:8px;padding-top:8px}.chooser-logo p{margin-top:3px}.game-choice{padding:10px 13px}.chooser-footer{margin-top:2px}}
-        
+
         /* ===== BINGO SCREEN UPDATES ===== */
         .bingo-screen{display:flex; flex-direction:column; gap:10px; color:#f7f0ff; padding:3px 0 16px; flex:1; min-height:0; overflow:hidden; }
         .bingo-header{display:flex;align-items:center;justify-content:space-between;gap:8px;background:#251642;border:1px solid #62448a;border-radius:14px;padding:10px;flex-shrink:0}
@@ -695,6 +801,7 @@
                 <span class="connection-status offline" id="authStatus">⚡</span>
             </div>
         </div>
+
         <div id="welcomeScreen" class="welcome-screen">
             <div class="logo">
                 <h2>🏆 <span>WINZO</span> 🏆</h2>
@@ -748,7 +855,6 @@
               <div style="width: 60px;"></div>
           </header>
 
-          <!-- Lobby View -->
           <div id="ladderLobby" class="ladder-panel">
               <div class="ladder-wallet-row">
                   <div class="ladder-wallet-box"><span>Main Wallet</span><strong id="ladderMainWallet">0</strong></div>
@@ -764,7 +870,6 @@
               </div>
           </div>
 
-          <!-- Waiting View -->
           <div id="ladderWaitingView" class="ladder-panel centered hidden">
               <div class="ladder-spinner"></div>
               <h2>Waiting for Player...</h2>
@@ -779,7 +884,6 @@
               <button id="ladderLeaveRoomBtn" class="ladder-btn secondary mt-10">Cancel Room</button>
           </div>
 
-          <!-- Betting View -->
           <div id="ladderBettingView" class="ladder-panel hidden">
               <h2 class="text-center">Bet Amount Agreement</h2>
               <p class="text-center sub">Select a multiplier (1x to 5x)</p>
@@ -791,7 +895,6 @@
               </div>
           </div>
 
-          <!-- Game View -->
           <div id="ladderGameView" class="ladder-panel hidden" style="padding: 5px;">
               <div class="ladder-game-header" style="padding: 5px 10px;">
                   <div class="prize-box">Prize: <strong id="ladderPrizePool">0</strong> Birr</div>
@@ -853,7 +956,7 @@
           </div>
           <div id="bingoInfoModal" class="bingo-info-modal hidden" role="status"></div>
         </section>
-        
+
         <div id="gameScreen">
             <div class="title">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆<small id="modeLabel">15 Birr</small></div>
             <div class="bet-switcher">
@@ -1024,18 +1127,16 @@
 
     <div id="wheelAnimOverlay" class="wheel-anim-overlay">
       <div class="wheel-anim-machine">
-        <img class="wheel-ready-art" alt=" " src="winzo_ready_wheel_lite.webp">
-        <div class="wheel-pointer"></div>
-        <div class="wheel-container">
-            <div class="wheel" id="baWheel"></div>
-            <div class="wheel-center">W</div>
+        <div class="number-lock">
+          <div class="number-lock-shackle"></div>
+          <div class="number-lock-body-inset"></div>
+          <div class="number-lock-display-frame">
+            <div class="number-lock-window" id="numberLockWindow">
+              <div class="number-lock-strip" id="numberLockStrip"></div>
+              <div class="number-lock-center-band"></div>
+            </div>
+          </div>
         </div>
-        <div id="wheelReadyBubble" class="wheel-ready-bubble" aria-live="polite">
-            <span id="wheelReadyLabel" class="wheel-ready-label">Get ready to win</span>
-            <span id="wheelReadyNumber" class="wheel-ready-number"></span>
-        </div>
-        <div class="wheel-stand"></div>
-        <div id="baStatus" class="wheel-anim-status">Ready.</div>
       </div>
     </div>
 
@@ -1062,9 +1163,6 @@
         if (action) pendingMenuAction = action;
     }
 
-    // One browser/device fingerprint implementation is used by every WS auth.
-    // The server accepts a compact raw value (8..512 chars), then hashes it
-    // before storing it. Do not send raw browser details to the server.
     async function getDeviceFingerprint() {
         let stableFallback = '';
         try {
@@ -1075,9 +1173,7 @@
                     : (Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12)));
                 localStorage.setItem('winzo_device_fp', stableFallback);
             }
-        } catch (_) {
-            // Storage may be unavailable in private/restricted browser contexts.
-        }
+        } catch (_) {}
 
         try {
             const parts = [
@@ -1093,7 +1189,6 @@
                 navigator.platform || ''
             ];
 
-            // Canvas rendering adds a browser/GPU-dependent signal when supported.
             try {
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
@@ -1114,7 +1209,6 @@
                 return 'fp2_' + hex;
             }
 
-            // Compact deterministic fallback for browsers without Web Crypto.
             let h1 = 0x811c9dc5, h2 = 0x9e3779b9;
             for (let i = 0; i < raw.length; i++) {
                 const c = raw.charCodeAt(i);
@@ -1123,7 +1217,6 @@
             }
             return 'fp2_' + (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
         } catch (_) {
-            // Keep authentication compatible if fingerprint APIs are blocked.
             return stableFallback || null;
         }
     }
@@ -1625,10 +1718,10 @@
     }
     function getPlayerPicks(player) {
         if (!player) return [];
-        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200);
+        if (Array.isArray(player.picks)) return player.picks.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400);
         if (player.pick !== null && player.pick !== undefined) {
             const n = Number(player.pick);
-            return Number.isInteger(n) && n >= 1 && n <= 200 ? [n] : [];
+            return Number.isInteger(n) && n >= 1 && n <= 400 ? [n] : [];
         }
         return [];
     }
@@ -1684,7 +1777,7 @@
     }
     function getMyPick() { const picks = getMyPicks(); return picks.length ? picks[0] : null; }
     function syncLocalPlayerPicks(picks, round, betDeducted) {
-        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 200))].slice(0, MAX_PICKS_PER_ROUND);
+        const clean = [...new Set((picks || []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 400))].slice(0, MAX_PICKS_PER_ROUND);
         localSelectionRound = Number(round);
         localSelectionPicks = clean;
         if (currentUser) {
@@ -1937,134 +2030,61 @@
     let wheelAnimationPlayedRounds = new Set();
     let wheelAnimationPlaying = false;
 
+    // ===== NUMBER LOCK ANIMATION =====
+    // Replaces the old wheel spin. No overlay text/title. Silent reveal.
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
             const overlay = document.getElementById('wheelAnimOverlay');
-            const wheelEl = document.getElementById('baWheel');
-            const statusEl2 = document.getElementById('baStatus');
-            if (!overlay || !wheelEl || !statusEl2) { resolve(); return; }
+            const strip = document.getElementById('numberLockStrip');
+            const windowEl = document.getElementById('numberLockWindow');
+            if (!overlay || !strip || !windowEl) { resolve(); return; }
 
-            const allPicks = new Set();
-            Object.values(engineState.players).forEach(p => { if (p && p.picks) p.picks.forEach(n => allPicks.add(n)); });
-            const uniqueNumbers = Array.from(allPicks);
-            if (!uniqueNumbers.includes(winningNumber)) uniqueNumbers.push(winningNumber);
+            const STEP = 54;
+            const TOTAL = 400;
+            const CYCLES = 9;
+            const targetNum = Number(winningNumber);
+            if (!Number.isInteger(targetNum) || targetNum < 1 || targetNum > TOTAL) { resolve(); return; }
 
-            const segmentCount = Math.max(16, uniqueNumbers.length % 2 === 0 ? uniqueNumbers.length : uniqueNumbers.length + 1);
-            const anglePerSegment = 360 / segmentCount;
-            const numbersForWheel = [];
-            for (let i = 0; i < segmentCount; i++) numbersForWheel.push(uniqueNumbers[i % uniqueNumbers.length]);
-            let winningIndex = numbersForWheel.indexOf(winningNumber);
-            if (winningIndex === -1) winningIndex = 0;
-
-            const size = 300; const center = size / 2; const radius = center;
-            const labelRadius = radius * 0.87;
-            const labelFontSize = segmentCount > 160 ? 6.2
-                : segmentCount > 120 ? 6.8
-                : segmentCount > 80 ? 7.4
-                : segmentCount > 60 ? 8.2
-                : segmentCount > 36 ? 10
-                : 12.5;
-
-            let svg = `<svg viewBox="0 0 ${size} ${size}" width="100%" height="100%">`;
-            for (let i = 0; i < segmentCount; i++) {
-                const startAngle = i * anglePerSegment;
-                const endAngle = (i + 1) * anglePerSegment;
-                const midAngle = startAngle + anglePerSegment / 2;
-                const startRad = (startAngle - 90) * Math.PI / 180;
-                const endRad = (endAngle - 90) * Math.PI / 180;
-                const midRad = (midAngle - 90) * Math.PI / 180;
-                const x1 = center + radius * Math.cos(startRad);
-                const y1 = center + radius * Math.sin(startRad);
-                const x2 = center + radius * Math.cos(endRad);
-                const y2 = center + radius * Math.sin(endRad);
-                const textX = center + labelRadius * Math.cos(midRad);
-                const textY = center + labelRadius * Math.sin(midRad);
-                const color = i % 2 === 0 ? '#e62020' : '#ffffff';
-                const textColor = i % 2 === 0 ? '#ffffff' : '#e62020';
-                svg += `<path d="M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2} Z" fill="${color}" stroke="#6a3a9a" stroke-width="1"/>`;
-                const numText = numbersForWheel[i];
-                if (numText !== '') {
-                    svg += `<text x="${textX}" y="${textY}" fill="${textColor}" font-size="${labelFontSize}" font-weight="bold" text-anchor="middle" dominant-baseline="middle" transform="rotate(${midAngle}, ${textX}, ${textY})">${numText}</text>`;
-                }
+            const values = [];
+            for (let c = 0; c < CYCLES; c++) {
+                for (let n = 1; n <= TOTAL; n++) values.push(n);
             }
-            svg += `</svg>`;
-            wheelEl.innerHTML = svg;
+            strip.innerHTML = values.map(n => `<div class="number-lock-cell">${n}</div>`).join('');
 
-            wheelEl.classList.remove('spinning');
-            wheelEl.style.transform = 'rotate(0deg)';
-            void wheelEl.offsetWidth;
+            const centerOffset = () => (windowEl.clientHeight - STEP) / 2;
+            const setPosition = (index, animate, duration = 0) => {
+                strip.style.transition = animate ? `transform ${duration}ms cubic-bezier(.08,.72,.12,1)` : 'none';
+                strip.style.transform = `translateY(${centerOffset() - index * STEP}px)`;
+            };
 
-            const targetSegmentCenter = winningIndex * anglePerSegment + anglePerSegment / 2;
-            const spins = 5;
-            const targetRotation = (spins * 360) - targetSegmentCenter;
+            const startIndex = Math.floor(values.length * 0.45);
+            const targetCycle = 7;
+            const targetIndex = targetCycle * TOTAL + (targetNum - 1);
 
-            statusEl2.textContent = 'Get ready to win!';
             overlay.classList.add('active');
-            const readyAudio = document.getElementById('getReadyToWinAudio');
-            const readyBubble = document.getElementById('wheelReadyBubble');
-            const readyLabel = document.getElementById('wheelReadyLabel');
-            const readyNumber = document.getElementById('wheelReadyNumber');
-            let readyCountdownTimers = [];
-            let spinStarted = false;
-            const showReadyBubble = () => {
-                if (!readyBubble || !readyLabel || !readyNumber) return;
-                readyLabel.textContent = 'Get ready to win';
-                readyNumber.textContent = '';
-                readyBubble.classList.add('active');
-                const wheelMachine = document.querySelector('.wheel-anim-machine');
-                if (wheelMachine) wheelMachine.classList.add('ready-art-active');
-                const syncCountdownToAudio = () => {
-                    if (!readyAudio || !Number.isFinite(readyAudio.duration) || readyAudio.duration <= 0) return;
-                    const remaining = readyAudio.duration - readyAudio.currentTime;
-                    const nextNumber = remaining <= 1.15 ? '3' : remaining <= 2.15 ? '2' : remaining <= 3.15 ? '1' : '';
-                    if (readyNumber.textContent !== nextNumber) readyNumber.textContent = nextNumber;
-                };
-                if (readyAudio) readyAudio.ontimeupdate = syncCountdownToAudio;
-                else [1, 2, 3].forEach((n, i) => readyCountdownTimers.push(setTimeout(() => { readyNumber.textContent = String(n); }, 3000 + i * 1000)));
-            };
-            const hideReadyBubble = () => {
-                readyCountdownTimers.forEach(clearTimeout);
-                readyCountdownTimers = [];
-                if (readyBubble) readyBubble.classList.remove('active');
-                const wheelMachine = document.querySelector('.wheel-anim-machine');
-                if (wheelMachine) wheelMachine.classList.remove('ready-art-active');
-            };
-            showReadyBubble();
-            const beginSpin = () => {
-                if (spinStarted) return;
-                spinStarted = true;
-                if (readyAudio) { readyAudio.onended = null; readyAudio.ontimeupdate = null; }
-                hideReadyBubble();
-                statusEl2.textContent = 'Spinning the wheel...';
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        wheelEl.classList.add('spinning');
-                        startWheelSpinSound(8000);
-                        wheelEl.style.transform = `rotate(${targetRotation}deg)`;
-                    });
-                });
+            setPosition(startIndex, false);
+            void strip.offsetWidth;
+
+            setTimeout(() => {
+                const duration = 5200 + Math.random() * 1200;
+                startWheelSpinSound(duration);
+                setPosition(targetIndex, true, duration);
                 setTimeout(() => {
                     stopWheelSpinSound();
-                    statusEl2.textContent = '🎯 Winning number: ' + winningNumber;
-                    setTimeout(() => { overlay.classList.remove('active'); resolve(); }, 1500);
-                }, 8000);
-            };
-            if (readyAudio) {
-                try {
-                    readyAudio.pause(); readyAudio.currentTime = 0; readyAudio.muted = false; readyAudio.volume = 1;
-                    readyAudio.onended = beginSpin;
-                    readyAudio.onerror = () => { beginSpin(); };
-                    setTimeout(beginSpin, Math.max(8000, ((Number.isFinite(readyAudio.duration) && readyAudio.duration > 0) ? readyAudio.duration * 1000 + 1500 : 8000)));
-                    const readyPlayback = readyAudio.play();
-                    if (readyPlayback && typeof readyPlayback.catch === 'function') readyPlayback.catch(() => beginSpin());
-                } catch (err) { beginSpin(); }
-            } else beginSpin();
+                    // Brief settle pause, then hide the lock so the winner card
+                    // (rendered by displayWinningNumberCard's .then()) appears alone.
+                    setTimeout(() => {
+                        overlay.classList.remove('active');
+                        resolve();
+                    }, 900);
+                }, duration + 120);
+            }, 450);
         });
     }
 
     function displayWinningNumberCard(round, number, winners, winAmount) {
         const r = Number(round), n = Number(number);
-        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 200) return;
+        if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 400) return;
         if (!Array.isArray(winners)) return;
 
         if (wheelAnimationPlaying) {
@@ -2087,12 +2107,14 @@
             return;
         }
 
+        // Pre-populate the winner card content while the lock overlay covers the screen.
         renderWinningCardBody(n, winAmount, winners);
         wheelAnimationPlayedRounds.add(animKey);
         wheelAnimationPlaying = true;
         window._wheelAnimStartedAt = Date.now();
         if (timerDisplay) timerDisplay.textContent = String(DEFAULT_RESULTS_SECONDS);
 
+        // The winner card is revealed only AFTER the number lock animation ends.
         playWheelAnimation(winners, n, r).then(() => {
             wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
             if (engineState.gamePhase !== 'results' || Number(engineState.roundNumber) !== r) return;
@@ -2121,8 +2143,8 @@
         stopWheelSpinSound();
         const ov = document.getElementById('wheelAnimOverlay');
         if (ov) ov.classList.remove('active');
-        const wheelEl = document.getElementById('baWheel');
-        if (wheelEl) { wheelEl.classList.remove('spinning'); wheelEl.style.transform = 'rotate(0deg)'; }
+        const lockStrip = document.getElementById('numberLockStrip');
+        if (lockStrip) { lockStrip.style.transition = 'none'; lockStrip.style.transform = 'translateY(0)'; }
     }
 
     function applyCardState() {
@@ -2141,7 +2163,7 @@
         }
         if (!isFinite(round) || round <= 0) return;
         if (displayedCardRound === round) return;
-        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 200) {
+        if (lastResultData && Number(lastResultData.round) === round && isFinite(Number(lastResultData.winningNumber)) && Number(lastResultData.winningNumber) > 0 && Number(lastResultData.winningNumber) <= 400) {
             displayedCardRound = round;
             displayWinningNumberCard(round, Number(lastResultData.winningNumber), Array.isArray(lastResultData.winners) ? lastResultData.winners : [], Number(lastResultData.winAmount) || 0);
             clearCardFetchRetry();
@@ -2902,9 +2924,9 @@
                 return;
             }
             let buttons = numPicker.querySelectorAll('.num-btn[data-num]');
-            if (buttons.length !== 200) {
+            if (buttons.length !== 400) {
                 let html = '';
-                for (let i = 1; i <= 200; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
+                for (let i = 1; i <= 400; i++) html += `<button class="num-btn" data-num="${i}">${i}</button>`;
                 numPicker.innerHTML = html;
                 buttons = numPicker.querySelectorAll('.num-btn[data-num]');
             }
@@ -2979,7 +3001,7 @@
             const btn = e.target.closest('.num-btn[data-num]');
             if (!btn || btn.disabled || btn.classList.contains('loading')) return;
             const num = Number(btn.dataset.num);
-            if (!Number.isInteger(num) || num < 1 || num > 200) return;
+            if (!Number.isInteger(num) || num < 1 || num > 400) return;
             if (pendingPickOps.has(num)) return;
             const opRound = Number(engineState.roundNumber);
             if (gamePausedBySticky || !isNetworkConnected) { updateStatus('⏸ Game is temporarily unavailable.'); return; }
@@ -3243,7 +3265,7 @@
         if (Number(data.serverNow)) serverTimeOffset = Number(data.serverNow) - Date.now();
         if (data.lastResult && Number(data.lastResult.round) === round && Number(data.lastResult.winningNumber) > 0) {
             lastResultData = data.lastResult;
-        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 200) {
+        } else if (phase === 'results' && Number(data.winningNumber) > 0 && Number(data.winningNumber) <= 400) {
             lastResultData = {
                 round,
                 winningNumber: Number(data.winningNumber),
@@ -3259,7 +3281,7 @@
         engineState.winners = Array.isArray(data.winners) ? data.winners : [];
         engineState.prizePool = Number(data.prizePool) || 0;
         engineState.allTakenNumbers = new Set(
-            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 200)
+            Object.keys(data.numbersTaken || {}).filter(k => data.numbersTaken[k] === true).map(Number).filter(n => n >= 1 && n <= 400)
         );
         if (playerCountEl) playerCountEl.textContent = String(engineState.activePlayersCount);
         updateTotalBetDisplay();
@@ -3405,6 +3427,7 @@
         if(main)main.textContent=safeNum(walletData.main,0)+' Br'; if(play)play.textContent=safeNum(walletData.play,0)+' Br';
         const cb=document.getElementById('chooserBalance');if(cb)cb.textContent='Play balance: '+safeNum(walletData.play,0)+' Birr';
     }
+
     function bingoLetter(n){return n<=15?'B':n<=30?'I':n<=45?'N':n<=60?'G':'O';}
 
     const bingoCallAudio = {
@@ -4066,8 +4089,6 @@
             marker.style.left = leftPct + '%';
             marker.style.top = topPct + '%';
             marker.classList.remove('hidden');
-            // NOTE: The icon (🦸‍♀️ / 🦹‍♀️) is set in renderLadderRoom based on
-            // viewer perspective — not overwritten here.
         } catch (e) { console.error('[LADDER-MARKER]', e); }
     }
 
@@ -4119,7 +4140,6 @@
             const myMarkerId = isCreator ? 'ladderMarkerP1' : 'ladderMarkerP2';
             const oppMarkerId = isCreator ? 'ladderMarkerP2' : 'ladderMarkerP1';
 
-            // Persistent hero/villain icons — always viewer-perspective
             const myMarkerEl = document.getElementById(myMarkerId);
             const oppMarkerEl = document.getElementById(oppMarkerId);
             if (myMarkerEl) { myMarkerEl.textContent = '🦸‍♀️'; myMarkerEl.classList.add('mine'); }
@@ -4205,7 +4225,6 @@
                     if (p2) positionLadderMarker('ladderMarkerP2', p2.pos, room.joinerUid);
                 }
 
-                // Highlight my-turn marker
                 if (myMarkerEl) myMarkerEl.classList.toggle('my-turn', room.currentTurn === currentUser && room.phase === 'playing');
                 if (oppMarkerEl) oppMarkerEl.classList.remove('my-turn');
 
@@ -4217,7 +4236,6 @@
                 const attackBtn = document.getElementById('ladderAttackBtn');
                 diceBox.textContent = room.lastRoll || '-';
 
-                // ===== Abandonment banner =====
                 const abandonBanner = document.getElementById('ladderAbandonBanner');
                 if (abandonBanner) {
                     if (room.abandonment && room.phase === 'playing') {
@@ -4320,7 +4338,6 @@
         showGameChooser();
     };
 
-    // Live countdown ticker for the abandonment banner
     setInterval(() => {
         if (!ladderUi.active || !ladderUi.state) return;
         const banner = document.getElementById('ladderAbandonBanner');
@@ -4567,7 +4584,6 @@
                     bingoSend('state');
                 } else if (ladderUi.active) {
                     if (ladderUi.state && ladderUi.state.id) {
-                        // Attempt graceful rejoin of the room we were in
                         client.rawSend({ type: 'ladder-rejoin', roomId: ladderUi.state.id });
                     } else {
                         client.rawSend({ type: 'ladder-join-lobby' });
@@ -4576,7 +4592,6 @@
                     showGameChooser();
                 }
 
-                // Auto-open ladder if a room was saved (reconnect after reload)
                 const savedLadderRoom = (() => { try { return localStorage.getItem('winzo_ladder_room'); } catch (e) { return null; } })();
                 if (savedLadderRoom && !ladderUi.active && !bingoUi.active) {
                     setTimeout(() => {
