@@ -768,23 +768,43 @@
         }
         .winzo-lock-number {
             height: var(--lock-step); display: flex; align-items: center; justify-content: center;
-            color: #101722; font-family: Arial, sans-serif;
+            position: relative; overflow: hidden;
+            color: #172130; font-family: Arial, sans-serif;
             font-size: clamp(30px,8.5vw,48px); line-height: 1; font-weight: 900;
-            letter-spacing: 1px; text-shadow: 0 1px 0 #fff,0 2px 2px rgba(0,0,0,.2);
-            border-bottom: 1px solid rgba(42,55,73,.3);
-            background: linear-gradient(90deg,#a5b0be,#f8fafc 18%,#dce3eb 50%,#fff 82%,#9aa7b7);
+            letter-spacing: 1px; font-variant-numeric: tabular-nums;
+            text-shadow: 0 1px 0 rgba(255,255,255,.95), 0 -1px 1px rgba(0,0,0,.24);
+            border-top: 1px solid rgba(255,255,255,.72);
+            border-bottom: 1px solid rgba(34,47,65,.65);
+            background:
+                radial-gradient(ellipse at 50% 42%,rgba(255,255,255,.98) 0%,rgba(224,231,239,.96) 42%,rgba(147,160,177,.98) 100%),
+                linear-gradient(90deg,#657386,#f8fafc 18%,#dce3eb 50%,#fff 82%,#657386);
+            box-shadow: inset 0 5px 9px rgba(255,255,255,.55),
+                inset 0 -7px 10px rgba(21,32,49,.28),
+                inset 8px 0 12px rgba(35,49,68,.18),
+                inset -8px 0 12px rgba(35,49,68,.18);
             backface-visibility: hidden;
         }
         .winzo-lock-number:nth-child(even) {
-            background: linear-gradient(90deg,#8795a7,#e8edf3 18%,#cbd4df 50%,#f4f7fa 82%,#8492a4);
+            background:
+                radial-gradient(ellipse at 50% 42%,#f8fafc 0%,#cbd4df 48%,#8492a4 100%),
+                linear-gradient(90deg,#596779,#edf2f7 20%,#cbd4df 50%,#f4f7fa 80%,#596779);
         }
         .winzo-lock-highlight {
-            position: absolute; z-index: 3; pointer-events: none; left: 0; right: 0;
+            position: absolute; z-index: 3; pointer-events: none; left: -1px; right: -1px;
             top: 50%; height: var(--lock-step,60px); transform: translateY(-50%);
-            border-top: 3px solid #f6c75c; border-bottom: 3px solid #f6c75c;
-            background: linear-gradient(90deg,rgba(255,255,255,.12),rgba(255,255,255,.38),rgba(255,255,255,.12));
-            box-shadow: 0 0 12px rgba(255,199,75,.48), inset 0 0 10px rgba(255,255,255,.25);
+            background: linear-gradient(90deg,rgba(255,255,255,.08),rgba(255,255,255,.16),rgba(255,255,255,.08));
+            box-shadow: inset 0 1px 5px rgba(255,255,255,.16), inset 0 -1px 5px rgba(0,0,0,.2);
         }
+        /* Two solid chrome rails replace the flat yellow separator lines. */
+        .winzo-lock-highlight::before, .winzo-lock-highlight::after {
+            content: ""; position: absolute; left: -1px; right: -1px; height: 7px;
+            background: linear-gradient(180deg,#f8fbff 0%,#cbd5e1 22%,#7f8da0 48%,#dce4ed 72%,#596779 100%);
+            border-top: 1px solid rgba(255,255,255,.95);
+            border-bottom: 1px solid rgba(20,31,47,.8);
+            box-shadow: 0 2px 4px rgba(0,0,0,.48), 0 0 3px rgba(220,232,246,.45);
+        }
+        .winzo-lock-highlight::before { top: 0; }
+        .winzo-lock-highlight::after { bottom: 0; }
         .winzo-lock-window::before, .winzo-lock-window::after {
             content: ""; position: absolute; left: 0; right: 0; height: 24%;
             z-index: 2; pointer-events: none;
