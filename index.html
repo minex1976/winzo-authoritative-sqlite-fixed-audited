@@ -238,11 +238,15 @@
         @media (max-width: 430px) { #usernameWalletItem { display: none !important; } }
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
 
-        .wheel-anim-overlay { position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; background: rgba(2,7,14,.88); padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+        /* ===== NEW 3-DIAL CIRCULAR LOCK ANIMATION ===== */
+        .wheel-anim-overlay { 
+            position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; 
+            background: radial-gradient(circle at center, #1e2c5a 0%, #0a0d18 100%);
+            padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; 
+        }
         .wheel-anim-overlay.active { display: flex; }
         .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
 
-        /* ===== NEW 4-DIAL CIRCULAR LOCK ANIMATION ===== */
         .circular-lock {
             position: relative;
             width: 280px;
@@ -268,8 +272,8 @@
             position: absolute;
             inset: 0;
             border-radius: 50%;
-            background: radial-gradient(circle at 35% 30%, #4a4d52 0%, #1a1c1e 50%, #0a0a0c 100%);
-            box-shadow: inset 0 4px 10px rgba(255,255,255,0.15), inset 0 -8px 20px rgba(0,0,0,0.9), 0 10px 25px rgba(0,0,0,0.7);
+            background: radial-gradient(circle at 35% 30%, #3a3d42 0%, #151618 50%, #080809 100%);
+            box-shadow: inset 0 4px 10px rgba(255,255,255,0.15), inset 0 -8px 20px rgba(0,0,0,0.9), 0 10px 25px rgba(0,0,0,0.7), 0 0 40px rgba(80, 140, 255, 0.3);
             z-index: 1;
             display: flex;
             justify-content: center;
@@ -277,71 +281,57 @@
         }
         .dial-window {
             position: relative;
-            width: 172px;
-            height: 56px;
+            width: 140px; /* Fits 3 dials perfectly */
+            height: 60px;
             background: #050505;
             border-radius: 10px;
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 4px;
-            box-shadow: inset 0 12px 15px rgba(0,0,0,0.95), inset 0 -12px 15px rgba(0,0,0,0.95), 0 1px 3px rgba(255,255,255,0.15);
+            box-shadow: inset 0 15px 20px rgba(0,0,0,0.95), inset 0 -15px 20px rgba(0,0,0,0.95), 0 2px 5px rgba(255,255,255,0.15);
             z-index: 3;
         }
         .dial {
-            width: 34px;
+            width: 40px;
             height: 100%;
             position: relative;
-            perspective: 200px;
+            perspective: 800px; /* High perspective for parallel alignment */
             overflow: hidden;
         }
         .dial-strip {
             position: absolute;
             width: 100%;
             height: 100%;
-            top: 50%;
+            top: 0;
             transform-style: preserve-3d;
         }
         .dial-cell {
             position: absolute;
             width: 100%;
-            height: 36px;
-            top: -18px;
-            backface-visibility: hidden;
+            height: 40px;
+            top: calc(50% - 20px);
             display: flex;
             justify-content: center;
             align-items: center;
             font-family: "Arial Black", Arial, sans-serif;
-            font-size: 22px;
+            font-size: 24px;
             font-weight: 900;
-            color: #111;
-            background: linear-gradient(to bottom, #9ba0a6 0%, #f4f5f6 30%, #ffffff 50%, #e8eaed 70%, #7d8288 100%);
-            border-top: 1px solid rgba(255,255,255,0.6);
-            border-bottom: 1px solid rgba(0,0,0,0.5);
-            box-shadow: inset 0 1px 3px rgba(255,255,255,0.9);
-            text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+            color: #0a1326;
+            background: linear-gradient(to bottom, #a6abb1 0%, #e8eaed 20%, #ffffff 50%, #d5d8db 80%, #7d8288 100%);
+            backface-visibility: hidden;
+            border-bottom: 1px solid rgba(0,0,0,0.4);
+            box-shadow: inset 0 1px 3px rgba(255,255,255,0.8);
+            text-shadow: 0 1px 0 rgba(255,255,255,0.6);
         }
         .dial-shade {
             position: absolute;
             inset: 0;
             border-radius: 10px;
             pointer-events: none;
-            z-index: 4;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 25%, rgba(255,255,255,0.1) 50%, rgba(0,0,0,0) 75%, rgba(0,0,0,0.85) 100%);
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
-        }
-        .dial-rod {
-            position: absolute;
-            top: 50%;
-            left: -10px;
-            right: -10px;
-            height: 10px;
-            transform: translateY(-50%);
-            background: linear-gradient(to bottom, #777, #fff, #444);
-            border-radius: 5px;
-            box-shadow: 0 3px 5px rgba(0,0,0,0.7);
             z-index: 10;
-            pointer-events: none;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0) 30%, rgba(255,255,255,0.1) 50%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.95) 100%);
+            box-shadow: inset 0 0 15px rgba(0,0,0,0.8);
         }
         .lock-latch {
             position: absolute;
@@ -1127,8 +1117,6 @@
               <div class="dial" id="dial0"><div class="dial-strip" id="strip0"></div></div>
               <div class="dial" id="dial1"><div class="dial-strip" id="strip1"></div></div>
               <div class="dial" id="dial2"><div class="dial-strip" id="strip2"></div></div>
-              <div class="dial" id="dial3"><div class="dial-strip" id="strip3"></div></div>
-              <div class="dial-rod"></div>
               <div class="dial-shade"></div>
             </div>
           </div>
@@ -2026,18 +2014,18 @@
     let wheelAnimationPlayedRounds = new Set();
     let wheelAnimationPlaying = false;
 
-    // ===== NEW 4-DIAL 3D CYLINDER LOCK ANIMATION =====
+    // ===== NEW 3-DIAL CIRCULAR LOCK ANIMATION =====
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
             const overlay = document.getElementById('wheelAnimOverlay');
             if (!overlay) { resolve(); return; }
 
-            // Format number to 4 digits (e.g., 5 -> "0005")
-            const numStr = String(winningNumber).padStart(4, '0');
+            // Format number to 3 digits (e.g., 47 -> "047", 247 -> "247")
+            const numStr = String(winningNumber).padStart(3, '0');
             const digits = numStr.split('').map(Number);
 
-            // 1. Build 3D cells for all 4 dials (only if not already built)
-            for (let d = 0; d < 4; d++) {
+            // 1. Build 3D cells for all 3 dials
+            for (let d = 0; d < 3; d++) {
                 const strip = document.getElementById('strip' + d);
                 if (!strip) continue;
                 if (strip.children.length === 0) {
@@ -2045,8 +2033,8 @@
                         const cell = document.createElement('div');
                         cell.className = 'dial-cell';
                         cell.textContent = i;
-                        // 55.4px is the radius for a 36px height 10-sided cylinder
-                        cell.style.transform = `rotateX(${i * 36}deg) translateZ(55.4px)`;
+                        // 63.7px is the radius for a 40px height 10-sided cylinder
+                        cell.style.transform = `rotateX(${i * -36}deg) translateZ(63.7px)`;
                         strip.appendChild(cell);
                     }
                 }
@@ -2055,7 +2043,7 @@
             overlay.classList.add('active');
 
             // 2. Reset rotations to start spinning from the top
-            for (let d = 0; d < 4; d++) {
+            for (let d = 0; d < 3; d++) {
                 const strip = document.getElementById('strip' + d);
                 if (!strip) continue;
                 strip.style.transition = 'none';
@@ -2063,17 +2051,17 @@
                 void strip.offsetWidth; // Force reflow
             }
 
-            // 3. Start the spin animation after a minimal delay
+            // 3. Start the spin animation
             setTimeout(() => {
                 const duration = 3500 + Math.random() * 500; // 3.5s to 4.0s spin
                 startWheelSpinSound(duration);
 
-                for (let d = 0; d < 4; d++) {
+                for (let d = 0; d < 3; d++) {
                     const strip = document.getElementById('strip' + d);
                     if (!strip) continue;
                     const targetDigit = digits[d];
-                    // Spin 5 full cycles + land on target digit (negative rotation = down)
-                    const targetAngle = -(targetDigit * 36) - (360 * 5);
+                    // Spin 5 full cycles + land on target digit (positive rotation brings numbers up)
+                    const targetAngle = (targetDigit * 36) + (360 * 5);
                     
                     strip.style.transition = `transform ${duration}ms cubic-bezier(0.15, 0.9, 0.15, 1)`;
                     strip.style.transform = `rotateX(${targetAngle}deg)`;
@@ -2154,8 +2142,8 @@
         const ov = document.getElementById('wheelAnimOverlay');
         if (ov) ov.classList.remove('active');
         
-        // Reset all 4 dials
-        for (let d = 0; d < 4; d++) {
+        // Reset all 3 dials
+        for (let d = 0; d < 3; d++) {
             const strip = document.getElementById('strip' + d);
             if (strip) { strip.style.transition = 'none'; strip.style.transform = 'rotateX(0deg)'; }
         }
