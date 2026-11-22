@@ -2014,26 +2014,27 @@
     let wheelAnimationPlayedRounds = new Set();
     let wheelAnimationPlaying = false;
 
-    // ===== NEW 3-DIAL CIRCULAR LOCK ANIMATION =====
+    // ===== 3-DIAL CIRCULAR LOCK ANIMATION: INDEPENDENT RANDOM DIRECTIONS =====
     function playWheelAnimation(winners, winningNumber, round) {
         return new Promise(resolve => {
             const overlay = document.getElementById('wheelAnimOverlay');
             if (!overlay) { resolve(); return; }
 
-            // Format number to 3 digits (e.g., 47 -> "047", 247 -> "247")
+            // Keep the existing three-digit winning-number format.
             const numStr = String(winningNumber).padStart(3, '0');
             const digits = numStr.split('').map(Number);
 
-            // 1. Build 3D cells for all 3 dials
+            // Build the ten numbered faces once for each dial.
             for (let d = 0; d < 3; d++) {
                 const strip = document.getElementById('strip' + d);
                 if (!strip) continue;
+
                 if (strip.children.length === 0) {
                     for (let i = 0; i < 10; i++) {
                         const cell = document.createElement('div');
                         cell.className = 'dial-cell';
                         cell.textContent = i;
-                        // 63.7px is the radius for a 40px height 10-sided cylinder
+                        // Existing 10-sided cylinder geometry is preserved.
                         cell.style.transform = `rotateX(${i * -36}deg) translateZ(63.7px)`;
                         strip.appendChild(cell);
                     }
@@ -2042,41 +2043,68 @@
 
             overlay.classList.add('active');
 
-            // 2. Reset rotations to start spinning from the top
+            // Reset all dials before each round so no previous rotation carries over.
+            const strips = [];
             for (let d = 0; d < 3; d++) {
                 const strip = document.getElementById('strip' + d);
+                strips[d] = strip;
                 if (!strip) continue;
+
                 strip.style.transition = 'none';
-                strip.style.transform = `rotateX(0deg)`; // Reset
-                void strip.offsetWidth; // Force reflow
+                strip.style.transform = 'rotateX(0deg)';
+                void strip.offsetWidth;
             }
 
-            // 3. Start the spin animation
+            // Start together, but let every column choose its own direction and stop time.
             setTimeout(() => {
-                const duration = 3500 + Math.random() * 500; // 3.5s to 4.0s spin
-                startWheelSpinSound(duration);
+                const totalDuration = 3500 + Math.random() * 500;
+                startWheelSpinSound(totalDuration);
+
+                // -1 and +1 are selected independently. If chance produces all
+                // three in the same direction, flip one so opposite directions
+                // are visible in every lock animation.
+                const directions = [0,  1, 2].map(() => Math.random() < 0.5 ? -1 : 1);
+                if (directions.every(direction => direction === directions[0])) {
+                    const flipIndex = Math.floor(Math.random() * 3);
+                    directions[flipIndex] *= -1;
+                }
+
+                // Each dial receives a different stopping time, in random order.
+                const stopOffsets = [0, 260, 520];
+                for (let i = stopOffsets.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [stopOffsets[i], stopOffsets[j]] = [stopOffsets[j], stopOffsets[i]];
+                }
 
                 for (let d = 0; d < 3; d++) {
-                    const strip = document.getElementById('strip' + d);
+                    const strip = strips[d];
                     if (!strip) continue;
+
                     const targetDigit = digits[d];
-                    // Spin 5 full cycles + land on target digit (positive rotation brings numbers up)
-                    const targetAngle = (targetDigit * 36) + (360 * 5);
-                    
-                    strip.style.transition = `transform ${duration}ms cubic-bezier(0.15, 0.9, 0.15, 1)`;
+                    const direction = directions[d];
+
+                    // Positive and negative rotations land on the same target face.
+                    // The sign controls whether this dial scrolls up or down.
+                    const fullTurns = 5;
+                    const targetAngle =
+                        (direction * 360 * fullTurns) + (targetDigit * 36);
+
+                    const dialDuration = totalDuration - stopOffsets[d];
+                    strip.style.transition =
+                        `transform ${dialDuration}ms cubic-bezier(0.15, 0.9, 0.15, 1)`;
                     strip.style.transform = `rotateX(${targetAngle}deg)`;
                 }
 
-                // 4. Finish and show winner card
+                // Wait for the slowest dial to settle before removing the lock.
                 setTimeout(() => {
                     stopWheelSpinSound();
                     setTimeout(() => {
                         overlay.classList.remove('active');
                         resolve();
-                    }, 400); // Short pause before winner card
-                }, duration + 100);
+                    }, 400);
+                }, totalDuration + 100);
 
-            }, 100); // Very small initial delay (100ms)
+            }, 100);
         });
     }
 
