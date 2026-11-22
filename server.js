@@ -80,8 +80,8 @@ if (!BOT_TOKEN) console.warn('WARNING: BOT_TOKEN is not set. All WebSocket authe
 if (!process.env.DB_PASSWORD) console.warn('WARNING: DB_PASSWORD is not set. Configure it in the deployment environment.');
 
 const SELECTION_SECONDS = 30;
-const SPINNING_SECONDS = 3;
-const RESULTS_SECONDS = 15;
+const SPINNING_SECONDS = 2;
+const RESULTS_SECONDS = 10;
 const MAX_PICKS = 5;
 const PAYOUT_RATE = 0.80;
 const REFERRAL_RATE = 0.05;
