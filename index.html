@@ -2034,7 +2034,6 @@
                         const cell = document.createElement('div');
                         cell.className = 'dial-cell';
                         cell.textContent = i;
-                        // Existing 10-sided cylinder geometry is preserved.
                         cell.style.transform = `rotateX(${i * -36}deg) translateZ(63.7px)`;
                         strip.appendChild(cell);
                     }
@@ -2055,59 +2054,111 @@
                 void strip.offsetWidth;
             }
 
-            // Start together, but let every column choose its own direction and stop time.
             setTimeout(() => {
-                const totalDuration = 3500 + Math.random() * 500;
-                startWheelSpinSound(totalDuration);
+                // Slightly longer overall animation: approximately 5.0–5.4 seconds.
+                const totalDuration = 5000 + Math.random() * 400;
+                startWheelSpinSound(totalDuration + 650);
 
-                // -1 and +1 are selected independently. If chance produces all
-                // three in the same direction, flip one so opposite directions
-                // are visible in every lock animation.
-                const directions = [0,  1, 2].map(() => Math.random() < 0.5 ? -1 : 1);
+                // Every dial chooses its direction independently. If all three
+                // happen to match, flip one so opposing directions are visible.
+                const directions = [0, 1, 2].map(() =>
+                    Math.random() < 0.5 ? -1 : 1
+                );
                 if (directions.every(direction => direction === directions[0])) {
-                    const flipIndex = Math.floor(Math.random() * 3);
-                    directions[flipIndex] *= -1;
+                    directions[Math.floor(Math.random() * 3)] *= -1;
                 }
 
-                // Each dial receives a different stopping time, in random order.
-                const stopOffsets = [0, 260, 520];
+                // Randomize which dial settles first, second, and third.
+                const stopOffsets = [0, 300, 600];
                 for (let i = stopOffsets.length - 1; i > 0; i--) {
                     const j = Math.floor(Math.random() * (i + 1));
                     [stopOffsets[i], stopOffsets[j]] = [stopOffsets[j], stopOffsets[i]];
                 }
 
+                const animateDial = (strip, digit, direction, dialDuration) => {
+                    return new Promise(done => {
+                        // First travel four quick laps. Then progressively slow
+                        // over the final three laps: one lap, one lap, then the
+                        // final lap that lands precisely on the winning digit.
+                        const stages = [
+                            {
+                                laps: 4,
+                                fraction: 0.42,
+                                easing: 'cubic-bezier(0.18, 0.82, 0.22, 1)'
+                            },
+                            {
+                                laps: 1,
+                                fraction: 0.18,
+                                easing: 'cubic-bezier(0.25, 0.72, 0.35, 1)'
+                            },
+                            {
+                                laps: 1,
+                                fraction: 0.19,
+                                easing: 'cubic-bezier(0.25, 0.68, 0.4, 1)'
+                            },
+                            {
+                                laps: 1,
+                                fraction: 0.21,
+                                easing: 'cubic-bezier(0.12, 0.72, 0.28, 1)'
+                            }
+                        ];
+
+                        let completedLaps = 0;
+                        let elapsed = 0;
+
+                        const runStage = index => {
+                            if (index >= stages.length) {
+                                done();
+                                return;
+                            }
+
+                            const stage = stages[index];
+                            const isFinalStage = index === stages.length - 1;
+                            const targetAngle = isFinalStage
+                                ? (direction * 360 * 7) + (digit * 36)
+                                : direction * 360 * (completedLaps + stage.laps);
+
+                            // Make the final stage absorb rounding remainder so
+                            // each dial finishes within its own scheduled time.
+                            const stageDuration = isFinalStage
+                                ? Math.max(100, dialDuration - elapsed)
+                                : Math.max(100, Math.round(dialDuration * stage.fraction));
+
+                            strip.style.transition =
+                                `transform ${stageDuration}ms ${stage.easing}`;
+                            strip.style.transform = `rotateX(${targetAngle}deg)`;
+
+                            elapsed += stageDuration;
+                            completedLaps += stage.laps;
+
+                            setTimeout(() => runStage(index + 1), stageDuration);
+                        };
+
+                        runStage(0);
+                    });
+                };
+
+                const dialPromises = [];
                 for (let d = 0; d < 3; d++) {
                     const strip = strips[d];
                     if (!strip) continue;
 
-                    const targetDigit = digits[d];
-                    const direction = directions[d];
-
-                    // Positive and negative rotations land on the same target face.
-                    // The sign controls whether this dial scrolls up or down.
-                    const fullTurns = 5;
-                    const targetAngle =
-                        (direction * 360 * fullTurns) + (targetDigit * 36);
-
                     const dialDuration = totalDuration - stopOffsets[d];
-                    strip.style.transition =
-                        `transform ${dialDuration}ms cubic-bezier(0.15, 0.9, 0.15, 1)`;
-                    strip.style.transform = `rotateX(${targetAngle}deg)`;
+                    dialPromises.push(
+                        animateDial(strip, digits[d], directions[d], dialDuration)
+                    );
                 }
 
-                // Wait for the slowest dial to settle before removing the lock.
-                setTimeout(() => {
+                Promise.all(dialPromises).then(() => {
                     stopWheelSpinSound();
                     setTimeout(() => {
                         overlay.classList.remove('active');
                         resolve();
                     }, 400);
-                }, totalDuration + 100);
-
+                });
             }, 100);
         });
     }
-
     function displayWinningNumberCard(round, number, winners, winAmount) {
         const r = Number(round), n = Number(number);
         if (!isFinite(r) || r <= 0 || !isFinite(n) || n <= 0 || n > 400) return;
