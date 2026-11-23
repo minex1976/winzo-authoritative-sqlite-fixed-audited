@@ -1333,12 +1333,12 @@ async function transactionRequest(uid, data) {
         try {
           await addNotification(uid, {
             type: 'fraud_flag',
-            message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support.'
+            message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`
           });
         } catch (_) {}
         try {
           await sendBotDepositStatus(uid,
-            `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: @winzo_help_center`);
+            `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`);
         } catch (_) {}
         return { ok: false, reason: 'account-flagged', traceId };
       }
