@@ -1123,14 +1123,27 @@ async function resolveTelegramUser(user, referredBy = null, ctx = {}) {
         };
       }
     }
-    let found = await client.query('SELECT * FROM users WHERE username = $1 OR telegram_id = $2 LIMIT 1', [canonicalUid, telegramId]);
+    // Recover a canonical tg_<id> account even when an older deployment did
+    // not populate telegram_id/telegram_users. If the Telegram ID already
+    // points to a legacy username, preserve that username: other financial,
+    // referral, transaction and game records may reference it.
+    const found = await client.query(
+      `SELECT * FROM users
+        WHERE username = $1 OR telegram_id = $2
+        ORDER BY CASE WHEN telegram_id = $2 THEN 0 ELSE 1 END
+        LIMIT 1 FOR UPDATE`,
+      [canonicalUid, telegramId]
+    );
     let finalUid = canonicalUid;
     if (found.rows.length > 0) {
       const row = found.rows[0];
       if (row.telegram_id && Number(row.telegram_id) !== telegramId) throw new Error('conflicting-user');
-      if (row.username !== canonicalUid) {
-        await client.query('UPDATE users SET username = $1, telegram_id = $2, updated_at = $3 WHERE username = $4', [canonicalUid, telegramId, now(), row.username]);
-        finalUid = canonicalUid;
+      finalUid = row.username; // Preserve established account identity and all related records.
+      if (!row.telegram_id) {
+        await client.query(
+          'UPDATE users SET telegram_id = $1, updated_at = $2 WHERE username = $3 AND (telegram_id IS NULL OR telegram_id = $1)',
+          [telegramId, now(), finalUid]
+        );
       }
     }
     await client.query('COMMIT');
@@ -2998,9 +3011,17 @@ async function handle(ws, m) {
     const authRecent = (wsIpAttempts.get(authRateKey) || []).filter(x => x > authNow - 60_000);
     if (authRecent.length >= 10) { send(ws, { type: 'error', message: 'rate-limited' }); try { ws.close(4008, 'auth-rate-limited'); } catch {} return; }
     authRecent.push(authNow); wsIpAttempts.set(authRateKey, authRecent);
+    const telegramId = Number(telegramUser.id);
+    const canonicalUid = `tg_${telegramId}`;
+    // Include the canonical username as a safe recovery path for older rows
+    // whose Telegram ID column/mapping was never populated. Do not guess an
+    // account from a Telegram display name or Telegram @username.
     const existingAccount = await pool.query(
-      'SELECT username FROM users WHERE telegram_id = $1 UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 LIMIT 1',
-      [Number(telegramUser.id)]
+      `SELECT username FROM users WHERE telegram_id = $1 OR username = $2
+       UNION
+       SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 AND uid IS NOT NULL
+       LIMIT 1`,
+      [telegramId, canonicalUid]
     );
 
     if (m.authMode === 'login' && !existingAccount.rows.length) {
@@ -3525,17 +3546,81 @@ app.use(express.json({ limit: '3mb' }));
 // ============================================================================
 // TELEGRAM BOT WEBHOOK ROUTE
 // ============================================================================
-if (BOT_TOKEN) {
-  app.post(`/bot${BOT_TOKEN}`, (req, res) => {
-    try {
-      bot.processUpdate(req.body);
-      res.sendStatus(200);
-    } catch (err) {
-      console.error('[BOT WEBHOOK CRASH PREVENTED]', err);
-      res.sendStatus(500);
+async function handleTelegramWebhook(req, res) {
+  if (!BOT_TOKEN || !bot) return res.status(503).json({ ok: false, error: 'telegram-bot-not-configured' });
+  if (!TELEGRAM_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'telegram-webhook-secret-not-configured' });
+  const supplied = req.get('x-telegram-bot-api-secret-token') || '';
+  if (!supplied || !constantTimeEqual(supplied, TELEGRAM_WEBHOOK_SECRET)) return res.status(401).json({ ok: false });
+
+  try {
+    const update = req.body || {};
+    const msg = update.message || update.edited_message;
+    const contact = msg?.contact;
+    let contactResult = null;
+
+    // Telegram contact sharing must be self-contact: the contact's user_id
+    // must equal the authenticated sender. Never trust a phone number alone.
+    if (contact) {
+      const senderId = Number(msg?.from?.id || 0);
+      const contactUserId = Number(contact.user_id || 0);
+      const phone = String(contact.phone_number || '').trim();
+      const normalizedPhone = normalizeTelegramPhoneNumber(phone);
+
+      if (!Number.isSafeInteger(senderId) || senderId <= 0 || contactUserId !== senderId || !normalizedPhone || phone.length > 64) {
+        contactResult = { accepted: false, reason: 'invalid-self-contact' };
+      } else {
+        const db = await pool.connect();
+        try {
+          await db.query('BEGIN');
+          await db.query(`INSERT INTO telegram_contacts
+              (telegram_id, phone_number, phone_normalized, first_name, last_name, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (telegram_id) DO UPDATE SET
+              phone_number=EXCLUDED.phone_number,
+              phone_normalized=EXCLUDED.phone_normalized,
+              first_name=EXCLUDED.first_name,
+              last_name=EXCLUDED.last_name,
+              updated_at=EXCLUDED.updated_at`,
+            [senderId, phone, normalizedPhone, String(contact.first_name || '').slice(0,128), String(contact.last_name || '').slice(0,128), now()]);
+          await db.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
+            VALUES ($1, 'accepted', $2)
+            ON CONFLICT (telegram_id) DO UPDATE SET status='accepted', updated_at=EXCLUDED.updated_at`,
+            [senderId, now()]);
+          await db.query('UPDATE users SET phone_number=$1, updated_at=$2 WHERE telegram_id=$3', [phone, now(), senderId]);
+          await db.query('COMMIT');
+          contactResult = { accepted: true };
+        } catch (e) {
+          try { await db.query('ROLLBACK'); } catch {}
+          if (e.code === '23505') {
+            await pool.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
+              VALUES ($1, 'phone-already-registered', $2)
+              ON CONFLICT (telegram_id) DO UPDATE SET status='phone-already-registered', updated_at=EXCLUDED.updated_at`,
+              [senderId, now()]);
+            contactResult = { accepted: false, reason: 'phone-already-registered' };
+          } else {
+            throw e;
+          }
+        } finally {
+          db.release();
+        }
+      }
     }
-  });
+
+    // Process all Telegram updates (commands, callbacks, etc.) through the
+    // same configured webhook. Contact persistence above completes first.
+    bot.processUpdate(update);
+    return res.status(200).json({ ok: true, ...(contactResult || {}) });
+  } catch (e) {
+    console.error('[TELEGRAM-WEBHOOK]', e.message);
+    return res.status(500).json({ ok: false, error: 'telegram-webhook-processing-failed' });
+  }
 }
+
+if (BOT_TOKEN) {
+  // Keep the old token-based route as a compatibility alias during deployment.
+  app.post(`/bot${BOT_TOKEN}`, handleTelegramWebhook);
+}
+app.post('/api/telegram/webhook', handleTelegramWebhook);
 
 // ─── FIX S2: rate limit the SMS webhook (only after secret check) ──────────
 const smsWebhookRate = new Map();
@@ -3606,51 +3691,6 @@ app.post('/api/sms/incoming', express.json(), async (req, res) => {
     return res.status(200).json({ ok: false, error: e.message, traceId });
   }
 });
-app.post('/api/telegram/webhook', async (req, res) => {
-  if (!TELEGRAM_WEBHOOK_SECRET) return res.status(503).json({ ok: false, error: 'telegram-webhook-secret-not-configured' });
-  const supplied = req.get('x-telegram-bot-api-secret-token') || '';
-  if (!supplied || !constantTimeEqual(supplied, TELEGRAM_WEBHOOK_SECRET)) return res.status(401).json({ ok: false });
-  try {
-    const msg = req.body?.message || req.body?.edited_message;
-    const contact = msg?.contact;
-    const senderId = Number(msg?.from?.id || 0);
-    const contactUserId = Number(contact?.user_id || 0);
-    const phone = String(contact?.phone_number || '').trim();
-    const normalizedPhone = normalizeTelegramPhoneNumber(phone);
-    if (senderId > 0 && contactUserId === senderId && normalizedPhone && phone.length <= 64) {
-      try {
-        await pool.query(`INSERT INTO telegram_contacts
-            (telegram_id, phone_number, phone_normalized, first_name, last_name, updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6)
-          ON CONFLICT (telegram_id) DO UPDATE SET
-            phone_number=EXCLUDED.phone_number,
-            phone_normalized=EXCLUDED.phone_normalized,
-            first_name=EXCLUDED.first_name,
-            last_name=EXCLUDED.last_name,
-            updated_at=EXCLUDED.updated_at`,
-          [senderId, phone, normalizedPhone, String(contact.first_name || '').slice(0,128), String(contact.last_name || '').slice(0,128), now()]);
-        await pool.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
-          VALUES ($1, 'accepted', $2) ON CONFLICT (telegram_id) DO UPDATE SET status='accepted', updated_at=EXCLUDED.updated_at`,
-          [senderId, now()]);
-        await pool.query('UPDATE users SET phone_number=$1, updated_at=$2 WHERE telegram_id=$3', [phone, now(), senderId]);
-      } catch (e) {
-        if (e.code === '23505') {
-          await pool.query(`INSERT INTO telegram_contact_attempts (telegram_id, status, updated_at)
-            VALUES ($1, 'phone-already-registered', $2)
-            ON CONFLICT (telegram_id) DO UPDATE SET status='phone-already-registered', updated_at=EXCLUDED.updated_at`,
-            [senderId, now()]);
-          return res.json({ ok: true, accepted: false, reason: 'phone-already-registered' });
-        }
-        throw e;
-      }
-    }
-    return res.json({ ok: true, accepted: true });
-  } catch (e) {
-    console.error('[TELEGRAM-CONTACT-WEBHOOK]', e.message);
-    return res.status(500).json({ ok: false });
-  }
-});
-
 // ─── FIX S3: route-level CORS headers handled by global middleware now ─────
 app.post('/api/telegram-contact/status', async (req, res) => {
   const verification = validateInitData(String(req.body?.initData || ''), 86400);
@@ -4413,18 +4453,23 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on 0.0.0.0:${PORT}`);
   console.log('ℹ️ New-user signup bonus is disabled.');
   
-  if (BOT_TOKEN) {
-    setupTelegramBot();
-    const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
-    const webhookUrl = `${publicUrl.replace(/\/$/, '')}/bot${BOT_TOKEN}`;
-    bot.setWebHook(webhookUrl)
-      .then(() => console.log(`✅ Telegram Webhook set to: ${webhookUrl}`))
-      .catch(err => console.error('❌ Failed to set Telegram webhook:', err.message));
-  }
-
   (async () => {
     try {
       await initDb();
+      if (BOT_TOKEN) {
+        setupTelegramBot();
+        if (!TELEGRAM_WEBHOOK_SECRET || !/^[A-Za-z0-9_-]{1,256}$/.test(TELEGRAM_WEBHOOK_SECRET)) {
+          console.error('[TELEGRAM WEBHOOK] Set TELEGRAM_WEBHOOK_SECRET to 1-256 characters using only letters, numbers, underscores or hyphens. Webhook registration skipped.');
+        } else {
+          const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+          const webhookUrl = `${publicUrl.replace(/\/$/, '')}/api/telegram/webhook`;
+          await bot.setWebHook(webhookUrl, {
+            secret_token: TELEGRAM_WEBHOOK_SECRET,
+            allowed_updates: ['message', 'edited_message', 'callback_query']
+          });
+          console.log(`✅ Telegram Webhook set to: ${webhookUrl}`);
+        }
+      }
       await restoreBingoRound();
       await loadRooms();
       startAutomaticDepositMonitor();
