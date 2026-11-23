@@ -280,8 +280,9 @@
             will-change: transform;
         }
         .circular-lock.unlocked .lock-shackle {
-            transform: translateX(-50%) translate(42%, -42%) rotate(38deg);
-            filter: brightness(1.12);
+            /* Lift straight upward: keep the shackle centered and upright. */
+            transform: translateX(-50%) translateY(-72%) rotate(0deg);
+            filter: brightness(1.16);
         }
         .lock-body {
             position: absolute; inset: 0; border-radius: 50%;
