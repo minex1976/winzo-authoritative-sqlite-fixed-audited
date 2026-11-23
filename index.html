@@ -239,61 +239,81 @@
         @media (max-height: 700px) { #usernameWalletItem { display: none !important; } }
 
         /* ===== NEW 3-DIAL CIRCULAR LOCK ANIMATION ===== */
-        .wheel-anim-overlay { 
-            position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center; 
-            background: radial-gradient(circle at center, #1e2c5a 0%, #0a0d18 100%);
-            padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; 
+        .wheel-anim-overlay {
+            position: fixed; inset: 0; z-index: 3500; display: none; align-items: center; justify-content: center;
+            background:
+                radial-gradient(ellipse at 50% 44%, rgba(42, 76, 150, .42) 0%, rgba(16, 29, 65, .35) 34%, transparent 66%),
+                radial-gradient(ellipse at 50% 52%, #17264b 0%, #0b142b 52%, #050914 100%);
+            padding: 16px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+        }
+        .wheel-anim-overlay::before {
+            content: ""; position: absolute; width: min(90vw, 560px); aspect-ratio: 1;
+            border-radius: 50%; border: 1px solid rgba(133, 177, 255, .10);
+            box-shadow: 0 0 70px rgba(68, 125, 255, .10), inset 0 0 70px rgba(68, 125, 255, .06);
+            pointer-events: none;
         }
         .wheel-anim-overlay.active { display: flex; }
-        .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        .wheel-anim-machine { position: relative; width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 20px; z-index: 1; }
 
         .circular-lock {
             position: relative;
-            width: 280px;
-            height: 280px;
-            margin-top: 30px;
-            filter: drop-shadow(0 15px 30px rgba(0,0,0,0.8));
+            width: clamp(280px, 72vw, 430px);
+            height: clamp(280px, 72vw, 430px);
+            margin-top: 48px;
+            filter: drop-shadow(0 22px 35px rgba(0,0,0,.72)) drop-shadow(0 0 24px rgba(74,130,255,.16));
+            isolation: isolate;
+        }
+        .circular-lock::before {
+            content: ""; position: absolute; inset: -12%; border-radius: 50%;
+            background: radial-gradient(circle, rgba(82,139,255,.20), rgba(41,83,171,.07) 48%, transparent 72%);
+            filter: blur(18px); z-index: -1; pointer-events: none;
         }
         .lock-shackle {
-            position: absolute;
-            width: 160px;
-            height: 130px;
-            top: -30px;
-            left: 50%;
-            transform: translateX(-50%);
-            border: 22px solid #d8dadd;
-            border-bottom: none;
-            border-radius: 90px 90px 0 0;
-            background: transparent;
-            z-index: 0;
-            box-shadow: inset 4px 4px 10px rgba(255,255,255,0.8), inset -4px -4px 12px rgba(0,0,0,0.6), 0 4px 10px rgba(0,0,0,0.5);
+            position: absolute; width: 57%; height: 47%; top: -11%; left: 50%;
+            transform: translateX(-50%) rotate(0deg); transform-origin: 50% 88%;
+            border: clamp(17px, 5.2vw, 25px) solid #dce4f2; border-bottom: none;
+            border-radius: 50% 50% 0 0; background: transparent; z-index: 0;
+            box-shadow: inset 5px 5px 12px rgba(255,255,255,.9), inset -5px 0 12px rgba(25,35,55,.55),
+                        3px 5px 12px rgba(0,0,0,.58), 0 0 12px rgba(206,224,255,.22);
+            transition: transform 850ms cubic-bezier(.2,.8,.2,1), filter 850ms ease;
+            will-change: transform;
+        }
+        .circular-lock.unlocked .lock-shackle {
+            transform: translateX(-50%) translate(42%, -42%) rotate(38deg);
+            filter: brightness(1.12);
         }
         .lock-body {
-            position: absolute;
-            inset: 0;
-            border-radius: 50%;
-            background: radial-gradient(circle at 35% 30%, #3a3d42 0%, #151618 50%, #080809 100%);
-            box-shadow: inset 0 4px 10px rgba(255,255,255,0.15), inset 0 -8px 20px rgba(0,0,0,0.9), 0 10px 25px rgba(0,0,0,0.7), 0 0 40px rgba(80, 140, 255, 0.3);
-            z-index: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            position: absolute; inset: 0; border-radius: 50%;
+            background:
+                radial-gradient(ellipse at 34% 24%, rgba(255,255,255,.12), transparent 27%),
+                radial-gradient(circle at 35% 30%, #454a54 0%, #242831 34%, #11151d 68%, #070a10 100%);
+            border: 1px solid rgba(220,232,255,.16);
+            box-shadow: inset 0 5px 13px rgba(255,255,255,.16), inset 0 -12px 26px rgba(0,0,0,.95),
+                        0 14px 30px rgba(0,0,0,.72), 0 0 45px rgba(80,140,255,.24);
+            z-index: 1; display: flex; justify-content: center; align-items: center;
+        }
+        .circular-lock.unlocked .lock-body {
+            box-shadow: inset 0 5px 13px rgba(255,255,255,.18), inset 0 -12px 26px rgba(0,0,0,.95),
+                        0 14px 30px rgba(0,0,0,.72), 0 0 58px rgba(105,169,255,.42);
+            transition: box-shadow 700ms ease;
         }
         .dial-window {
             position: relative;
-            width: 140px; /* Fits 3 dials perfectly */
-            height: 60px;
+            width: 50%;
+            height: 22%;
             background: #050505;
             border-radius: 10px;
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 4px;
-            box-shadow: inset 0 15px 20px rgba(0,0,0,0.95), inset 0 -15px 20px rgba(0,0,0,0.95), 0 2px 5px rgba(255,255,255,0.15);
+            box-shadow: inset 0 15px 20px rgba(0,0,0,0.95), inset 0 -15px 20px rgba(0,0,0,0.95), 0 0 0 2px rgba(0,0,0,.55), 0 4px 12px rgba(0,0,0,.65), 0 2px 5px rgba(255,255,255,0.18);
             z-index: 3;
         }
         .dial {
-            width: 40px;
+            flex: 1 1 0;
+            min-width: 0;
             height: 100%;
             position: relative;
             perspective: 800px; /* High perspective for parallel alignment */
@@ -335,10 +355,10 @@
         }
         .lock-latch {
             position: absolute;
-            bottom: 25px;
-            right: 45px;
-            width: 38px;
-            height: 16px;
+            bottom: 9%;
+            right: 16%;
+            width: 13.5%;
+            height: 5.7%;
             background: #111;
             border-radius: 4px;
             transform: rotate(-40deg);
@@ -2041,6 +2061,8 @@
                 }
             }
 
+            const lock = overlay.querySelector('.circular-lock');
+            if (lock) lock.classList.remove('unlocked');
             overlay.classList.add('active');
 
             // Reset all dials before each round so no previous rotation carries over.
@@ -2095,13 +2117,16 @@
                     strip.style.transform = `rotateX(${targetAngle}deg)`;
                 }
 
-                // Wait for the slowest dial to settle before removing the lock.
+                // Wait until every dial has fully settled, then unlock the shackle.
+                // Keep the winning digits visible while the shackle swings open.
                 setTimeout(() => {
                     stopWheelSpinSound();
+                    const lock = overlay.querySelector('.circular-lock');
+                    if (lock) lock.classList.add('unlocked');
                     setTimeout(() => {
                         overlay.classList.remove('active');
                         resolve();
-                    }, 400);
+                    }, 1050);
                 }, totalDuration + 100);
 
             }, 100);
@@ -2118,7 +2143,11 @@
             if (!started || (Date.now() - started) > 12000) {
                 wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
                 const ov = document.getElementById('wheelAnimOverlay');
-                if (ov) ov.classList.remove('active');
+                if (ov) {
+                    ov.classList.remove('active');
+                    const lock = ov.querySelector('.circular-lock');
+                    if (lock) lock.classList.remove('unlocked');
+                }
             }
         }
 
@@ -2187,7 +2216,11 @@
                 wheelAnimationPlaying = false; window._wheelAnimStartedAt = null;
                 stopWheelSpinSound();
                 const ov = document.getElementById('wheelAnimOverlay');
-                if (ov) ov.classList.remove('active');
+                if (ov) {
+                    ov.classList.remove('active');
+                    const lock = ov.querySelector('.circular-lock');
+                    if (lock) lock.classList.remove('unlocked');
+                }
             }
             return;
         }
