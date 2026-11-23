@@ -270,8 +270,11 @@
             filter: blur(18px); z-index: -1; pointer-events: none;
         }
         .lock-shackle {
-            position: absolute; width: 57%; height: 47%; top: -11%; left: 50%;
-            transform: translateX(-50%) rotate(0deg); transform-origin: 50% 88%;
+            position: absolute; width: 57%; height: 47%; top: -11%;
+            /* Place the shackle in its closed, centered position without a translate transform. */
+            left: 21.5%;
+            /* The lower-right tip is the fixed hinge: it must not drift when the shackle opens. */
+            transform: rotate(0deg); transform-origin: 100% 100%;
             border: clamp(17px, 5.2vw, 25px) solid #dce4f2; border-bottom: none;
             border-radius: 50% 50% 0 0; background: transparent; z-index: 0;
             box-shadow: inset 5px 5px 12px rgba(255,255,255,.9), inset -5px 0 12px rgba(25,35,55,.55),
@@ -280,8 +283,8 @@
             will-change: transform;
         }
         .circular-lock.unlocked .lock-shackle {
-            /* Lift straight upward: keep the shackle centered and upright. */
-            transform: translateX(-50%) translateY(-72%) rotate(0deg);
+            /* Rotate around the exact right-hand foot: right attachment stays fixed; left foot rises. */
+            transform: rotate(26deg);
             filter: brightness(1.16);
         }
         .lock-body {
