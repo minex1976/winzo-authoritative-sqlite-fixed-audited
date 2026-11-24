@@ -1333,12 +1333,12 @@ async function transactionRequest(uid, data) {
         try {
           await addNotification(uid, {
             type: 'fraud_flag',
-            message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`
+            message: '⚠️ Withdrawals are temporarily paused for identity verification. Please contact support.'
           });
         } catch (_) {}
         try {
           await sendBotDepositStatus(uid,
-            `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: <a href="https://t.me/winzo_help_center">@winzo_help_center</a>`);
+            `⚠️ *Withdrawal Paused*\n\nFor security reasons, we need to verify your account. Contact support: @winzo_help_center`);
         } catch (_) {}
         return { ok: false, reason: 'account-flagged', traceId };
       }
@@ -3960,6 +3960,76 @@ app.get('/admin/user-details', async (req, res) => {
       referrals: refsRes.rows.map(r => ({ uid: r.username, name: r.display_name }))
     }});
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Referral analytics for the admin dashboard. Read-only: this endpoint never
+// changes balances, referral attribution, or transaction records.
+app.get('/admin/analytics/referrals', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'admin-key-rejected' });
+  try {
+    const result = await pool.query(`
+      WITH referral_groups AS (
+        SELECT
+          referred_by AS referrer_uid,
+          COUNT(*)::int AS referral_count,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'uid', referred.username,
+                'name', COALESCE(NULLIF(referred.display_name, ''), referred.username),
+                'createdAt', COALESCE(referred.created_at, 0)
+              ) ORDER BY referred.created_at DESC NULLS LAST, referred.username ASC
+            ),
+            '[]'::json
+          ) AS referred
+        FROM users AS referred
+        WHERE referred.referred_by IS NOT NULL
+          AND BTRIM(referred.referred_by) <> ''
+        GROUP BY referred_by
+      )
+      SELECT
+        referrer.username AS uid,
+        COALESCE(NULLIF(referrer.display_name, ''), referrer.username) AS name,
+        COALESCE(groups.referral_count, 0)::int AS "referralCount",
+        COALESCE(referrer.referral_earnings, 0)::numeric AS "referralEarnings",
+        COALESCE(groups.referred, '[]'::json) AS referred
+      FROM users AS referrer
+      LEFT JOIN referral_groups AS groups
+        ON groups.referrer_uid = referrer.username
+      WHERE COALESCE(groups.referral_count, 0) > 0
+         OR COALESCE(referrer.referral_earnings, 0) > 0
+      ORDER BY COALESCE(groups.referral_count, 0) DESC,
+               COALESCE(referrer.referral_earnings, 0) DESC,
+               referrer.username ASC
+    `);
+
+    const referrers = result.rows.map(row => ({
+      uid: String(row.uid),
+      name: String(row.name || row.uid),
+      referralCount: Number(row.referralCount || 0),
+      referralEarnings: Number(row.referralEarnings || 0),
+      referred: Array.isArray(row.referred) ? row.referred.map(user => ({
+        uid: String(user.uid),
+        name: String(user.name || user.uid),
+        createdAt: Number(user.createdAt || 0)
+      })) : []
+    }));
+
+    const totals = referrers.reduce((acc, referrer) => {
+      acc.referrers += 1;
+      acc.referredUsers += referrer.referralCount;
+      acc.totalEarnings += referrer.referralEarnings;
+      return acc;
+    }, { referrers: 0, referredUsers: 0, totalEarnings: 0 });
+    totals.avgPerReferrer = totals.referrers
+      ? totals.totalEarnings / totals.referrers
+      : 0;
+
+    return res.json({ ok: true, totals, referrers });
+  } catch (e) {
+    console.error('[ADMIN/REFERRALS] Failed to load referral analytics:', e);
+    return res.status(500).json({ ok: false, error: 'referral-analytics-failed' });
+  }
 });
 
 app.post('/admin/block-user', async (req, res) => {
