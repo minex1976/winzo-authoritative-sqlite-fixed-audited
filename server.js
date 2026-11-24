@@ -393,7 +393,7 @@ function setupTelegramBot() {
               state.state = 'WAITING_FOR_SMS';
               botUserStates.set(chatId, state);
 
-              const instructions = `💵 ገንዘብ ገቢ ለማድረግ ቴሌብር ይጠቀሙ 💵: \n1ኛ - ከታች ባለው ቁጥር  ያስገቡ ።\n 👉<code>0923002900</code>👈  👤 Minyihun Mamo   \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉና ከስር 👇  ፔሰት (paste) አድርገው ወደኛ ይላኩ። `;
+              const instructions = `💵 ገንዘብ ገቢ ለማድረግ ቴሌብር ይጠቀሙ 💵: \n1ኛ - ከታች ባለው ቁጥር  ያስገቡ ።\n 👉<code>0974603773</code>👈  👤 Abraham Abebe   \n2ኛ - የላኩበትን የፅሁፍ መልእክት (SMS) ኮፒ ያድርጉና ከስር 👇  ፔሰት (paste) አድርገው ወደኛ ይላኩ። `;
               
               return safeBotSend(chatId, instructions, { parse_mode: 'HTML' });
           }
