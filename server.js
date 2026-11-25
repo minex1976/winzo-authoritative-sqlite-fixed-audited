@@ -667,6 +667,41 @@ async function initDb() {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bingo_entries_round_card ON bingo_entries(round_id, card_number);
       CREATE INDEX IF NOT EXISTS idx_bingo_results_user ON bingo_results(username, created_at DESC);
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reporting_accounts (
+        id VARCHAR(64) PRIMARY KEY,
+        username VARCHAR(32) NOT NULL UNIQUE,
+        display_name VARCHAR(100) NOT NULL,
+        password_salt VARCHAR(64) NOT NULL,
+        password_hash VARCHAR(128) NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+        failed_attempts INT NOT NULL DEFAULT 0,
+        locked_until BIGINT NOT NULL DEFAULT 0,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        last_login_at BIGINT
+      );
+      CREATE TABLE IF NOT EXISTS reporting_sessions (
+        token_hash VARCHAR(64) PRIMARY KEY,
+        account_id VARCHAR(64) NOT NULL REFERENCES reporting_accounts(id) ON DELETE CASCADE,
+        created_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        last_seen_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reporting_sessions_account ON reporting_sessions(account_id);
+      CREATE INDEX IF NOT EXISTS idx_reporting_sessions_expiry ON reporting_sessions(expires_at);
+      CREATE TABLE IF NOT EXISTS reporting_account_audit (
+        id VARCHAR(64) PRIMARY KEY,
+        username VARCHAR(32) NOT NULL,
+        event VARCHAR(64) NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ip_hash VARCHAR(64),
+        at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reporting_audit_username_at ON reporting_account_audit(username, at DESC);
+      CREATE INDEX IF NOT EXISTS idx_reporting_audit_at ON reporting_account_audit(at DESC);
+    `);
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed VARCHAR(128);`);
     await client.query(`ALTER TABLE bingo_rounds ADD COLUMN IF NOT EXISTS server_seed_hash VARCHAR(128);`);
 
@@ -740,6 +775,29 @@ function constantTimeEqual(a, b) {
   const aa = Buffer.from(String(a || ''));
   const bb = Buffer.from(String(b || ''));
   return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+
+// Reporting-account passwords use a memory-hard KDF; no plaintext passwords
+// or reusable shared reporting secret are stored by the server.
+function scryptReportingPassword(password, saltHex) {
+  const salt = saltHex ? Buffer.from(saltHex, 'hex') : crypto.randomBytes(16);
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(String(password), salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (err, derived) => {
+      if (err) return reject(err);
+      resolve({ salt: salt.toString('hex'), hash: derived.toString('hex') });
+    });
+  });
+}
+async function verifyReportingPassword(password, saltHex, expectedHashHex) {
+  const actual = await scryptReportingPassword(password, saltHex);
+  return constantTimeEqual(actual.hash, expectedHashHex);
+}
+function validReportingPassword(password) {
+  return typeof password === 'string' && password.length >= 12 && password.length <= 128;
+}
+function normalizeReportingUsername(value) {
+  return String(value || '').trim().toLowerCase();
 }
 function hashText(v) { return crypto.createHash('sha256').update(String(v)).digest('hex'); }
 function normalizedClientIp(ip) {
@@ -3526,7 +3584,7 @@ app.use((req, res, next) => {
   } else if (origin && WS_ALLOWED_ORIGINS.has(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, x-sms-secret, x-telegram-bot-api-secret-token');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Admin-Key, X-Session-Token, X-Accountant-Session, x-sms-secret, x-telegram-bot-api-secret-token');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   }
 
@@ -3713,6 +3771,293 @@ app.get('/readyz', (_, res) => {
 
 function isAdmin(req) { return ADMIN_KEY && constantTimeEqual(String(req.get('x-admin-key') || ''), ADMIN_KEY); }
 function sessionUid(req) { return verifySessionToken(req.get('x-session-token')); }
+
+
+const REPORTING_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const REPORTING_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const REPORTING_LOGIN_IP_MAX = 20;
+const reportingLoginIpAttempts = new Map();
+
+function reportingIpHash(req) {
+  const ip = normalizedClientIp(req.ip || req.socket?.remoteAddress || 'unknown');
+  return hashText(`reporting-ip|${SESSION_SECRET}|${ip}`);
+}
+async function auditReportingAccount(username, event, req, details = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO reporting_account_audit (id, username, event, details, ip_hash, at)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6)`,
+      [crypto.randomUUID(), String(username || 'unknown').slice(0, 32), String(event).slice(0, 64), JSON.stringify(details || {}), reportingIpHash(req), now()]
+    );
+  } catch (e) { console.error('[REPORTING-AUDIT]', e.message); }
+}
+function checkReportingLoginIp(req) {
+  const key = reportingIpHash(req);
+  const cutoff = now() - REPORTING_LOGIN_WINDOW_MS;
+  const recent = (reportingLoginIpAttempts.get(key) || []).filter(t => t > cutoff);
+  if (recent.length >= REPORTING_LOGIN_IP_MAX) return false;
+  recent.push(now());
+  reportingLoginIpAttempts.set(key, recent);
+  if (reportingLoginIpAttempts.size > 5000) {
+    for (const [k, values] of reportingLoginIpAttempts) {
+      const fresh = values.filter(t => t > cutoff);
+      if (fresh.length) reportingLoginIpAttempts.set(k, fresh);
+      else reportingLoginIpAttempts.delete(k);
+    }
+  }
+  return true;
+}
+async function reportingAccountFromRequest(req) {
+  const token = String(req.get('x-accountant-session') || '').trim();
+  if (!token || token.length > 256) return null;
+  const tokenHash = hashText(token);
+  const result = await pool.query(
+    `SELECT a.id, a.username, a.display_name, a.must_change_password
+       FROM reporting_sessions s
+       JOIN reporting_accounts a ON a.id = s.account_id
+      WHERE s.token_hash = $1 AND s.expires_at > $2 AND a.active = TRUE
+      LIMIT 1`,
+    [tokenHash, now()]
+  );
+  if (!result.rows.length) return null;
+  await pool.query('UPDATE reporting_sessions SET last_seen_at = $1 WHERE token_hash = $2', [now(), tokenHash]);
+  return { ...result.rows[0], tokenHash };
+}
+async function reportingReadAuth(req, res, next) {
+  if (isAdmin(req)) return next();
+  try {
+    const account = await reportingAccountFromRequest(req);
+    if (!account) return res.status(403).json({ ok: false, error: 'reporting-login-required' });
+    if (account.must_change_password) return res.status(403).json({ ok: false, error: 'password-change-required' });
+    req.reportingAccount = account;
+    await auditReportingAccount(account.username, 'report.access', req, { path: req.path });
+    return next();
+  } catch (e) {
+    console.error('[REPORTING-AUTH]', e.message);
+    return res.status(503).json({ ok: false, error: 'reporting-auth-unavailable' });
+  }
+}
+
+// Accountant login. The opaque session token is stored only as a SHA-256 hash.
+app.post('/accountant/login', async (req, res) => {
+  const username = normalizeReportingUsername(req.body?.username);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!checkReportingLoginIp(req)) return res.status(429).json({ ok: false, error: 'too-many-login-attempts' });
+  if (!/^[a-z0-9._-]{3,32}$/.test(username) || !password || password.length > 128) {
+    return res.status(401).json({ ok: false, error: 'invalid-credentials' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, username, display_name, password_salt, password_hash, active,
+              must_change_password, failed_attempts, locked_until
+         FROM reporting_accounts WHERE username = $1 LIMIT 1`, [username]
+    );
+    const account = result.rows[0];
+    if (!account || !account.active) {
+      await auditReportingAccount(username, 'login.failed', req, { reason: 'invalid-credentials' });
+      return res.status(401).json({ ok: false, error: 'invalid-credentials' });
+    }
+    if (Number(account.locked_until || 0) > now()) {
+      await auditReportingAccount(username, 'login.blocked', req, { reason: 'temporary-lock' });
+      return res.status(429).json({ ok: false, error: 'temporarily-locked' });
+    }
+    const valid = await verifyReportingPassword(password, account.password_salt, account.password_hash);
+    if (!valid) {
+      const lockUntil = now() + 15 * 60 * 1000;
+      await pool.query(
+        `UPDATE reporting_accounts
+            SET failed_attempts = failed_attempts + 1,
+                locked_until = CASE WHEN failed_attempts + 1 >= 5 THEN $1 ELSE locked_until END,
+                updated_at = $2
+          WHERE id = $3`, [lockUntil, now(), account.id]
+      );
+      await auditReportingAccount(username, 'login.failed', req, { reason: 'invalid-credentials' });
+      return res.status(401).json({ ok: false, error: 'invalid-credentials' });
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    const createdAt = now();
+    const expiresAt = createdAt + REPORTING_SESSION_TTL_MS;
+    await pool.query(
+      `UPDATE reporting_accounts SET failed_attempts = 0, locked_until = 0, last_login_at = $1, updated_at = $1 WHERE id = $2`,
+      [createdAt, account.id]
+    );
+    await pool.query(
+      `INSERT INTO reporting_sessions (token_hash, account_id, created_at, expires_at, last_seen_at)
+       VALUES ($1,$2,$3,$4,$3)`, [hashText(token), account.id, createdAt, expiresAt]
+    );
+    await pool.query('DELETE FROM reporting_sessions WHERE expires_at <= $1', [createdAt]);
+    await auditReportingAccount(username, 'login.success', req);
+    return res.json({
+      ok: true, sessionToken: token, expiresAt,
+      account: { username: account.username, displayName: account.display_name, mustChangePassword: !!account.must_change_password }
+    });
+  } catch (e) {
+    console.error('[ACCOUNTANT-LOGIN]', e);
+    return res.status(500).json({ ok: false, error: 'login-failed' });
+  }
+});
+
+app.get('/accountant/me', async (req, res) => {
+  try {
+    const account = await reportingAccountFromRequest(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'session-expired' });
+    return res.json({ ok: true, account: { username: account.username, displayName: account.display_name, mustChangePassword: !!account.must_change_password } });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'account-check-failed' }); }
+});
+
+app.post('/accountant/logout', async (req, res) => {
+  const token = String(req.get('x-accountant-session') || '').trim();
+  if (token) {
+    try {
+      const tokenHash = hashText(token);
+      const account = await pool.query(
+        `SELECT a.username FROM reporting_sessions s JOIN reporting_accounts a ON a.id=s.account_id WHERE s.token_hash=$1 LIMIT 1`, [tokenHash]
+      );
+      await pool.query('DELETE FROM reporting_sessions WHERE token_hash = $1', [tokenHash]);
+      if (account.rows[0]) await auditReportingAccount(account.rows[0].username, 'logout', req);
+    } catch (e) { console.error('[ACCOUNTANT-LOGOUT]', e.message); }
+  }
+  return res.json({ ok: true });
+});
+
+app.post('/accountant/change-password', async (req, res) => {
+  const account = await reportingAccountFromRequest(req).catch(() => null);
+  if (!account) return res.status(401).json({ ok: false, error: 'session-expired' });
+  const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+  if (!validReportingPassword(newPassword)) return res.status(400).json({ ok: false, error: 'password-must-be-12-to-128-characters' });
+  try {
+    const current = await pool.query('SELECT password_salt, password_hash FROM reporting_accounts WHERE id=$1 AND active=TRUE', [account.id]);
+    if (!current.rows.length || !(await verifyReportingPassword(currentPassword, current.rows[0].password_salt, current.rows[0].password_hash))) {
+      return res.status(400).json({ ok: false, error: 'current-password-incorrect' });
+    }
+    const nextHash = await scryptReportingPassword(newPassword);
+    await pool.query(
+      `UPDATE reporting_accounts SET password_salt=$1, password_hash=$2, must_change_password=FALSE,
+              failed_attempts=0, locked_until=0, updated_at=$3 WHERE id=$4`,
+      [nextHash.salt, nextHash.hash, now(), account.id]
+    );
+    await pool.query('DELETE FROM reporting_sessions WHERE account_id=$1 AND token_hash<>$2', [account.id, account.tokenHash]);
+    await auditReportingAccount(account.username, 'password.changed', req);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[ACCOUNTANT-PASSWORD-CHANGE]', e.message);
+    return res.status(500).json({ ok: false, error: 'password-change-failed' });
+  }
+});
+
+// Full administrators alone can create, reset, deactivate/reactivate, or remove
+// accountant accounts. These records are separate from player accounts/wallets.
+app.get('/admin/reporting-accounts', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  try {
+    const r = await pool.query(
+      `SELECT id, username, display_name, active, must_change_password, created_at, updated_at, last_login_at
+         FROM reporting_accounts ORDER BY created_at DESC, username ASC`
+    );
+    return res.json({ ok: true, accounts: r.rows.map(a => ({
+      id: a.id, username: a.username, displayName: a.display_name, active: !!a.active,
+      mustChangePassword: !!a.must_change_password, createdAt: Number(a.created_at),
+      updatedAt: Number(a.updated_at), lastLoginAt: a.last_login_at == null ? null : Number(a.last_login_at)
+    })) });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'account-list-failed' }); }
+});
+
+app.post('/admin/reporting-accounts', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const username = normalizeReportingUsername(req.body?.username);
+  const displayName = String(req.body?.displayName || '').trim().slice(0, 100) || username;
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) return res.status(400).json({ ok: false, error: 'username-must-be-3-to-32-valid-characters' });
+  if (!validReportingPassword(password)) return res.status(400).json({ ok: false, error: 'password-must-be-12-to-128-characters' });
+  try {
+    const hash = await scryptReportingPassword(password);
+    const id = crypto.randomUUID();
+    const t = now();
+    const r = await pool.query(
+      `INSERT INTO reporting_accounts (id, username, display_name, password_salt, password_hash, active, must_change_password, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,TRUE,TRUE,$6,$6) ON CONFLICT (username) DO NOTHING RETURNING id, username, display_name, active, created_at`,
+      [id, username, displayName, hash.salt, hash.hash, t]
+    );
+    if (!r.rows.length) return res.status(409).json({ ok: false, error: 'username-already-exists' });
+    await auditReportingAccount(username, 'account.created', req, { by: 'admin' });
+    return res.status(201).json({ ok: true, account: { id, username, displayName, active: true, createdAt: t } });
+  } catch (e) {
+    console.error('[REPORTING-ACCOUNT-CREATE]', e.message);
+    return res.status(500).json({ ok: false, error: 'account-create-failed' });
+  }
+});
+
+app.post('/admin/reporting-accounts/:id/reset-password', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!validReportingPassword(password)) return res.status(400).json({ ok: false, error: 'password-must-be-12-to-128-characters' });
+  const client = await pool.connect();
+  try {
+    const hash = await scryptReportingPassword(password);
+    await client.query('BEGIN');
+    const r = await client.query(
+      `UPDATE reporting_accounts SET password_salt=$1, password_hash=$2, must_change_password=TRUE,
+              failed_attempts=0, locked_until=0, updated_at=$3 WHERE id=$4 RETURNING username`,
+      [hash.salt, hash.hash, now(), String(req.params.id)]
+    );
+    if (!r.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'account-not-found' }); }
+    await client.query('DELETE FROM reporting_sessions WHERE account_id=$1', [String(req.params.id)]);
+    await client.query(
+      `INSERT INTO reporting_account_audit (id, username, event, details, ip_hash, at) VALUES ($1,$2,'password.reset','{"by":"admin"}'::jsonb,$3,$4)`,
+      [crypto.randomUUID(), r.rows[0].username, reportingIpHash(req), now()]
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true, requirePasswordChange: true, sessionsRevoked: true });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('[REPORTING-PASSWORD-RESET]', e.message);
+    return res.status(500).json({ ok: false, error: 'password-reset-failed' });
+  } finally { client.release(); }
+});
+
+app.post('/admin/reporting-accounts/:id/status', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const active = req.body?.active === true;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query('UPDATE reporting_accounts SET active=$1, updated_at=$2 WHERE id=$3 RETURNING username', [active, now(), String(req.params.id)]);
+    if (!r.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'account-not-found' }); }
+    if (!active) await client.query('DELETE FROM reporting_sessions WHERE account_id=$1', [String(req.params.id)]);
+    await client.query(
+      `INSERT INTO reporting_account_audit (id, username, event, details, ip_hash, at) VALUES ($1,$2,$3,$4::jsonb,$5,$6)`,
+      [crypto.randomUUID(), r.rows[0].username, active ? 'account.activated' : 'account.deactivated', JSON.stringify({ by: 'admin' }), reportingIpHash(req), now()]
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true, active, sessionsRevoked: !active });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('[REPORTING-ACCOUNT-STATUS]', e.message);
+    return res.status(500).json({ ok: false, error: 'account-status-failed' });
+  } finally { client.release(); }
+});
+
+app.delete('/admin/reporting-accounts/:id', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query('SELECT username FROM reporting_accounts WHERE id=$1 FOR UPDATE', [String(req.params.id)]);
+    if (!r.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'account-not-found' }); }
+    await client.query(
+      `INSERT INTO reporting_account_audit (id, username, event, details, ip_hash, at) VALUES ($1,$2,'account.deleted','{"by":"admin"}'::jsonb,$3,$4)`,
+      [crypto.randomUUID(), r.rows[0].username, reportingIpHash(req), now()]
+    );
+    await client.query('DELETE FROM reporting_accounts WHERE id=$1', [String(req.params.id)]);
+    await client.query('COMMIT');
+    return res.json({ ok: true, removed: true });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('[REPORTING-ACCOUNT-DELETE]', e.message);
+    return res.status(500).json({ ok: false, error: 'account-delete-failed' });
+  } finally { client.release(); }
+});
 
 app.get('/user/notifications', async (req, res) => {
   const uid = sessionUid(req);
@@ -3964,8 +4309,7 @@ app.get('/admin/user-details', async (req, res) => {
 
 // Referral analytics for the admin dashboard. Read-only: this endpoint never
 // changes balances, referral attribution, or transaction records.
-app.get('/admin/analytics/referrals', async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ ok: false, error: 'admin-key-rejected' });
+app.get('/admin/analytics/referrals', reportingReadAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       WITH referral_groups AS (
@@ -4158,8 +4502,7 @@ function dayRangeToMs(fromDate, toDate) {
   return { startMs, endMs };
 }
 
-app.get('/admin/analytics/games', async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+app.get('/admin/analytics/games', reportingReadAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').trim(), to = String(req.query.to || '').trim(), room = String(req.query.room || 'both').trim();
     const rng = dayRangeToMs(from, to);
