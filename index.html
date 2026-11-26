@@ -261,19 +261,32 @@
             top: -30px;
             left: 50%;
             transform: translateX(-50%);
-            border: 22px solid #d8dadd;
+            border: 22px solid transparent;
             border-bottom: none;
             border-radius: 90px 90px 0 0;
             background: transparent;
             z-index: 0;
-            box-shadow: inset 4px 4px 10px rgba(255,255,255,0.8), inset -4px -4px 12px rgba(0,0,0,0.6), 0 4px 10px rgba(0,0,0,0.5);
+            /* Polished silver steel with bright edge reflections and dark metal sides. */
+            border-top-color: #f7f9fc;
+            border-left-color: #dfe5ed;
+            border-right-color: #8b929d;
+            box-shadow: inset 5px 3px 8px rgba(255,255,255,0.95), inset -5px -2px 8px rgba(35,42,54,0.55), 0 3px 5px rgba(0,0,0,0.45), 0 0 12px rgba(230,238,250,0.22);
         }
         .lock-body {
             position: absolute;
             inset: 0;
             border-radius: 50%;
-            background: radial-gradient(circle at 35% 30%, #3a3d42 0%, #151618 50%, #080809 100%);
-            box-shadow: inset 0 4px 10px rgba(255,255,255,0.15), inset 0 -8px 20px rgba(0,0,0,0.9), 0 10px 25px rgba(0,0,0,0.7), 0 0 40px rgba(80, 140, 255, 0.3);
+            /* Rich polished gold: bright upper-left reflection, warm mid-gold, and deep bronze edges. */
+            background:
+                radial-gradient(ellipse at 29% 18%, rgba(255,255,225,0.88) 0%, rgba(255,239,160,0.38) 13%, transparent 34%),
+                radial-gradient(ellipse at 72% 82%, rgba(105,55,4,0.48) 0%, transparent 42%),
+                radial-gradient(circle at 35% 28%, #fff0a3 0%, #f6cf52 20%, #d99a18 46%, #a96508 72%, #603605 100%);
+            box-shadow:
+                inset 0 5px 10px rgba(255,255,235,0.72),
+                inset 8px 2px 18px rgba(255,236,150,0.38),
+                inset -10px -14px 25px rgba(65,35,0,0.72),
+                0 10px 25px rgba(0,0,0,0.7),
+                0 0 34px rgba(255,190,45,0.28);
             z-index: 1;
             display: flex;
             justify-content: center;
@@ -4517,7 +4530,7 @@
         if (referralBtn) referralBtn.onclick = openReferralModal;
         if (customerServiceBtn) customerServiceBtn.onclick = () => {
             closeMoreDropdown();
-            const url = 'https://t.me/winzosupport_center';
+            const url = 'https://t.me/winzo_help_center';
             if (tg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
         };
         if (referralCloseBtn) referralCloseBtn.onclick = () => { if (referralModal) referralModal.classList.remove('active'); };
