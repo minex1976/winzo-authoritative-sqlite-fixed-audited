@@ -74,8 +74,6 @@
         #gameScreen { display: none; flex-direction: column; height: 100%; min-height: 0; flex: 1 1 auto; overflow: hidden; }
         .title { text-align: center; font-weight: 800; font-size: 1.1rem; letter-spacing: 3px; color: #f0e6ff; line-height: 1.2; flex-shrink: 0; margin-bottom: 2px; }
         .title small { font-size: 0.45rem; letter-spacing: 2px; opacity: 0.6; display: block; font-weight: 400; color: #b8a0d0; }
-        .bet-switcher { display: flex; justify-content: center; align-items: center; gap: 8px; background: rgba(20, 10, 40, 0.5); border-radius: 10px; padding: 3px 12px; margin: 2px 0 3px; border: 1px solid rgba(120, 80, 200, 0.1); flex-shrink: 0; }
-        .switch-room-btn { background: linear-gradient(135deg, #ffdf6b, #f5b52e 52%, #d98a16) !important; border: 2px solid #ffcc44 !important; border-radius: 20px !important; padding: 3px 18px !important; color: #2a1600 !important; font-size: 0.75rem !important; font-weight: 800 !important; cursor: pointer; }
 
         .game-info-bar { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(20, 110, 40, 0.5); border-radius: 10px; padding: 4px 10px; margin: 2px 0 3px; border: 2px solid rgba(180, 120, 255, 1); flex-shrink: 0; min-height: 36px; box-sizing: border-box; }
         .game-info-bar .info-item { display: flex; align-items: center; gap: 4px; color: #b8a0d0; font-size: 0.7rem; font-weight: 600; position: relative; }
@@ -954,9 +952,6 @@
 
         <div id="gameScreen">
             <div class="title">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆<small id="modeLabel">15 Birr</small></div>
-            <div class="bet-switcher">
-                <button class="bet-btn switch-room-btn" id="switchRoomBtn"> Switch Room</button>
-            </div>
             <div class="wallet-bar">
                 <div class="wallet-left">
                     <div class="wallet-item" id="usernameWalletItem"><span class="label">👤</span><span class="username" id="walletUsername">User</span></div>
@@ -1627,7 +1622,7 @@
     const authLoginBtn = $('authLoginBtn'); const authSignupBtn = $('authSignupBtn'); const authStatus = $('authStatus');
     const telegramInfo = $('telegramInfo'); const bet15Btn = $('bet15Btn'); const bet30Btn = $('bet30Btn');
     const welcomeBalance = $('welcomeBalance'); const welcomeLogoutBtn = $('welcomeLogoutBtn'); const welcomeDepositBtn = $('welcomeDepositBtn');
-    const switchRoomBtn = $('switchRoomBtn'); const referralBtn = $('referralBtn'); const customerServiceBtn = $('customerServiceBtn');
+    const referralBtn = $('referralBtn'); const customerServiceBtn = $('customerServiceBtn');
     const reconnectBtn = $('reconnectBtn');
     const referralModal = $('referralModal'); const referralLink = $('referralLink'); const referralShareBtn = $('referralShareBtn');
     const referralCopyBtn = $('referralCopyBtn'); const referralCloseBtn = $('referralCloseBtn');
@@ -4521,10 +4516,6 @@
                 if (!isNaN(num) && num > 0) transferToPlay(num);
                 else alert('Please enter a valid positive number.');
             }
-            closeMoreDropdown();
-        };
-        if (switchRoomBtn) switchRoomBtn.onclick = function() {
-            if (currentUser) switchRoom(); else showWelcomeScreen();
             closeMoreDropdown();
         };
         if (referralBtn) referralBtn.onclick = openReferralModal;
