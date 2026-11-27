@@ -1281,15 +1281,19 @@
     function captureReferralCode() {
         try {
             const urlParams = new URLSearchParams(window.location.search);
-            let ref = urlParams.get('ref') || urlParams.get('start') || null;
+            let ref = urlParams.get('ref') || urlParams.get('startapp') || urlParams.get('start') || null;
             if (!ref && tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) ref = tg.initDataUnsafe.start_param;
-            if (ref && ref.indexOf('ref_') === 0) ref = ref.slice(4);
             if (ref) {
-                ref = decodeURIComponent(ref).replace(/^@/, '').trim();
-                if (/^[A-Za-z0-9_]{1,32}$/.test(ref)) { pendingReferralCode = ref; localStorage.setItem('winzo_pending_referral', ref); }
+                try { ref = decodeURIComponent(ref); } catch (_) {}
+                ref = String(ref).replace(/^ref_/, '').replace(/^@/, '').trim();
+                // Referral IDs are canonical Telegram IDs or legacy usernames.
+                if (/^(tg_\d{1,20}|[A-Za-z0-9_]{1,32})$/.test(ref)) {
+                    pendingReferralCode = ref;
+                    localStorage.setItem('winzo_pending_referral', ref);
+                }
             } else if (!pendingReferralCode) {
                 const saved = localStorage.getItem('winzo_pending_referral');
-                if (saved && /^[A-Za-z0-9_]{1,32}$/.test(saved)) pendingReferralCode = saved;
+                if (saved && /^(tg_\d{1,20}|[A-Za-z0-9_]{1,32})$/.test(saved)) pendingReferralCode = saved;
             }
         } catch (e) {}
     }
@@ -2889,7 +2893,9 @@
     }
     function openReferralModal() {
         if (!currentUser) return;
-        const link = `${TELEGRAM_BOT_LINK}?startapp=ref_${encodeURIComponent(currentUser)}`;
+        const refIdentity = (telegramUser && telegramUser.id) || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id);
+        const refCode = refIdentity ? `tg_${refIdentity}` : currentUser;
+        const link = `${TELEGRAM_BOT_LINK}?startapp=ref_${encodeURIComponent(refCode)}`;
         if (referralLink) referralLink.value = link;
         if (referralModal) referralModal.classList.add('active');
         closeMoreDropdown();
@@ -3178,6 +3184,9 @@
             this.ws.onmessage = ev => {
                 let m; try { m = JSON.parse(ev.data); } catch { return; }
                 if (m.type === 'authed') {
+                    if (this.authMode === 'signup') {
+                        try { localStorage.removeItem('winzo_pending_referral'); pendingReferralCode = null; } catch (_) {}
+                    }
                     this.authenticated = true;
                     this.everAuthenticated = true;
                     this._authFailureNotified = false;
