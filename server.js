@@ -1087,8 +1087,10 @@ async function detectMultiAccount(username, ipOrHash = null, fingerprint = null)
 // USER MANAGEMENT  (ENHANCED: signal recording on IP/FP change)
 // ============================================================================
 async function resolveReferralUid(referralCode, newUserUid) {
-  const code = safeUid(referralCode);
+  const suppliedCode = safeUid(referralCode);
   const newUid = safeUid(newUserUid);
+  // Accept both ref_tg_<id> and tg_<id>, resolving them to the same UID.
+  const code = suppliedCode ? suppliedCode.replace(/^ref_(tg_\d{1,20})$/, '$1') : '';
   if (!code || !newUid || code === newUid) return null;
   // Telegram referral links use stable numeric Telegram IDs (tg_<id>), not
   // mutable @usernames. Resolve legacy IDs to the account's canonical UID.
