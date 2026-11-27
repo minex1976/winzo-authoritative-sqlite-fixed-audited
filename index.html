@@ -423,45 +423,36 @@
         #winzoUserEventModal .wue-ok:active { transform: scale(.96); }
         #winzoUserEventModal .wue-ok:focus { outline: 2px solid #f0abfc; outline-offset: 3px; }
 
-        .game-chooser-screen{display:flex;flex-direction:column;justify-content:flex-start;gap:clamp(10px,2vh,18px);padding:clamp(12px,3vh,26px) 10px 16px;flex:1;min-height:0;color:#f5edff;overflow-y:auto;}
-        .chooser-topbar{display:flex;align-items:center;justify-content:center;gap:8px;position:relative;z-index:120;min-height:0;flex-shrink:0}
-        .chooser-topbar .chooser-logo{flex:1;text-align:center;margin-bottom:0;padding-left:0}
-        .chooser-more-wrapper{margin-top:4px}
-        .more-btn.chooser-options-btn{width:auto;height:auto;min-height:36px;padding:0 13px;border-radius:12px;border:1px solid rgba(255,204,68,.55);background:linear-gradient(135deg,rgba(120,80,200,.45),rgba(50,30,90,.9));color:#ffdf78;font-size:.78rem;letter-spacing:.3px}
-        .chooser-more-dropdown{top:calc(100% + 8px);min-width:190px;max-height:70vh;overflow-y:auto;z-index:300}
-        .chooser-logo{text-align:center;margin-bottom:0;width:100%}.chooser-crown{font-size:clamp(1.8rem,5vh,2.7rem);line-height:1;filter:drop-shadow(0 0 15px #a36aff)}.chooser-logo h1{font-size:clamp(1.55rem,5vw,2rem);letter-spacing:clamp(1px,.6vw,3px);font-weight:900;line-height:1.15;white-space:nowrap}.chooser-logo h1 span{color:#ffcc44}.chooser-logo p{color:#b9a7d7;font-size:.8rem;margin-top:5px}
-        .game-choice{display:flex;align-items:center;gap:14px;text-align:left;width:100%;padding:clamp(13px,2.5vh,20px) 16px;border-radius:22px;border:1px solid rgba(210,180,255,.35);color:#fff;cursor:pointer;box-shadow:0 9px 22px #07041466;transition:transform .15s,border-color .15s}.game-choice:active{transform:scale(.98)}.spin-choice{background:linear-gradient(120deg,#4a237b,#211b4d)}.bingo-choice{background:linear-gradient(120deg,#753b14,#39204e)}.game-choice:hover{border-color:#ffcc44}.choice-icon{font-size:clamp(1.8rem,5vh,2.3rem)}.choice-copy{display:flex;flex-direction:column;gap:5px;flex:1}.choice-copy strong{font-size:clamp(1rem,3.5vw,1.15rem)}.choice-copy small{font-size:.75rem;color:#e0d4f5}.choice-arrow{font-size:2rem;color:#ffcc44}.chooser-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#cbb9e5;font-size:.75rem;margin-top:8px}
-        .ladder-choice{background:linear-gradient(120deg,#173d59,#30204e);border:1px solid rgba(255,204,68,.5);position:relative;overflow:hidden}.ladder-choice .choice-copy small{color:#ffdf86}.coming-soon-pill{font-size:.58rem;letter-spacing:.7px;font-weight:900;color:#211331;background:linear-gradient(120deg,#ffe58a,#ffb52e);border-radius:20px;padding:4px 7px;white-space:nowrap}.ladder-choice .choice-arrow{font-size:1.5rem}
-        .ladder-ad-overlay{position:fixed;inset:0;z-index:2147483605;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(5,7,22,.88);backdrop-filter:blur(7px)}.ladder-ad-overlay.active{display:flex;animation:ladderAdFade .18s ease-out}.ladder-ad-card{width:min(360px,100%);padding:28px 20px;border-radius:26px;text-align:center;border:2px solid #ffcf58;background:linear-gradient(145deg,#43206c,#152747);box-shadow:0 0 36px rgba(255,204,68,.25);animation:ladderAdPop .35s cubic-bezier(.34,1.56,.64,1)}.ladder-ad-icon{font-size:3rem;margin-bottom:8px}.ladder-ad-title{font-size:1.35rem;font-weight:900;color:#ffcf58;letter-spacing:1px;margin-bottom:10px}.ladder-ad-message{font-size:1.05rem;line-height:1.5;color:#fff;margin-bottom:18px;font-weight:800}.ladder-ad-close{border:0;border-radius:24px;padding:10px 30px;background:linear-gradient(120deg,#ffdf6b,#f5a623);color:#261638;font-weight:900;font-size:.9rem}@keyframes ladderAdFade{from{opacity:0}to{opacity:1}}@keyframes ladderAdPop{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:scale(1)}}
-        @media(max-height:650px){.game-chooser-screen{gap:8px;padding-top:8px}.chooser-logo p{margin-top:3px}.game-choice{padding:10px 13px}.chooser-footer{margin-top:2px}}
 
-        /* Premium three-game chooser: featured Pick-Win + two compact games */
-        #gameChooserScreen.game-chooser-screen{gap:clamp(8px,1.5vh,14px);padding:clamp(8px,1.7vh,16px) 8px 10px;overflow-y:auto;}
-        #gameChooserScreen .chooser-topbar{display:none!important;}
-        .chooser-featured{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;flex:1 1 auto;min-height:390px;max-height:650px;width:100%;padding:clamp(9px,1.5vh,15px) 10px 12px;border:2px solid #ffd34f;border-radius:28px;overflow:hidden;cursor:pointer;color:#fff;background:radial-gradient(ellipse at 50% 34%,#7620bd 0%,#351078 48%,#170d43 100%);box-shadow:0 0 12px #ffcf4d,0 0 32px #a52dff88,inset 0 0 30px #ffcf4d22;isolation:isolate;}
-        .chooser-featured:before{content:"";position:absolute;inset:-40%;z-index:-1;background:repeating-conic-gradient(from 0deg at 50% 45%,#ffffff0b 0deg 8deg,transparent 8deg 18deg);animation:pickWinRays 36s linear infinite;}
-        .chooser-featured:after{content:"";position:absolute;left:8%;right:8%;top:23%;height:35%;border:3px solid transparent;border-top-color:#ffe46c;border-bottom-color:#ffb52e;border-radius:50%;transform:rotate(-9deg);filter:drop-shadow(0 0 8px #ffca43);animation:pickWinOrbit 7s ease-in-out infinite;pointer-events:none;z-index:-1;}
-        @keyframes pickWinRays{to{transform:rotate(360deg)}}@keyframes pickWinOrbit{0%,100%{transform:rotate(-9deg) scaleX(1)}50%{transform:rotate(7deg) scaleX(.94)}}
-        .pickwin-orb-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:min(78%,330px);height:clamp(175px,31vh,310px);flex:0 1 auto;z-index:1;}
-        .pickwin-orb{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 8px 20px #0009);animation:pickWinFloat 3.6s ease-in-out infinite;}
-        @keyframes pickWinFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-7px) scale(1.025)}}
-        .pickwin-ribbon{position:relative;z-index:2;margin-top:-2px;padding:8px 26px;min-width:75%;text-align:center;color:#452006;font-size:clamp(.9rem,3.7vw,1.2rem);font-weight:1000;letter-spacing:1.2px;background:linear-gradient(180deg,#fff29a 0%,#ffc52e 45%,#e88b00 100%);border:2px solid #fff0a2;border-radius:8px;box-shadow:0 4px 0 #9c5200,0 0 18px #ffcf4f;transform:rotate(-1deg);animation:pickWinRibbonGlow 2.4s ease-in-out infinite;}
-        @keyframes pickWinRibbonGlow{0%,100%{filter:brightness(1);box-shadow:0 4px 0 #9c5200,0 0 12px #ffcf4f}50%{filter:brightness(1.16);box-shadow:0 4px 0 #9c5200,0 0 25px #fff08a}}
-        .pickwin-title{position:relative;z-index:2;margin-top:clamp(8px,1.5vh,15px);font-size:clamp(1.65rem,7vw,2.55rem);line-height:1.04;font-weight:1000;font-style:italic;letter-spacing:-1px;text-align:center;text-shadow:0 3px 0 #321044,0 0 16px #ffcf4f88;white-space:nowrap;}
-        .pickwin-title span{color:#ffd23e;text-shadow:0 2px 0 #8b4800,0 0 15px #ffc52e88;}
-        .pickwin-tagline{position:relative;z-index:2;margin-top:8px;padding:6px 8px;width:100%;border-top:1px solid #ffce4d99;text-align:center;color:#fff4ff;font-size:clamp(.78rem,3.2vw,.98rem);font-weight:800;font-style:italic;text-shadow:0 2px 6px #000;}
-        .chooser-secondary-games{display:grid;grid-template-columns:1fr 1fr;gap:clamp(8px,2vw,13px);flex:0 0 auto;min-height:clamp(190px,29vh,275px);}
-        .chooser-secondary-games .game-choice{position:relative;min-width:0;min-height:0;padding:10px 7px 12px;border:2px solid #ffd34f;border-radius:22px;display:flex;flex-direction:column;justify-content:space-between;align-items:center;text-align:center;gap:6px;background:radial-gradient(ellipse at 50% 25%,#7022bb 0%,#351078 55%,#170d43 100%);box-shadow:0 0 10px #ffcf4d66,inset 0 0 18px #ffffff12;overflow:hidden;}
-        .chooser-secondary-games .game-choice:before{content:"";position:absolute;inset:0;background:repeating-conic-gradient(from 0deg at 50% 40%,#ffffff0a 0deg 9deg,transparent 9deg 20deg);pointer-events:none;}
-        .chooser-secondary-games .choice-icon{font-size:clamp(2.4rem,10vw,4rem);line-height:1.2;filter:drop-shadow(0 5px 8px #0008);z-index:1;}
-        .chooser-secondary-games .choice-copy{flex:0 0 auto;gap:3px;z-index:1;}
-        .chooser-secondary-games .choice-copy strong{font-size:clamp(.95rem,3.8vw,1.2rem);font-weight:1000;line-height:1.1;text-shadow:0 2px 4px #000;}
-        .chooser-secondary-games .choice-copy small{font-size:clamp(.58rem,2.5vw,.7rem);line-height:1.2;color:#f2e7ff;}
-        .chooser-secondary-games .choice-arrow{display:none;}
-        .chooser-secondary-games .ladder-choice{background:radial-gradient(ellipse at 50% 25%,#7022bb 0%,#351078 55%,#170d43 100%);}
-        #gameChooserScreen .chooser-footer{flex:0 0 auto;margin-top:0;padding:0 4px;}
-        @media(max-height:700px){.chooser-featured{min-height:320px}.pickwin-orb-wrap{height:clamp(145px,28vh,220px)}.chooser-secondary-games{min-height:175px}.pickwin-title{margin-top:5px}.pickwin-tagline{margin-top:5px}}
-        @media(min-width:500px){.chooser-featured{max-height:620px}.chooser-secondary-games{min-height:250px}}
+        /* ===== WINZO GAMES ROOM: FEATURED PICK-WIN LOBBY ===== */
+        .game-chooser-screen{display:flex;flex-direction:column;justify-content:flex-start;gap:clamp(9px,1.6vh,14px);padding:clamp(9px,1.6vh,14px) 5px 8px;flex:1;min-height:0;color:#f8f2ff;overflow-y:auto;background:radial-gradient(ellipse at 50% 25%,#35106e 0%,#170b3e 48%,#07132e 100%);}
+        .chooser-topbar{display:none}
+        .pickwin-hero{appearance:none;-webkit-appearance:none;text-align:initial;font:inherit;color:inherit;cursor:pointer;position:relative;isolation:isolate;flex:1 1 auto;min-height:340px;height:clamp(340px,51vh,470px);max-height:490px;width:100%;overflow:hidden;border:3px solid #ffd34f;border-radius:30px;background:radial-gradient(ellipse at 50% 42%,#8124c9 0%,#47108f 42%,#1a0748 78%,#10072f 100%);box-shadow:0 0 10px #ffd34f,0 0 30px #a52cff88,inset 0 0 35px #ffcc4430;}
+        .pickwin-hero:before{content:"";position:absolute;inset:0;z-index:-1;background:repeating-conic-gradient(from 0deg at 50% 43%,#ffffff0c 0deg 5deg,transparent 5deg 14deg);mask-image:radial-gradient(ellipse at 50% 43%,#000 0%,transparent 72%);}
+        .pickwin-hero:after{content:"";position:absolute;inset:-35%;z-index:-1;background:conic-gradient(from 0deg,transparent 0 76%,#ffe87955 80%,transparent 84% 100%);animation:pickwinOrbit 9s linear infinite;pointer-events:none;}
+        @keyframes pickwinOrbit{to{transform:rotate(360deg)}}
+        .pickwin-orb{position:absolute;top:2%;left:50%;transform:translateX(-50%);width:clamp(190px,56vw,365px);height:auto;max-height:59%;object-fit:contain;filter:drop-shadow(0 10px 18px #08001699);animation:pickwinFloat 3.8s ease-in-out infinite;z-index:2;pointer-events:none;}
+        @keyframes pickwinFloat{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,-7px)}}
+        .pickwin-ribbon{position:absolute;z-index:3;top:58%;left:7%;width:86%;min-height:48px;display:flex;align-items:center;justify-content:center;gap:9px;padding:9px 12px;color:#512000;text-align:center;font-size:clamp(.78rem,3.6vw,1.2rem);font-weight:1000;letter-spacing:.5px;background:linear-gradient(180deg,#fff08a 0%,#ffc52d 45%,#e58b08 100%);border:2px solid #fff0a2;border-radius:9px;box-shadow:0 5px 0 #a95805,0 0 18px #ffdc54aa;text-shadow:0 1px #fff4b2;transform:rotate(-1deg);}
+        .pickwin-ribbon:before,.pickwin-ribbon:after{content:"";position:absolute;top:9px;z-index:-1;width:28px;height:35px;background:linear-gradient(135deg,#e99a13,#ffdc55);}
+        .pickwin-ribbon:before{left:-19px;clip-path:polygon(0 0,100% 12%,100% 100%,0 75%,25% 50%)}.pickwin-ribbon:after{right:-19px;clip-path:polygon(0 12%,100% 0,75% 50%,100% 75%,0 100%)}
+        .pickwin-ribbon .star{font-size:1.2em;color:#512000}
+        .pickwin-title{position:absolute;top:72%;left:3%;width:94%;text-align:center;font-size:clamp(1.65rem,7.5vw,3.15rem);font-weight:1000;line-height:1;letter-spacing:-1px;color:#fff;text-shadow:0 3px 0 #5d4c79,0 6px 9px #050014;white-space:nowrap;}
+        .pickwin-title span{color:#ffd12f;font-style:italic;text-shadow:0 3px 0 #9b5700,0 6px 10px #050014;}
+        .pickwin-tagline{position:absolute;top:85%;left:3%;width:94%;text-align:center;color:#fff;font-size:clamp(.75rem,3.2vw,1.12rem);font-weight:800;font-style:italic;text-shadow:0 2px 5px #070018;}
+        .pickwin-tagline:before,.pickwin-tagline:after{content:"";display:inline-block;vertical-align:middle;width:clamp(16px,8vw,48px);height:3px;margin:0 8px;background:linear-gradient(90deg,#ffcf32,#fff09b);border-radius:5px;}
+        .game-choice-grid{display:grid;grid-template-columns:1fr 1fr;gap:clamp(9px,2.4vw,16px);flex:0 0 auto;width:100%;}
+        .game-choice{display:block;position:relative;width:100%;height:clamp(175px,25vh,235px);padding:0;border:2px solid #ffd64c;border-radius:25px;overflow:hidden;background-color:#26065f;background-position:center;background-size:cover;box-shadow:0 0 8px #ffce44aa,0 8px 20px #05001499;cursor:pointer;transition:transform .16s,filter .16s;}
+        .game-choice:active{transform:scale(.97);filter:brightness(1.12)}.game-choice:hover{border-color:#fff0a0;filter:brightness(1.08)}
+        .bingo-choice{background-image:url('winzo-bingo-card.png')}.ladder-choice{background-image:url('winzo-ladder-card.png')}
+        .game-choice .choice-icon,.game-choice .choice-copy,.game-choice .choice-arrow{display:none}
+        .chooser-footer{display:flex;justify-content:space-between;align-items:center;gap:8px;flex:0 0 auto;color:#e2d5ff;font-size:.72rem;margin-top:0;padding:0 4px;text-shadow:0 1px 3px #000}
+        .chooser-options-anchor{display:flex;align-items:center;gap:5px}.options-pointing-emoji{font-size:1.35rem;animation:optionsPoint 1s ease-in-out infinite}
+        @keyframes optionsPoint{0%,100%{transform:translateX(0)}50%{transform:translateX(5px)}}
+        .chooser-more-wrapper{margin-top:0}.more-btn.chooser-options-btn{width:auto;height:auto;min-height:34px;padding:0 13px;border-radius:12px;border:1px solid rgba(255,204,68,.75);background:linear-gradient(135deg,#7040b5,#29134e);color:#ffdf78;font-size:.76rem;letter-spacing:.3px;box-shadow:0 0 12px #ffcc4440}
+        .chooser-more-dropdown{top:auto;bottom:calc(100% + 8px);min-width:190px;max-height:70vh;overflow-y:auto;z-index:300}
+        @media(max-width:360px){.pickwin-hero{min-height:320px;height:46vh}.pickwin-ribbon{top:57%;font-size:.72rem;padding:8px 7px}.pickwin-title{top:72%;font-size:1.55rem}.pickwin-tagline{top:85%;font-size:.7rem}.game-choice{height:165px}}
+        @media(max-height:650px){.game-chooser-screen{gap:7px;padding-top:7px}.pickwin-hero{height:clamp(300px,48vh,360px);min-height:300px}.game-choice{height:clamp(150px,24vh,180px)}.chooser-footer{font-size:.68rem}}
 
         /* ===== BINGO SCREEN UPDATES ===== */
         .bingo-screen{display:flex; flex-direction:column; gap:10px; color:#f7f0ff; padding:3px 0 16px; flex:1; min-height:0; overflow:hidden; }
@@ -840,15 +831,15 @@
         </div>
 
         <div id="gameChooserScreen" class="game-chooser-screen hidden">
-          <button id="chooseSpinBtn" class="chooser-featured" type="button" aria-label="Play Winzo Pick-Win">
-            <div class="pickwin-orb-wrap"><img class="pickwin-orb" src="winzo-pick-win-orb.jpg" alt="Golden Winzo Pick-Win number lock" /></div>
-            <div class="pickwin-ribbon">★ TOP RATED ON WINZO ★</div>
+          <button id="chooseSpinBtn" type="button" class="pickwin-hero" aria-label="Open Winzo Pick-Win">
+            <img class="pickwin-orb" src="winzo-pick-win-orb-transparent.png" alt="Golden Pick-Win number lock showing 040" />
+            <div class="pickwin-ribbon"><span class="star">★</span><span>TOP RATED ON WINZO</span><span class="star">★</span></div>
             <div class="pickwin-title">WINZO <span>PICK-WIN</span></div>
             <div class="pickwin-tagline">The most preferred number game</div>
           </button>
-          <div class="chooser-secondary-games">
-            <button id="chooseBingoBtn" class="game-choice bingo-choice" type="button" aria-label="Play Winzo Bingo"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>WINZO BINGO</strong><small>Choose cards and play live 75-ball Bingo</small></span></button>
-            <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>WINZO LADDER</strong><small>Play Snakes &amp; Ladders against friends!</small></span></button>
+          <div class="game-choice-grid" aria-label="Other Winzo games">
+            <button id="chooseBingoBtn" type="button" class="game-choice bingo-choice" aria-label="Open Winzo Bingo"><span class="choice-icon">🎱</span><span class="choice-copy"><strong>Winzo Bingo</strong><small>Choose cards and play live 75-ball Bingo</small></span><span class="choice-arrow">›</span></button>
+            <button id="chooseLadderBtn" class="game-choice ladder-choice" type="button" aria-label="Winzo Ladder"><span class="choice-icon">🪜</span><span class="choice-copy"><strong>Winzo Ladder</strong><small>Play Snakes &amp; Ladders against friends!</small></span><span class="choice-arrow">›</span></button>
           </div>
           <div class="chooser-footer">
             <span id="chooserBalance">Play balance: 0 Birr</span>
