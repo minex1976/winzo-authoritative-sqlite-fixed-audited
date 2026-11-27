@@ -1086,6 +1086,32 @@ async function detectMultiAccount(username, ipOrHash = null, fingerprint = null)
 // ============================================================================
 // USER MANAGEMENT  (ENHANCED: signal recording on IP/FP change)
 // ============================================================================
+async function resolveReferralUid(referralCode, newUserUid) {
+  const code = safeUid(referralCode);
+  const newUid = safeUid(newUserUid);
+  if (!code || !newUid || code === newUid) return null;
+  // Telegram referral links use stable numeric Telegram IDs (tg_<id>), not
+  // mutable @usernames. Resolve legacy IDs to the account's canonical UID.
+  let result = null;
+  const tgMatch = code.match(/^tg_(\d{1,20})$/);
+  if (tgMatch) {
+    const id = Number(tgMatch[1]);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    const r = await pool.query(
+      `SELECT username FROM users WHERE telegram_id = $1 OR username = $2
+       UNION SELECT uid AS username FROM telegram_users WHERE telegram_id = $1 AND uid IS NOT NULL
+       LIMIT 1`, [id, code]
+    );
+    result = r.rows[0]?.username || null;
+  } else {
+    // Backward compatibility for previously shared referral links.
+    const r = await pool.query('SELECT username FROM users WHERE username = $1', [code]);
+    result = r.rows[0]?.username || null;
+  }
+  result = result ? safeUid(result) : null;
+  return result && result !== newUid ? result : null;
+}
+
 async function ensureUser(username, referredBy = null, bot = false, extra = {}) {
   const clean = safeUid(username);
   if (!clean) return null;
@@ -1126,7 +1152,7 @@ async function ensureUser(username, referredBy = null, bot = false, extra = {}) 
       signup_bonus_original: 0,
       signup_bonus_expires_at: 0,
       withdrawal_hold_until: 0, withdrawal_hold_reason: null,
-      pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: referredBy && referredBy !== clean ? safeUser(referredBy) : null,
+      pending_withdrawal: 0, referral_earnings: 0, wallet_updated_at: t, referred_by: await resolveReferralUid(referredBy, clean),
       last_ip_hash: extra.last_ip ? hashWithRotatingSalt(normalizedClientIp(extra.last_ip)) : null,
       device_fingerprint: sanitizedFp,
       created_at: t, updated_at: t
