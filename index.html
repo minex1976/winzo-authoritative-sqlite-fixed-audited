@@ -1359,6 +1359,86 @@
             }
         }
 
+
+
+        /* Approved Winzo gold + emerald gradient border treatment */
+        #gameScreen .wallet-bar,
+        #gameScreen .game-info-bar {
+            border: 2px solid transparent !important;
+            background:
+                linear-gradient(110deg, rgba(7, 29, 43, .99), rgba(13, 34, 53, .99)) padding-box,
+                linear-gradient(125deg, #fff3a0 0%, #ffcf36 18%, #fff9cf 31%, #d88a08 48%, #ffe76a 66%, #fff4b0 82%, #b96b08 100%) border-box !important;
+            box-shadow:
+                0 0 7px rgba(255, 204, 51, .82),
+                0 0 18px rgba(255, 177, 20, .38),
+                inset 0 1px 0 rgba(255,255,255,.16),
+                inset 0 0 12px rgba(255, 191, 35, .08) !important;
+        }
+        #gameScreen .wallet-item + .wallet-item::after {
+            background: linear-gradient(180deg, #fff4b0, #e6a51b, #fff0a0) !important;
+            box-shadow: 0 0 7px rgba(255, 206, 65, .65) !important;
+        }
+        #gameScreen .wallet-item {
+            border-color: rgba(255, 213, 91, .18) !important;
+        }
+        #gameScreen .game-info-bar .info-item + .info-item::before {
+            background: linear-gradient(180deg, #fff0a0, #d99a18, #fff0a0) !important;
+            box-shadow: 0 0 6px rgba(255, 201, 55, .5) !important;
+        }
+        #gameScreen .pick-status {
+            border: 2px solid transparent !important;
+            background:
+                linear-gradient(105deg, rgba(37, 18, 66, .97), rgba(15, 37, 62, .98)) padding-box,
+                linear-gradient(120deg, #7b35ff, #e65cff, #ffb5e9, #8a45ff, #35caff) border-box !important;
+            box-shadow: 0 0 10px rgba(189, 74, 255, .34), 0 0 20px rgba(69, 157, 255, .14), inset 0 1px 0 rgba(255,255,255,.12) !important;
+        }
+        #gameScreen .profile-area {
+            border: 1.5px solid transparent !important;
+            background:
+                linear-gradient(180deg, rgba(4, 18, 35, .98), rgba(5, 24, 43, .99)) padding-box,
+                linear-gradient(145deg, #16d9ed, #286bff 35%, #8c4dff 68%, #16d9ed) border-box !important;
+            box-shadow: 0 0 12px rgba(26, 178, 255, .17), inset 0 1px 0 rgba(255,255,255,.06) !important;
+        }
+        #gameScreen .num-btn {
+            background: linear-gradient(145deg, #18a85b 0%, #087a43 48%, #034b32 100%) !important;
+            border: 2px solid transparent !important;
+            background-image:
+                linear-gradient(145deg, #18a85b 0%, #087a43 48%, #034b32 100%),
+                linear-gradient(135deg, #b8ffd0 0%, #37f58a 25%, #00bd61 58%, #8affb6 82%, #087c48 100%) !important;
+            background-origin: padding-box, border-box !important;
+            background-clip: padding-box, border-box !important;
+            color: #f1fff6 !important;
+            box-shadow:
+                0 3px 0 #023b29,
+                0 0 8px rgba(0, 255, 112, .26),
+                0 0 15px rgba(0, 210, 100, .16),
+                inset 0 1px 0 rgba(255,255,255,.28),
+                inset 0 -5px 9px rgba(0, 25, 15, .18) !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,.38) !important;
+        }
+        #gameScreen .num-btn:not(:disabled):active {
+            filter: brightness(1.14) saturate(1.08) !important;
+        }
+        #gameScreen .num-btn.selected {
+            background: linear-gradient(145deg, #b4fff1 0%, #35dfca 48%, #0796a9 100%) !important;
+            border: 2px solid #e1fff9 !important;
+            box-shadow: 0 0 0 1px rgba(57,231,224,.4), 0 0 17px rgba(57,231,224,.72), 0 3px 0 #08718a, inset 0 1px 0 rgba(255,255,255,.72) !important;
+        }
+        #gameScreen .num-btn.taken {
+            background: linear-gradient(145deg, #ff7187 0%, #ed315b 52%, #a91542 100%) !important;
+            border: 2px solid transparent !important;
+            background-image:
+                linear-gradient(145deg, #ff7187 0%, #ed315b 52%, #a91542 100%),
+                linear-gradient(135deg, #ffd1d8, #ff6483, #b90d43) !important;
+            background-origin: padding-box, border-box !important;
+            background-clip: padding-box, border-box !important;
+            box-shadow: 0 2px 0 #7d1b38, 0 0 12px rgba(255,75,105,.4), inset 0 1px 0 rgba(255,255,255,.35) !important;
+        }
+        #gameScreen .num-btn.loading {
+            background: linear-gradient(145deg, #183650, #2a5870, #183650) !important;
+            border: 1.5px solid rgba(107,181,202,.4) !important;
+        }
+
 </style>
 </head>
 <body>
