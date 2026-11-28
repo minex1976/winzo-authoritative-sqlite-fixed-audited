@@ -1493,6 +1493,93 @@
         }
 
 </style>
+<style>
+
+        /* Keep the WINZO heading centered while moving connection/menu controls
+           into its upper-right corner. Wallet columns now use the full bar width. */
+        #gameScreen .title {
+            position: relative !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            display: block !important;
+            text-align: center !important;
+            padding: 0 42px !important;
+            min-height: 48px !important;
+        }
+        #gameScreen .title .title-main {
+            display: inline-flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: max-content !important;
+            max-width: 100% !important;
+        }
+        #gameScreen .title-controls {
+            position: absolute !important;
+            top: 50% !important;
+            right: 5px !important;
+            transform: translateY(-50%) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 9px !important;
+            z-index: 120 !important;
+        }
+        #gameScreen .title-controls .status-dot {
+            display: inline-block !important;
+            width: 9px !important;
+            height: 9px !important;
+            flex: 0 0 9px !important;
+        }
+        #gameScreen .title-controls .more-btn {
+            width: 29px !important;
+            height: 29px !important;
+            min-width: 29px !important;
+            padding: 0 !important;
+            border-radius: 50% !important;
+            font-size: 1.05rem !important;
+        }
+        #gameScreen .wallet-bar {
+            display: block !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            padding-right: 7px !important;
+        }
+        #gameScreen .wallet-left {
+            width: 100% !important;
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+        @media (max-width: 360px) {
+            #gameScreen .title { padding-left: 34px !important; padding-right: 38px !important; }
+            #gameScreen .title-controls { right: 2px !important; gap: 6px !important; }
+            #gameScreen .title-controls .more-btn { width: 26px !important; height: 26px !important; min-width: 26px !important; }
+        }
+
+</style>
+<style>
+
+        /* Keep both trophies and WINZO on one horizontal line.
+           The room denomination remains on its own smaller line below. */
+        #gameScreen .title .title-main {
+            display: inline-block !important;
+            flex-direction: initial !important;
+            width: auto !important;
+            max-width: calc(100% - 8px) !important;
+            white-space: nowrap !important;
+            vertical-align: middle !important;
+            text-align: center !important;
+        }
+        #gameScreen .title .title-main > span {
+            display: inline !important;
+            white-space: nowrap !important;
+        }
+        #gameScreen .title .title-main small {
+            display: block !important;
+            white-space: nowrap !important;
+            text-align: center !important;
+        }
+
+</style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
@@ -1679,7 +1766,13 @@
         </section>
 
         <div id="gameScreen">
-            <div class="title">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆<small id="modeLabel">15 Birr</small></div>
+            <div class="title">
+                <span class="title-main">🏆 <span style="color:#ffcc44;">WINZO</span> 🏆<small id="modeLabel">15 Birr</small></span>
+                <div class="title-controls" aria-label="Connection and game menu">
+                    <span class="status-dot offline" id="statusDot"></span>
+                    <button class="more-btn spin-games-btn" id="spinGamesBtn" type="button" aria-label="Back to games">⋮</button>
+                </div>
+            </div>
             <div class="wallet-bar">
                 <div class="wallet-left">
                     <div class="wallet-item" id="usernameWalletItem"><span class="label">👤</span><span class="username" id="walletUsername">User</span></div>
@@ -1714,10 +1807,6 @@
                         <span class="wallet-copy"><span class="label">Referral</span><span class="amount" id="refWallet">0</span></span>
                     </div>
                     <div class="wallet-item" id="pendingItem" style="display:none;"><span class="label">⏳</span><span class="pending" id="pendingAmount">0</span></div>
-                </div>
-                <div class="wallet-right" style="display:flex;align-items:center;gap:3px;">
-                    <span class="status-dot offline" id="statusDot"></span>
-                    <button class="more-btn spin-games-btn" id="spinGamesBtn" type="button" aria-label="Back to games">⋮</button>
                 </div>
             </div>
             <div class="game-info-bar">
