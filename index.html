@@ -1440,6 +1440,59 @@
         }
 
 </style>
+<style>
+
+        /* Timer / Online / Prize: three balanced wallet-style columns */
+        #gameScreen .game-info-bar {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            justify-content: space-between !important;
+            align-items: stretch !important;
+            gap: 0 !important;
+            padding: 5px 7px !important;
+        }
+        #gameScreen .game-info-bar .info-item {
+            position: relative !important;
+            display: flex !important;
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+            justify-content: center !important;
+            align-items: center !important;
+            white-space: nowrap !important;
+            gap: 3px !important;
+        }
+        #gameScreen .game-info-bar .info-item:first-child {
+            justify-content: flex-start !important;
+            padding-left: 5px !important;
+        }
+        #gameScreen .game-info-bar .info-item:nth-child(2) {
+            justify-content: center !important;
+        }
+        #gameScreen .game-info-bar .info-item:nth-child(3) {
+            justify-content: flex-end !important;
+            padding-right: 5px !important;
+        }
+        #gameScreen .game-info-bar .info-item + .info-item::before {
+            content: "" !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 12% !important;
+            bottom: 12% !important;
+            width: 2px !important;
+            transform: none !important;
+            border-radius: 2px !important;
+            background: linear-gradient(180deg, #fff4b0, #d99a18 48%, #fff0a0) !important;
+            box-shadow: 0 0 7px rgba(255, 201, 55, .6) !important;
+        }
+        @media (max-width: 360px) {
+            #gameScreen .game-info-bar { padding-left: 4px !important; padding-right: 4px !important; }
+            #gameScreen .game-info-bar .info-item { gap: 2px !important; }
+            #gameScreen .game-info-bar .info-item:first-child { padding-left: 2px !important; }
+            #gameScreen .game-info-bar .info-item:nth-child(3) { padding-right: 2px !important; }
+        }
+
+</style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
