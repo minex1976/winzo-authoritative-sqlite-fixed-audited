@@ -1028,7 +1028,213 @@
             #gameScreen .num-btn { transition: none !important; }
         }
 
-    </style>
+    
+
+        /* Premium fixed three-column wallet bar */
+        #gameScreen .wallet-bar {
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) 34px !important;
+            align-items: stretch !important;
+            column-gap: 7px !important;
+            min-height: 76px !important;
+            padding: 8px 7px !important;
+            overflow: visible !important;
+            background: linear-gradient(110deg, rgba(4, 35, 62, .98), rgba(10, 42, 75, .98)) !important;
+            border: 2px solid rgba(35, 225, 235, .9) !important;
+            border-radius: 19px !important;
+            box-shadow: 0 0 18px rgba(0, 221, 255, .22), inset 0 0 15px rgba(0, 161, 255, .08), inset 0 1px 0 rgba(255,255,255,.13) !important;
+            position: relative !important;
+        }
+        #gameScreen .wallet-left {
+            display: grid !important;
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            align-items: stretch !important;
+            gap: 0 !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            flex: initial !important;
+        }
+        #gameScreen .wallet-left > .wallet-item {
+            min-width: 0 !important;
+            width: 100% !important;
+            min-height: 56px !important;
+            box-sizing: border-box !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-items: center !important;
+            gap: 3px !important;
+            padding: 3px 2px !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            white-space: nowrap !important;
+            position: relative !important;
+            font-size: .66rem !important;
+            line-height: 1.15 !important;
+        }
+        /* Keep the existing username and pending elements in the DOM without letting them shift the three fixed wallet columns. */
+        #gameScreen #usernameWalletItem {
+            position: absolute !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: -1px !important;
+            overflow: hidden !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }
+        #gameScreen #pendingItem {
+            position: absolute !important;
+            z-index: 3 !important;
+            top: -9px !important;
+            left: 8px !important;
+            width: auto !important;
+            min-height: 0 !important;
+            padding: 2px 7px !important;
+            border: 1px solid rgba(255, 211, 106, .65) !important;
+            border-radius: 20px !important;
+            background: #173b55 !important;
+            color: #ffe49a !important;
+            font-size: .58rem !important;
+        }
+        #gameScreen .wallet-left > .wallet-item:nth-child(2)::after,
+        #gameScreen .wallet-left > .wallet-item:nth-child(3)::after {
+            content: '' !important;
+            position: absolute !important;
+            right: 0 !important;
+            top: 9% !important;
+            bottom: 9% !important;
+            width: 2px !important;
+            border-radius: 3px !important;
+            background: linear-gradient(180deg, transparent, #28f2f0 18%, #28f2f0 82%, transparent) !important;
+            box-shadow: 0 0 8px rgba(40, 242, 240, .75) !important;
+        }
+        #gameScreen .wallet-left > .wallet-item:nth-child(2) .label,
+        #gameScreen .wallet-left > .wallet-item:nth-child(3) .label,
+        #gameScreen .wallet-left > .wallet-item:nth-child(4) .label {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            max-width: 100% !important;
+            padding: 3px 7px !important;
+            border-radius: 20px !important;
+            font-size: .67rem !important;
+            font-weight: 850 !important;
+            letter-spacing: .1px !important;
+            line-height: 1.1 !important;
+            color: #eafaff !important;
+            background: linear-gradient(105deg, rgba(14, 101, 183, .95), rgba(27, 66, 137, .98)) !important;
+            border: 1px solid rgba(88, 205, 255, .42) !important;
+            box-shadow: 0 0 10px rgba(26, 161, 255, .2), inset 0 1px 0 rgba(255,255,255,.16) !important;
+        }
+        #gameScreen .wallet-left > .wallet-item:nth-child(2) .label { color: #ffe7a0 !important; }
+        #gameScreen .wallet-left > .wallet-item:nth-child(3) .label { color: #d9f4ff !important; }
+        #gameScreen .wallet-left > .wallet-item:nth-child(4) .label { color: #b9ffe9 !important; }
+        #gameScreen .wallet-left > .wallet-item:nth-child(2) .amount,
+        #gameScreen .wallet-left > .wallet-item:nth-child(3) .amount,
+        #gameScreen .wallet-left > .wallet-item:nth-child(4) .amount {
+            display: block !important;
+            color: #ffdf35 !important;
+            font-size: clamp(.88rem, 3.5vw, 1.12rem) !important;
+            font-weight: 950 !important;
+            line-height: 1.05 !important;
+            letter-spacing: .2px !important;
+            text-shadow: 0 0 7px rgba(255, 213, 40, .38), 0 1px 0 rgba(0,0,0,.35) !important;
+        }
+        #gameScreen #refWallet { color: #65ffd0 !important; }
+        #gameScreen .wallet-right {
+            justify-content: center !important;
+            align-self: stretch !important;
+            min-width: 30px !important;
+            padding-left: 3px !important;
+            border-left: 1px solid rgba(54, 220, 232, .22) !important;
+        }
+        #gameScreen .wallet-right .status-dot { flex: 0 0 9px !important; }
+        #gameScreen .wallet-right .more-btn { flex: 0 0 31px !important; }
+        @media (max-width: 430px) {
+            #gameScreen .wallet-bar { grid-template-columns: minmax(0, 1fr) 31px !important; padding: 7px 5px !important; column-gap: 4px !important; }
+            #gameScreen .wallet-left > .wallet-item { min-height: 53px !important; padding-left: 1px !important; padding-right: 1px !important; }
+            #gameScreen .wallet-left > .wallet-item:nth-child(2) .label,
+            #gameScreen .wallet-left > .wallet-item:nth-child(3) .label,
+            #gameScreen .wallet-left > .wallet-item:nth-child(4) .label { font-size: .59rem !important; padding: 3px 4px !important; }
+            #gameScreen .wallet-left > .wallet-item:nth-child(2) .amount,
+            #gameScreen .wallet-left > .wallet-item:nth-child(3) .amount,
+            #gameScreen .wallet-left > .wallet-item:nth-child(4) .amount { font-size: clamp(.8rem, 3.7vw, .98rem) !important; }
+        }
+        @media (max-width: 360px) {
+            #gameScreen .wallet-bar { grid-template-columns: minmax(0, 1fr) 28px !important; column-gap: 3px !important; }
+            #gameScreen .wallet-left > .wallet-item:nth-child(2) .label,
+            #gameScreen .wallet-left > .wallet-item:nth-child(3) .label,
+            #gameScreen .wallet-left > .wallet-item:nth-child(4) .label { font-size: .54rem !important; padding: 3px 2px !important; }
+            #gameScreen .wallet-left > .wallet-item:nth-child(2) .amount,
+            #gameScreen .wallet-left > .wallet-item:nth-child(3) .amount,
+            #gameScreen .wallet-left > .wallet-item:nth-child(4) .amount { font-size: .78rem !important; }
+        }
+
+
+        /* Illustrated wallet icons matching the approved premium wallet mockup */
+        #gameScreen .wallet-left > .wallet-item {
+            flex-direction: row !important;
+            justify-content: center !important;
+            align-items: center !important;
+            gap: clamp(4px, 1.2vw, 10px) !important;
+            padding: 4px 3px !important;
+        }
+        #gameScreen .wallet-icon {
+            display: block !important;
+            width: clamp(27px, 7.2vw, 43px) !important;
+            height: clamp(27px, 7.2vw, 43px) !important;
+            flex: 0 0 auto !important;
+            overflow: visible !important;
+            filter: drop-shadow(0 0 5px rgba(60, 205, 255, .22));
+        }
+        #gameScreen .wallet-icon-main {
+            filter: drop-shadow(0 0 7px rgba(255, 184, 39, .42));
+        }
+        #gameScreen .wallet-icon-play {
+            filter: drop-shadow(0 0 7px rgba(78, 165, 255, .42));
+        }
+        #gameScreen .wallet-icon-referral {
+            filter: drop-shadow(0 0 7px rgba(43, 239, 167, .38));
+        }
+        #gameScreen .wallet-copy {
+            min-width: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            justify-content: center !important;
+            gap: 4px !important;
+        }
+        #gameScreen .wallet-left > .wallet-item .label {
+            align-self: flex-start !important;
+            white-space: nowrap !important;
+            padding: 3px 8px !important;
+            font-size: clamp(.58rem, 2.45vw, .78rem) !important;
+        }
+        #gameScreen .wallet-left > .wallet-item .amount {
+            align-self: flex-start !important;
+            font-size: clamp(.85rem, 3.5vw, 1.12rem) !important;
+        }
+        @media (max-width: 360px) {
+            #gameScreen .wallet-icon {
+                width: 23px !important;
+                height: 23px !important;
+            }
+            #gameScreen .wallet-left > .wallet-item {
+                gap: 2px !important;
+                padding-left: 1px !important;
+                padding-right: 1px !important;
+            }
+            #gameScreen .wallet-left > .wallet-item .label {
+                padding: 3px 5px !important;
+                font-size: .53rem !important;
+            }
+        }
+
+</style>
 </head>
 <body>
     <audio id="winnerAnnouncementAudio" preload="auto" playsinline src="data:audio/mpeg;base64,PASTE_YOUR_ORIGINAL_WINNER_AUDIO_BASE64_HERE"></audio>
@@ -1219,9 +1425,36 @@
             <div class="wallet-bar">
                 <div class="wallet-left">
                     <div class="wallet-item" id="usernameWalletItem"><span class="label">👤</span><span class="username" id="walletUsername">User</span></div>
-                    <div class="wallet-item"><span class="label"> M-Wallet: </span><span class="amount" id="mainWallet">0</span></div>
-                    <div class="wallet-item"><span class="label"> P-Wallet: </span><span class="amount" id="playWallet">0</span></div>
-                    <div class="wallet-item"><span class="label"> Referral: </span><span class="amount" id="refWallet">0</span></div>
+                    <div class="wallet-item wallet-item-main">
+                        <svg class="wallet-icon wallet-icon-main" viewBox="0 0 64 64" aria-hidden="true">
+                            <defs><linearGradient id="walletGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff1a6"/><stop offset=".48" stop-color="#ffbf27"/><stop offset="1" stop-color="#d97808"/></linearGradient></defs>
+                            <path d="M10 18 43 8l8 8-33 10z" fill="#ffcf48" stroke="#8f4b08" stroke-width="2.5" stroke-linejoin="round"/>
+                            <rect x="7" y="18" width="43" height="36" rx="7" fill="url(#walletGold)" stroke="#a95c08" stroke-width="3"/>
+                            <path d="M43 29h12a5 5 0 0 1 5 5v9a5 5 0 0 1-5 5H43a7 7 0 0 1 0-14z" fill="#f6b52b" stroke="#8f4b08" stroke-width="3"/>
+                            <circle cx="48" cy="38.5" r="2.7" fill="#70400b"/>
+                            <path d="M13 24h26" stroke="#fff3b8" stroke-width="2.5" stroke-linecap="round" opacity=".8"/>
+                        </svg>
+                        <span class="wallet-copy"><span class="label">M-Wallet</span><span class="amount" id="mainWallet">0</span></span>
+                    </div>
+                    <div class="wallet-item wallet-item-play">
+                        <svg class="wallet-icon wallet-icon-play" viewBox="0 0 64 64" aria-hidden="true">
+                            <path d="M17 19h30c6 0 10 4 12 11l3 14c1 6-5 10-10 6L41 41H23L12 50c-5 4-11 0-10-6l3-14c2-7 6-11 12-11z" fill="#dff5ff" stroke="#3277c9" stroke-width="3" stroke-linejoin="round"/>
+                            <path d="M15 29v13M8.5 35.5h13" stroke="#2665b6" stroke-width="4" stroke-linecap="round"/>
+                            <circle cx="45" cy="31" r="3.5" fill="#2878d8"/><circle cx="52" cy="38" r="3.5" fill="#2878d8"/>
+                            <circle cx="37" cy="38" r="2.5" fill="#2878d8"/>
+                        </svg>
+                        <span class="wallet-copy"><span class="label">P-Wallet</span><span class="amount" id="playWallet">0</span></span>
+                    </div>
+                    <div class="wallet-item wallet-item-referral">
+                        <svg class="wallet-icon wallet-icon-referral" viewBox="0 0 64 64" aria-hidden="true">
+                            <circle cx="25" cy="19" r="11" fill="#39e99a" stroke="#087f70" stroke-width="2"/>
+                            <circle cx="45" cy="25" r="8" fill="#13c9c7" stroke="#087f80" stroke-width="2"/>
+                            <path d="M5 53c0-11 8-19 20-19s20 8 20 19v3H5z" fill="#26d98c" stroke="#087f70" stroke-width="2.5" stroke-linejoin="round"/>
+                            <path d="M39 39c3-4 7-6 12-6 8 0 12 6 12 14v7H47v-1c0-6-3-11-8-14z" fill="#10c9bb" stroke="#087f80" stroke-width="2.5" stroke-linejoin="round"/>
+                            <path d="M17 42c4-3 12-3 16 0" fill="none" stroke="#b7ffdb" stroke-width="2.5" stroke-linecap="round"/>
+                        </svg>
+                        <span class="wallet-copy"><span class="label">Referral</span><span class="amount" id="refWallet">0</span></span>
+                    </div>
                     <div class="wallet-item" id="pendingItem" style="display:none;"><span class="label">⏳</span><span class="pending" id="pendingAmount">0</span></div>
                 </div>
                 <div class="wallet-right" style="display:flex;align-items:center;gap:3px;">
