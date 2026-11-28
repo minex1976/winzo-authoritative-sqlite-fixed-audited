@@ -787,6 +787,247 @@
         .ladder-controls .ladder-btn.primary { padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.attack { background: linear-gradient(135deg, #b55cff, #7f00ff); color: #fff; box-shadow: 0 4px 0 #4a0099; padding: 10px 15px; font-size: 0.9rem; }
         .ladder-controls .ladder-btn.skip { background: linear-gradient(135deg, #ffb347, #ff7b00); color: #1a0a2e; box-shadow: 0 4px 0 #b35400; padding: 10px 15px; font-size: 0.9rem; }
+
+
+        /* ============================================================
+           WINZO PREMIUM AQUA CYBER UI
+           Visual-only overrides. Existing game logic and element IDs
+           are intentionally unchanged.
+           ============================================================ */
+        :root {
+            --wc-bg-0: #061321;
+            --wc-bg-1: #0a2034;
+            --wc-panel: rgba(8, 29, 48, .94);
+            --wc-panel-soft: rgba(11, 43, 62, .88);
+            --wc-cyan: #39e7e0;
+            --wc-cyan-soft: #8efff5;
+            --wc-blue: #36a9ff;
+            --wc-gold: #ffd36a;
+            --wc-text: #e9fbff;
+            --wc-muted: #8db4c5;
+        }
+        body {
+            background:
+                radial-gradient(ellipse at 50% 0%, rgba(20, 153, 171, .22), transparent 43%),
+                radial-gradient(ellipse at 100% 80%, rgba(32, 105, 171, .18), transparent 45%),
+                linear-gradient(145deg, #030b15 0%, #071a2b 52%, #061321 100%) !important;
+        }
+        .game-wrapper {
+            background:
+                radial-gradient(ellipse at 50% -8%, rgba(43, 225, 222, .12), transparent 43%),
+                linear-gradient(160deg, #102c43 0%, #091d31 48%, #071526 100%) !important;
+            border: 1px solid rgba(75, 231, 230, .55) !important;
+            border-radius: 30px !important;
+            box-shadow: 0 0 0 1px rgba(54, 169, 255, .13),
+                        0 18px 55px rgba(0, 0, 0, .68),
+                        0 0 34px rgba(40, 216, 216, .12),
+                        inset 0 1px 0 rgba(210, 255, 255, .09) !important;
+        }
+        #gameScreen { gap: 5px; }
+        #gameScreen .title {
+            color: var(--wc-text) !important;
+            font-size: clamp(1.15rem, 4.8vw, 1.48rem) !important;
+            font-weight: 950 !important;
+            letter-spacing: 4px !important;
+            line-height: 1.12 !important;
+            margin: 1px 0 4px !important;
+            text-shadow: 0 0 16px rgba(57, 231, 224, .3), 0 2px 0 #123d54 !important;
+        }
+        #gameScreen .title span {
+            color: var(--wc-cyan-soft) !important;
+            text-shadow: 0 0 14px rgba(57, 231, 224, .55) !important;
+        }
+        #gameScreen .title small {
+            color: #8fb9ca !important;
+            font-size: .55rem !important;
+            letter-spacing: 3px !important;
+            margin-top: 3px;
+        }
+        #gameScreen .wallet-bar {
+            background: linear-gradient(105deg, rgba(10, 49, 65, .98), rgba(18, 37, 66, .98)) !important;
+            border: 1.5px solid rgba(57, 231, 224, .86) !important;
+            border-radius: 17px !important;
+            padding: 7px 8px !important;
+            min-height: 48px !important;
+            gap: 5px !important;
+            box-shadow: 0 0 16px rgba(57, 231, 224, .12), inset 0 1px 0 rgba(255,255,255,.07) !important;
+        }
+        #gameScreen .wallet-left { gap: 5px !important; }
+        #gameScreen .wallet-item {
+            background: rgba(2, 13, 27, .55) !important;
+            border: 1px solid rgba(67, 180, 203, .22) !important;
+            border-radius: 11px !important;
+            padding: 4px 7px !important;
+            color: #a7c9d6 !important;
+            font-size: .62rem !important;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,.2);
+        }
+        #gameScreen .wallet-item + .wallet-item::before { display: none !important; }
+        #gameScreen .wallet-item .label { color: #8eafc0 !important; }
+        #gameScreen .wallet-item .amount {
+            color: var(--wc-gold) !important;
+            font-size: .78rem !important;
+            text-shadow: 0 0 9px rgba(255, 211, 106, .2);
+        }
+        #gameScreen #refWallet { color: #66f4c4 !important; }
+        #gameScreen .wallet-item .username { color: #efffff !important; }
+        #gameScreen .status-dot { width: 9px !important; height: 9px !important; }
+        #gameScreen .status-dot.online {
+            background: #48f0bd !important;
+            box-shadow: 0 0 0 3px rgba(72,240,189,.12), 0 0 12px rgba(72,240,189,.8) !important;
+        }
+        #gameScreen .status-dot.offline { background: #ff657c !important; box-shadow: 0 0 9px rgba(255,101,124,.45); }
+        #gameScreen .more-btn {
+            width: 31px !important; height: 31px !important;
+            color: #dfffff !important;
+            background: linear-gradient(145deg, rgba(35, 127, 151, .75), rgba(18, 56, 83, .95)) !important;
+            border: 1px solid rgba(101, 239, 232, .55) !important;
+            box-shadow: 0 0 12px rgba(57, 231, 224, .17), inset 0 1px 0 rgba(255,255,255,.12) !important;
+        }
+        #gameScreen .game-info-bar {
+            background: linear-gradient(105deg, rgba(9, 69, 76, .95), rgba(8, 48, 69, .98)) !important;
+            border: 1.5px solid rgba(57, 231, 224, .78) !important;
+            border-radius: 15px !important;
+            min-height: 47px !important;
+            padding: 7px 9px !important;
+            gap: 9px !important;
+            box-shadow: 0 0 15px rgba(57, 231, 224, .1), inset 0 1px 0 rgba(255,255,255,.06) !important;
+        }
+        #gameScreen .game-info-bar .info-item {
+            color: #a9cbd5 !important;
+            font-size: .69rem !important;
+            gap: 4px !important;
+        }
+        #gameScreen .game-info-bar .info-item + .info-item::before {
+            background: rgba(91, 226, 224, .42) !important;
+            width: 1px !important;
+            left: -6px !important;
+        }
+        #gameScreen .game-info-bar .info-item .value { color: #f1ffff !important; }
+        #gameScreen .game-info-bar .info-item .value.timer {
+            color: var(--wc-gold) !important;
+            font-size: 1.12rem !important;
+            text-shadow: 0 0 10px rgba(255,211,106,.25);
+        }
+        #gameScreen .game-info-bar .info-item .value.players { color: #64f2bd !important; }
+        #gameScreen .game-info-bar .info-item .value.bet-total {
+            color: var(--wc-cyan-soft) !important;
+            font-size: 1rem !important;
+            text-shadow: 0 0 10px rgba(57,231,224,.25);
+        }
+        #gameScreen .pick-status {
+            background: linear-gradient(100deg, rgba(48, 26, 74, .94), rgba(13, 57, 76, .95)) !important;
+            border: 1.5px solid rgba(88, 206, 224, .72) !important;
+            border-radius: 14px !important;
+            min-height: 45px !important;
+            padding: 7px 10px !important;
+            color: #c6e6ef !important;
+            font-size: .76rem !important;
+            box-shadow: 0 0 13px rgba(54,169,255,.08), inset 0 1px 0 rgba(255,255,255,.06) !important;
+        }
+        #gameScreen .pick-status .highlight { color: var(--wc-gold) !important; }
+        #gameScreen .profile-area {
+            background: linear-gradient(180deg, rgba(5, 20, 37, .97), rgba(7, 26, 45, .98)) !important;
+            border: 1px solid rgba(67, 184, 211, .3) !important;
+            border-radius: 23px !important;
+            padding: 8px 7px 7px !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 7px 22px rgba(0,0,0,.2) !important;
+        }
+        #gameScreen .profile-row {
+            padding: 2px 4px 7px !important;
+            margin-bottom: 4px !important;
+            border-bottom: 1px solid rgba(83, 187, 205, .17) !important;
+            gap: 5px !important;
+        }
+        #gameScreen .profile-label { color: #76b6c9 !important; font-size: .7rem !important; }
+        #gameScreen .profile-row span { color: #b8d8e3 !important; }
+        #gameScreen #selectedCount { color: var(--wc-gold) !important; }
+        #gameScreen #gamePhaseLabel { color: #72e7d9 !important; }
+        #gameScreen .num-picker-wrapper {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(57,231,224,.48) rgba(4,17,30,.4);
+        }
+        #gameScreen .num-picker-wrapper::-webkit-scrollbar { width: 5px; }
+        #gameScreen .num-picker-wrapper::-webkit-scrollbar-track { background: rgba(3,15,27,.35); border-radius: 8px; }
+        #gameScreen .num-picker-wrapper::-webkit-scrollbar-thumb { background: rgba(57,231,224,.48); border-radius: 8px; }
+        #gameScreen .num-picker {
+            grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+            gap: 5px !important;
+            padding: 3px !important;
+        }
+        #gameScreen .num-btn {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(145deg, #285b87 0%, #21466f 54%, #183657 100%) !important;
+            border: 1.5px solid rgba(177, 225, 255, .88) !important;
+            border-radius: 11px !important;
+            color: #f2fbff !important;
+            font-size: clamp(.82rem, 3.6vw, 1.02rem) !important;
+            font-weight: 850 !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,.32);
+            box-shadow: 0 3px 0 #102b49, 0 0 8px rgba(54,169,255,.13), inset 0 1px 0 rgba(255,255,255,.2) !important;
+            transition: transform .14s ease, box-shadow .14s ease, filter .14s ease !important;
+        }
+        #gameScreen .num-btn:not(:disabled):active { transform: scale(.94) !important; }
+        #gameScreen .num-btn.selected {
+            background: linear-gradient(145deg, #a1fff1 0%, #36e0d2 48%, #1199b7 100%) !important;
+            border: 2px solid #d8fffb !important;
+            color: #052333 !important;
+            text-shadow: none !important;
+            box-shadow: 0 0 0 1px rgba(57,231,224,.35), 0 0 17px rgba(57,231,224,.7), 0 3px 0 #08718a, inset 0 1px 0 rgba(255,255,255,.65) !important;
+            transform: scale(1.035) !important;
+            z-index: 1;
+        }
+        #gameScreen .num-btn.taken {
+            background: linear-gradient(145deg, #f45d72, #bd294d) !important;
+            border: 1.5px solid #ffb0ba !important;
+            color: #fff7f8 !important;
+            box-shadow: 0 2px 0 #7d1b38, 0 0 10px rgba(255,75,105,.22) !important;
+        }
+        #gameScreen .num-btn.no-funds { filter: saturate(.45); opacity: .42 !important; }
+        #gameScreen .num-btn.loading {
+            background: linear-gradient(110deg, #183650, #2a5870, #183650) !important;
+            border-color: rgba(107,181,202,.4) !important;
+            color: rgba(221,248,255,.55) !important;
+            box-shadow: none !important;
+        }
+        #gameScreen .footer { color: rgba(120,177,194,.32) !important; border-top-color: rgba(57,231,224,.1) !important; }
+        #gameScreen .more-dropdown {
+            background: rgba(5, 24, 40, .98) !important;
+            border: 1px solid rgba(57,231,224,.42) !important;
+            box-shadow: 0 12px 30px rgba(0,0,0,.45), 0 0 18px rgba(57,231,224,.1) !important;
+            border-radius: 15px !important;
+        }
+        #gameScreen .dropdown-item { color: #d9f4fa !important; }
+        #gameScreen .dropdown-item.deposit { color: #65f0c0 !important; }
+        #gameScreen .dropdown-item.withdraw { color: #ffda83 !important; }
+        #gameScreen .dropdown-item.transfer { color: #7ccaff !important; }
+        #gameScreen .dropdown-item.reconnect { color: #7ff4ec !important; }
+        #gameScreen .dropdown-item.logout { color: #ff8798 !important; }
+        @media (max-width: 430px) {
+            .game-wrapper { border-radius: 26px !important; padding: 9px 9px 11px !important; }
+            #gameScreen { gap: 4px; }
+            #gameScreen .wallet-bar { padding: 6px 6px !important; border-radius: 14px !important; }
+            #gameScreen .wallet-left { gap: 4px !important; }
+            #gameScreen .wallet-item { padding: 4px 5px !important; font-size: .57rem !important; }
+            #gameScreen .wallet-item .amount { font-size: .72rem !important; }
+            #gameScreen .game-info-bar { gap: 7px !important; padding: 6px 5px !important; }
+            #gameScreen .game-info-bar .info-item { font-size: .64rem !important; }
+            #gameScreen .num-picker { gap: 4px !important; padding: 2px !important; }
+            #gameScreen .num-btn { border-radius: 9px !important; }
+        }
+        @media (max-width: 360px) {
+            #gameScreen .wallet-item { padding: 3px 4px !important; font-size: .53rem !important; }
+            #gameScreen .wallet-item .amount { font-size: .68rem !important; }
+            #gameScreen .game-info-bar { gap: 5px !important; }
+            #gameScreen .game-info-bar .info-item { font-size: .59rem !important; }
+            #gameScreen .num-picker { gap: 3px !important; }
+            #gameScreen .num-btn { border-radius: 7px !important; font-size: .8rem !important; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #gameScreen .num-btn { transition: none !important; }
+        }
+
     </style>
 </head>
 <body>
